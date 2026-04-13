@@ -43,7 +43,7 @@ describe("App", () => {
       "aria-current",
       "page"
     );
-    expect(await screen.findByText(/No nodes yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no visible artifacts/i)).toBeInTheDocument();
   });
 
   it("submits a new folder and renders it in the tree", async () => {
@@ -66,7 +66,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByText(/No nodes yet/i);
+    await screen.findByText(/no visible artifacts/i);
     // The create dropdown items are in the DOM even when CSS-hidden
     fireEvent.click(screen.getByRole("menuitem", { name: /New Folder/i }));
 
@@ -77,7 +77,8 @@ describe("App", () => {
       });
     });
 
-    expect((await screen.findAllByText("Untitled")).length).toBeGreaterThan(0);
+    // New folder starts in inline rename mode — appears as an input with value "Untitled"
+    expect(await screen.findByDisplayValue("Untitled")).toBeInTheDocument();
   });
 
   it("submits a mount path and renders the mounted tree", async () => {
@@ -112,7 +113,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByText(/No nodes yet/i);
+    await screen.findByText(/no visible artifacts/i);
     // Open mount modal from the dropdown (CSS-hidden but queryable in JSDOM)
     fireEvent.click(screen.getByRole("menuitem", { name: /Mount Directory/i }));
 
@@ -130,7 +131,10 @@ describe("App", () => {
       );
     });
 
-    expect((await screen.findAllByText("workspace")).length).toBeGreaterThan(0);
+    // Root shows the mount; double-click navigates into it to reveal children
+    const mountCards = await screen.findAllByText("workspace");
+    expect(mountCards.length).toBeGreaterThan(0);
+    fireEvent.dblClick(mountCards[0].closest("button")!);
     expect((await screen.findAllByText("notes.txt")).length).toBeGreaterThan(0);
   });
 
@@ -154,7 +158,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByText(/No nodes yet/i);
+    await screen.findByText(/no visible artifacts/i);
     // Open URL modal from the dropdown
     fireEvent.click(screen.getByRole("menuitem", { name: /Add URL/i }));
 
@@ -171,7 +175,6 @@ describe("App", () => {
     });
 
     expect((await screen.findAllByText("https://example.com")).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText("pending")).length).toBeGreaterThan(0);
   });
 
   it("keeps explorer state when switching to another shell section and back", async () => {

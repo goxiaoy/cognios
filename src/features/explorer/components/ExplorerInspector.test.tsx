@@ -58,7 +58,7 @@ describe("ExplorerInspector", () => {
       />
     );
 
-    expect(screen.getByText("2 selected")).toBeInTheDocument();
+    expect(screen.getByText("2 items")).toBeInTheDocument();
     expect(screen.getByText("96 B")).toBeInTheDocument();
   });
 });

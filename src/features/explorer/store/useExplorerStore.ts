@@ -35,8 +35,7 @@ export function useExplorerStore(client: ExplorerClient) {
     .map((id) => nodeIndex.get(id) ?? null)
     .filter((node): node is ExplorerNode => node !== null);
   const selectionCount = selectedArtifacts.length;
-  const inspectorNode =
-    selectionCount === 1 ? selectedArtifacts[0] : selectionCount === 0 ? displayedFolder : null;
+  const inspectorNode = selectionCount === 1 ? selectedArtifacts[0] : null;
   const mutationTarget = selectionCount <= 1 ? inspectorNode : null;
 
   const applySnapshot = useCallback(

@@ -1,26 +1,13 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ExplorerNode } from "../types/explorer";
-import type { ExplorerClient } from "../types/explorer";
+import type { ExplorerClient, ExplorerNode } from "../types/explorer";
+import type { CreateAction } from "./CreateMenu";
 import { useExplorerEvents } from "../hooks/useExplorerEvents";
 import { useExplorerStore } from "../store/useExplorerStore";
 import { Breadcrumbs } from "./Breadcrumbs";
-import { CreateMenu, type CreateAction } from "./CreateMenu";
 import { ExplorerContentGrid } from "./ExplorerContentGrid";
 import { ExplorerInspector } from "./ExplorerInspector";
-import { ExplorerTree } from "./ExplorerTree";
 import { MountModal } from "./MountModal";
 import { UrlModal } from "./UrlModal";
-
-function collectIds(nodes: ExplorerNode[]): Set<string> {
-  const ids = new Set<string>();
-  function visit(node: ExplorerNode) {
-    ids.add(node.id);
-    node.children.forEach(visit);
-  }
-  nodes.forEach(visit);
-  return ids;
-}
 
 export function ExplorerLayout({
   active,
@@ -55,7 +42,6 @@ export function ExplorerLayout({
   }
 
   async function handleFolderCreate() {
-    const prevIds = collectIds(store.snapshot.roots);
     const snapshot = await store.runAction("folder", () =>
       client.createFolder({
         name: "Untitled",
@@ -63,17 +49,40 @@ export function ExplorerLayout({
       })
     );
     if (snapshot) {
+      const prevIds = collectIds(store.snapshot.roots);
       store.applySnapshot(snapshot);
-      // find the new node and start inline rename
       for (const root of snapshot.roots) {
         const newId = findNewId(root, prevIds);
         if (newId) {
-          store.selectTreeNode(newId);
           store.setPendingInlineRenameId(newId);
           break;
         }
       }
     }
+  }
+
+  async function handleDeleteById(nodeId: string, cascade: boolean) {
+    const snapshot = await store.runAction("delete", () =>
+      client.deleteNode({ nodeId, cascade })
+    );
+    if (snapshot) store.applySnapshot(snapshot);
+  }
+
+  async function handleInlineRename(nodeId: string, newName: string) {
+    store.setPendingInlineRenameId(null);
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    const snapshot = await store.runAction("rename", () =>
+      client.renameNode({ nodeId, newName: trimmed })
+    );
+    if (snapshot) store.applySnapshot(snapshot);
+  }
+
+  async function handleRetry(nodeId: string) {
+    await store.runAction("retry", async () => {
+      await client.retryUrl({ nodeId });
+      await store.refresh();
+    });
   }
 
   async function handleMountSubmit(args: { path: string; name: string; ignoreConfig: string }) {
@@ -103,30 +112,6 @@ export function ExplorerLayout({
     }
   }
 
-  async function handleDeleteById(nodeId: string, cascade: boolean) {
-    const snapshot = await store.runAction("delete", () =>
-      client.deleteNode({ nodeId, cascade })
-    );
-    if (snapshot) store.applySnapshot(snapshot);
-  }
-
-  async function handleInlineRename(nodeId: string, newName: string) {
-    store.setPendingInlineRenameId(null);
-    const trimmed = newName.trim();
-    if (!trimmed) return;
-    const snapshot = await store.runAction("rename", () =>
-      client.renameNode({ nodeId, newName: trimmed })
-    );
-    if (snapshot) store.applySnapshot(snapshot);
-  }
-
-  async function handleRetry(nodeId: string) {
-    await store.runAction("retry", async () => {
-      await client.retryUrl({ nodeId });
-      await store.refresh();
-    });
-  }
-
   return (
     <section
       aria-hidden={!active}
@@ -141,65 +126,30 @@ export function ExplorerLayout({
 
       {store.error ? <p className="error-banner">{store.error}</p> : null}
 
-      <div className="explorer-workspace">
-        <section
-          className={`hierarchy-panel${store.isHierarchyCollapsed ? " is-collapsed" : ""}`}
-        >
-          <div className="hierarchy-header">
-            <div className="hierarchy-header-actions">
-              {!store.isHierarchyCollapsed ? (
-                <CreateMenu onSelect={handleCreateSelect} />
-              ) : null}
-              <button
-                aria-label={store.isHierarchyCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                className="hierarchy-toggle"
-                onClick={store.toggleHierarchyCollapsed}
-                type="button"
-              >
-                {store.isHierarchyCollapsed
-                  ? <ChevronRight size={14} />
-                  : <ChevronLeft size={14} />}
-              </button>
-            </div>
-          </div>
+      <div className={`explorer-workspace${store.inspectorNode || store.selectionCount > 1 ? " has-inspector" : ""}`}>
+        {store.isLoading ? (
+          <p className="empty-state">Loading explorer...</p>
+        ) : null}
 
-          {!store.isHierarchyCollapsed ? (
-            <>
-              {store.isLoading ? <p className="empty-state">Loading explorer...</p> : null}
-              {!store.isLoading && store.snapshot.roots.length === 0 ? (
-                <p className="empty-state">
-                  No nodes yet. Use + New to create a folder, mount a directory, or add a URL.
-                </p>
-              ) : null}
-              {!store.isLoading && store.snapshot.roots.length > 0 ? (
-                <ExplorerTree
-                  expandedIds={store.expandedIds}
-                  nodes={store.snapshot.roots}
-                  pendingInlineRenameId={store.pendingInlineRenameId}
-                  onDelete={handleDeleteById}
-                  onInlineRename={handleInlineRename}
-                  onRetry={handleRetry}
-                  onSelect={store.selectTreeNode}
-                  onStartRename={store.setPendingInlineRenameId}
-                  onToggle={store.toggleNode}
-                  selectedId={store.displayedFolderId}
-                />
-              ) : null}
-            </>
-          ) : null}
-        </section>
-
-        <ExplorerContentGrid
-          displayedFolderName={store.displayedFolder?.name ?? "Workspace Roots"}
-          loadThumbnail={client.getNodeThumbnail}
-          nodes={store.visibleArtifacts}
-          onActivate={store.activateArtifact}
-          onSelect={store.selectArtifact}
-          onViewModeChange={store.setViewMode}
-          selectedIds={store.selectedArtifactIds}
-          selectionCount={store.selectionCount}
-          viewMode={store.viewMode}
-        />
+        {!store.isLoading ? (
+          <ExplorerContentGrid
+            displayedFolderName={store.displayedFolder?.name ?? "Workspace"}
+            loadThumbnail={client.getNodeThumbnail}
+            nodes={store.visibleArtifacts}
+            pendingInlineRenameId={store.pendingInlineRenameId}
+            onActivate={store.activateArtifact}
+            onCreateSelect={handleCreateSelect}
+            onDelete={handleDeleteById}
+            onInlineRename={handleInlineRename}
+            onRetry={handleRetry}
+            onSelect={store.selectArtifact}
+            onStartRename={store.setPendingInlineRenameId}
+            onViewModeChange={store.setViewMode}
+            selectedIds={store.selectedArtifactIds}
+            selectionCount={store.selectionCount}
+            viewMode={store.viewMode}
+          />
+        ) : null}
 
         <aside className="inspector-panel">
           <ExplorerInspector
@@ -227,6 +177,17 @@ export function ExplorerLayout({
       ) : null}
     </section>
   );
+}
+
+
+function collectIds(nodes: ExplorerNode[]): Set<string> {
+  const ids = new Set<string>();
+  function visit(node: ExplorerNode) {
+    ids.add(node.id);
+    node.children.forEach(visit);
+  }
+  nodes.forEach(visit);
+  return ids;
 }
 
 function findNewId(node: ExplorerNode, prevIds: Set<string>): string | null {

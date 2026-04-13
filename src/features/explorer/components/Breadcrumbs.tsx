@@ -15,7 +15,7 @@ export function Breadcrumbs({
       <button
         className={`breadcrumb-home${isRoot ? " is-root" : ""}`}
         onClick={() => onSelect(null)}
-        title="Workspace root"
+        aria-label="Go to workspace"
         type="button"
       >
         <House size={14} />

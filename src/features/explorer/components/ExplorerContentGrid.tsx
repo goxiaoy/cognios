@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { ExplorerNode, ExplorerViewMode } from "../types/explorer";
 import { dateBucketLabel } from "../utils/presentation";
 import { ArtifactCard } from "./ArtifactCard";
+import { CreateMenu, type CreateAction } from "./CreateMenu";
 import { ViewModeToggle } from "./ViewModeToggle";
 
 export function ExplorerContentGrid({
@@ -11,8 +12,14 @@ export function ExplorerContentGrid({
   selectedIds,
   selectionCount,
   viewMode,
+  pendingInlineRenameId,
   onActivate,
+  onCreateSelect,
+  onDelete,
+  onInlineRename,
+  onRetry,
   onSelect,
+  onStartRename,
   onViewModeChange
 }: {
   displayedFolderName: string;
@@ -21,8 +28,14 @@ export function ExplorerContentGrid({
   selectedIds: string[];
   selectionCount: number;
   viewMode: ExplorerViewMode;
+  pendingInlineRenameId: string | null;
   onActivate(nodeId: string): void;
+  onCreateSelect(action: CreateAction): void;
+  onDelete(nodeId: string, cascade: boolean): void;
+  onInlineRename(nodeId: string, newName: string): void;
+  onRetry(nodeId: string): void;
   onSelect(nodeId: string, additive: boolean): void;
+  onStartRename(nodeId: string): void;
   onViewModeChange(mode: ExplorerViewMode): void;
 }) {
   const sortedNodes = useMemo(
@@ -43,7 +56,10 @@ export function ExplorerContentGrid({
             {nodes.length}{selectionCount > 0 ? ` · ${selectionCount} selected` : ""}
           </span>
         </div>
-        <ViewModeToggle onChange={onViewModeChange} value={viewMode} />
+        <div className="content-header-actions">
+          <CreateMenu onSelect={onCreateSelect} />
+          <ViewModeToggle onChange={onViewModeChange} value={viewMode} />
+        </div>
       </header>
 
       {sortedNodes.length === 0 ? (
@@ -57,11 +73,16 @@ export function ExplorerContentGrid({
           {sortedNodes.map((node) => (
             <ArtifactCard
               key={node.id}
+              isRenaming={node.id === pendingInlineRenameId}
               loadThumbnail={loadThumbnail}
               mode={viewMode}
               node={node}
               onActivate={onActivate}
+              onDelete={onDelete}
+              onInlineRename={onInlineRename}
+              onRetry={onRetry}
               onSelect={onSelect}
+              onStartRename={onStartRename}
               selected={selectedSet.has(node.id)}
             />
           ))}
@@ -77,11 +98,16 @@ export function ExplorerContentGrid({
                 {group.map((node) => (
                   <ArtifactCard
                     key={node.id}
+                    isRenaming={node.id === pendingInlineRenameId}
                     loadThumbnail={loadThumbnail}
                     mode="grid"
                     node={node}
                     onActivate={onActivate}
+                    onDelete={onDelete}
+                    onInlineRename={onInlineRename}
+                    onRetry={onRetry}
                     onSelect={onSelect}
+                    onStartRename={onStartRename}
                     selected={selectedSet.has(node.id)}
                   />
                 ))}
