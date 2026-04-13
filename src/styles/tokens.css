@@ -1,0 +1,15 @@
+:root {
+  color-scheme: light;
+  --bg: #f6f4ef;
+  --panel: #fffdfa;
+  --ink: #161615;
+  --muted: #6d665e;
+  --line: #d7d0c6;
+  --accent: #c9512b;
+  --accent-ink: #7d2d15;
+  --success: #24523d;
+  --shadow: rgba(30, 25, 20, 0.06);
+  --font-heading: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  --font-body: "Avenir Next", "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", monospace;
+}
