@@ -34,7 +34,7 @@ pub fn delete_node(
 
 fn resolve_mount_id(conn: &rusqlite::Connection, node_id: &str) -> Result<Option<String>, String> {
     conn.query_row(
-        "SELECT CASE WHEN kind = 'mount' THEN id ELSE NULL END FROM nodes WHERE id = ?1",
+        "SELECT id FROM nodes WHERE id = ?1 AND kind = 'mount'",
         [node_id],
         |row| row.get(0),
     )
