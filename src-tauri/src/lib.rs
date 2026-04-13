@@ -30,6 +30,11 @@ fn storage_dir_from_home(home_dir: PathBuf) -> PathBuf {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::default()
+                .level(log::LevelFilter::Debug)
+                .build(),
+        )
         .setup(|app| {
             let home_dir = app
                 .path()

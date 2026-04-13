@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { error as logError } from "../../../lib/logger";
 import type { ExplorerClient, ExplorerNode, ExplorerSnapshot } from "../types/explorer";
 
 const EMPTY_SNAPSHOT: ExplorerSnapshot = { roots: [] };
@@ -70,6 +71,7 @@ export function useExplorerStore(client: ExplorerClient) {
     try {
       return await work();
     } catch (cause) {
+      void logError(`[ExplorerStore] action "${action}" failed: ${formatError(cause)}`);
       setError(formatError(cause));
       return undefined;
     } finally {
@@ -126,5 +128,7 @@ function buildBreadcrumbs(nodeId: string, nodeIndex: Map<string, ExplorerNode>) 
 }
 
 function formatError(cause: unknown): string {
-  return cause instanceof Error ? cause.message : "Unexpected backend error";
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === "string") return cause;
+  return "Unexpected backend error";
 }
