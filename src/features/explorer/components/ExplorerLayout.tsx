@@ -5,7 +5,6 @@ import { useExplorerEvents } from "../hooks/useExplorerEvents";
 import { useExplorerStore } from "../store/useExplorerStore";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { CreateMenu, type CreateAction } from "./CreateMenu";
-import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
 import { ExplorerContentGrid } from "./ExplorerContentGrid";
 import { ExplorerInspector } from "./ExplorerInspector";
 import { ExplorerTree } from "./ExplorerTree";
@@ -31,8 +30,6 @@ export function ExplorerLayout({
 }) {
   const store = useExplorerStore(client);
   const [openModal, setOpenModal] = useState<CreateAction | null>(null);
-  const [renameValue, setRenameValue] = useState("");
-  const [cascadeDelete, setCascadeDelete] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -47,11 +44,6 @@ export function ExplorerLayout({
   }, []);
 
   useExplorerEvents(store.refresh);
-
-  useEffect(() => {
-    setRenameValue(store.mutationTarget?.name ?? "");
-    setCascadeDelete(false);
-  }, [store.mutationTarget]);
 
   function handleCreateSelect(action: CreateAction) {
     if (action === "folder") {
@@ -110,12 +102,9 @@ export function ExplorerLayout({
     }
   }
 
-  async function handleRename() {
-    if (!store.mutationTarget) return;
-    const trimmedName = renameValue.trim();
-    if (!trimmedName) return;
-    const snapshot = await store.runAction("rename", () =>
-      client.renameNode({ nodeId: store.mutationTarget!.id, newName: trimmedName })
+  async function handleDeleteById(nodeId: string, cascade: boolean) {
+    const snapshot = await store.runAction("delete", () =>
+      client.deleteNode({ nodeId, cascade })
     );
     if (snapshot) store.applySnapshot(snapshot);
   }
@@ -130,14 +119,6 @@ export function ExplorerLayout({
     if (snapshot) store.applySnapshot(snapshot);
   }
 
-  async function handleDelete() {
-    if (!store.mutationTarget) return;
-    const snapshot = await store.runAction("delete", () =>
-      client.deleteNode({ nodeId: store.mutationTarget!.id, cascade: cascadeDelete })
-    );
-    if (snapshot) store.applySnapshot(snapshot);
-  }
-
   async function handleRetry(nodeId: string) {
     await store.runAction("retry", async () => {
       await client.retryUrl({ nodeId });
@@ -148,18 +129,14 @@ export function ExplorerLayout({
   return (
     <section
       aria-hidden={!active}
-      className={`workspace-panel explorer-layout${active ? " is-active" : " is-hidden"}`}
+      className={`explorer-layout${active ? " is-active" : " is-hidden"}`}
     >
-      <header className="panel-header explorer-header">
-        <div>
-          <p className="eyebrow">Explorer</p>
-          <h2>Workspace</h2>
-        </div>
+      <div className="explorer-breadcrumb-bar">
         <Breadcrumbs
           nodes={store.breadcrumbs}
-          onSelect={store.selectDisplayedFolder}
+          onSelect={(id) => store.selectDisplayedFolder(id)}
         />
-      </header>
+      </div>
 
       {store.error ? <p className="error-banner">{store.error}</p> : null}
 
@@ -170,7 +147,6 @@ export function ExplorerLayout({
           <div className="hierarchy-header">
             <div>
               <p className="eyebrow">Hierarchy</p>
-              {!store.isHierarchyCollapsed ? <h3>VFS Tree</h3> : null}
             </div>
             <div className="hierarchy-header-actions">
               {!store.isHierarchyCollapsed ? (
@@ -199,9 +175,11 @@ export function ExplorerLayout({
                   expandedIds={store.expandedIds}
                   nodes={store.snapshot.roots}
                   pendingInlineRenameId={store.pendingInlineRenameId}
+                  onDelete={handleDeleteById}
                   onInlineRename={handleInlineRename}
                   onRetry={handleRetry}
                   onSelect={store.selectTreeNode}
+                  onStartRename={store.setPendingInlineRenameId}
                   onToggle={store.toggleNode}
                   selectedId={store.displayedFolderId}
                 />
@@ -227,46 +205,6 @@ export function ExplorerLayout({
             node={store.inspectorNode}
             selectedArtifacts={store.selectedArtifacts}
             selectionCount={store.selectionCount}
-          />
-
-          <section className="inspector-block">
-            <header className="inspector-block-header">
-              <p className="eyebrow">Rename</p>
-              <h3>{store.mutationTarget?.name ?? "Single selection required"}</h3>
-            </header>
-            {store.mutationTarget ? (
-              <div className="field-stack">
-                <label className="field-label" htmlFor="rename-value">
-                  New name
-                </label>
-                <div className="inline-form">
-                  <input
-                    id="rename-value"
-                    onChange={(event) => setRenameValue(event.target.value)}
-                    value={renameValue}
-                  />
-                  <button
-                    disabled={store.activeAction !== null || !renameValue.trim()}
-                    onClick={handleRename}
-                    type="button"
-                  >
-                    {store.activeAction === "rename" ? "Renaming..." : "Rename"}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <p className="muted-copy">
-                Select one node to rename it.
-              </p>
-            )}
-          </section>
-
-          <DeleteConfirmationDialog
-            activeAction={store.activeAction}
-            cascade={cascadeDelete}
-            onCascadeChange={setCascadeDelete}
-            onDelete={handleDelete}
-            selectedNode={store.mutationTarget}
           />
         </aside>
       </div>

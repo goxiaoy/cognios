@@ -46,17 +46,7 @@ export function ExplorerInspector({
   }
 
   if (!node) {
-    return (
-      <section className="inspector-block">
-        <header className="inspector-block-header">
-          <p className="eyebrow">Inspector</p>
-          <h3>No selection</h3>
-        </header>
-        <p className="muted-copy">
-          Select a folder in the hierarchy or an artifact in the grid to inspect its metadata.
-        </p>
-      </section>
-    );
+    return null;
   }
 
   return (

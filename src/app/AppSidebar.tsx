@@ -2,11 +2,11 @@ import { useEffect, useState } from "react";
 
 export type AppSection = "home" | "chat" | "explorer" | "memory";
 
-const NAV_ITEMS: Array<{ id: AppSection; label: string }> = [
-  { id: "home", label: "Home" },
-  { id: "chat", label: "Chat" },
-  { id: "explorer", label: "Explorer" },
-  { id: "memory", label: "Memory Timeline" }
+const NAV_ITEMS: Array<{ id: AppSection; label: string; icon: string }> = [
+  { id: "home",     label: "Home",    icon: "⌂" },
+  { id: "chat",     label: "Chat",    icon: "◈" },
+  { id: "explorer", label: "Explorer",icon: "⊞" },
+  { id: "memory",   label: "Memory",  icon: "⊙" },
 ];
 
 export function AppSidebar({
@@ -55,15 +55,11 @@ export function AppSidebar({
             onClick={() => onSelect(item.id)}
             type="button"
           >
+            <span className="app-nav-icon" aria-hidden="true">{item.icon}</span>
             <span className="app-nav-label">{item.label}</span>
           </button>
         ))}
       </nav>
-
-      <footer className="app-status" role="status">
-        <span className="app-status-dot" aria-hidden="true" />
-        <span>Local-first ready</span>
-      </footer>
 
       {searchOpen ? (
         <div
