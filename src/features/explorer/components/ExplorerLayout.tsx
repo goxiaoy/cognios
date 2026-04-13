@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ExplorerNode } from "../types/explorer";
 import type { ExplorerClient } from "../types/explorer";
@@ -145,19 +146,19 @@ export function ExplorerLayout({
           className={`hierarchy-panel${store.isHierarchyCollapsed ? " is-collapsed" : ""}`}
         >
           <div className="hierarchy-header">
-            <div>
-              <p className="eyebrow">Hierarchy</p>
-            </div>
             <div className="hierarchy-header-actions">
               {!store.isHierarchyCollapsed ? (
                 <CreateMenu onSelect={handleCreateSelect} />
               ) : null}
               <button
+                aria-label={store.isHierarchyCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                 className="hierarchy-toggle"
                 onClick={store.toggleHierarchyCollapsed}
                 type="button"
               >
-                {store.isHierarchyCollapsed ? "»" : "«"}
+                {store.isHierarchyCollapsed
+                  ? <ChevronRight size={14} />
+                  : <ChevronLeft size={14} />}
               </button>
             </div>
           </div>

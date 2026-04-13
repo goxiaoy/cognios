@@ -37,13 +37,11 @@ export function ExplorerContentGrid({
   return (
     <section className="content-panel">
       <header className="content-header">
-        <div>
-          <p className="eyebrow">Content</p>
+        <div className="content-header-title">
           <h3>{displayedFolderName}</h3>
-          <p className="content-subtitle">
-            {nodes.length} ARTIFACTS
-            {selectionCount > 0 ? ` · ${selectionCount} SELECTED` : ""}
-          </p>
+          <span className="content-header-count">
+            {nodes.length}{selectionCount > 0 ? ` · ${selectionCount} selected` : ""}
+          </span>
         </div>
         <ViewModeToggle onChange={onViewModeChange} value={viewMode} />
       </header>

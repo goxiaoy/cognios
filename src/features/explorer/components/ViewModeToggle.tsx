@@ -1,6 +1,15 @@
+import { CalendarDays, LayoutGrid, List } from "lucide-react";
 import type { ExplorerViewMode } from "../types/explorer";
 
-const VIEW_MODES: ExplorerViewMode[] = ["grid", "list", "date"];
+const VIEW_MODE_CONFIG: Array<{
+  mode: ExplorerViewMode;
+  Icon: React.ComponentType<{ size?: number }>;
+  label: string;
+}> = [
+  { mode: "grid", Icon: LayoutGrid, label: "Grid view" },
+  { mode: "list", Icon: List,       label: "List view" },
+  { mode: "date", Icon: CalendarDays, label: "Date view" },
+];
 
 export function ViewModeToggle({
   value,
@@ -11,8 +20,9 @@ export function ViewModeToggle({
 }) {
   return (
     <div className="view-mode-toggle" role="tablist" aria-label="Content view mode">
-      {VIEW_MODES.map((mode) => (
+      {VIEW_MODE_CONFIG.map(({ mode, Icon, label }) => (
         <button
+          aria-label={label}
           aria-selected={mode === value}
           className={`view-mode-button${mode === value ? " is-active" : ""}`}
           key={mode}
@@ -20,7 +30,7 @@ export function ViewModeToggle({
           role="tab"
           type="button"
         >
-          {mode}
+          <Icon size={14} aria-hidden="true" />
         </button>
       ))}
     </div>

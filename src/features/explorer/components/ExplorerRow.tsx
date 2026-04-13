@@ -1,14 +1,24 @@
+import { AlertTriangle, File, Folder, FolderOpen, Globe, HardDrive, Loader } from "lucide-react";
 import { KeyboardEvent as KE, MouseEvent, useEffect, useRef, useState } from "react";
-import type { NodeKind } from "../../../lib/contracts/vfs";
+import type { NodeKind, NodeState } from "../../../lib/contracts/vfs";
 import type { ExplorerNode } from "../types/explorer";
 
-function kindIcon(kind: NodeKind): string {
+function NodeStateBadge({ state }: { state: NodeState }) {
+  if (state === "ready") return null;
+  if (state === "error" || state === "unavailable") {
+    return <AlertTriangle className="node-state-icon state-error" size={12} aria-label="error" />;
+  }
+  return <Loader className="node-state-icon state-pending" size={12} aria-label="loading" />;
+}
+
+function KindIcon({ kind }: { kind: NodeKind }) {
+  const props = { size: 13, "aria-hidden": true as const, className: "node-icon" };
   switch (kind) {
-    case "folder":    return "⊟";
-    case "mount":     return "⊠";
-    case "directory": return "⊞";
-    case "url":       return "⊙";
-    default:          return "◦";
+    case "folder":    return <Folder {...props} />;
+    case "mount":     return <HardDrive {...props} />;
+    case "directory": return <FolderOpen {...props} />;
+    case "url":       return <Globe {...props} />;
+    default:          return <File {...props} />;
   }
 }
 
@@ -106,7 +116,7 @@ export function ExplorerRow({
 
       {isInlineRenaming ? (
         <div className="tree-row-main">
-          <span className="node-icon" aria-hidden="true">{kindIcon(node.kind)}</span>
+          <KindIcon kind={node.kind} />
           <input
             ref={inputRef}
             className="tree-inline-input"
@@ -123,9 +133,9 @@ export function ExplorerRow({
           onDoubleClick={() => onStartRename(node.id)}
           type="button"
         >
-          <span className="node-icon" aria-hidden="true">{kindIcon(node.kind)}</span>
+          <KindIcon kind={node.kind} />
           <span className="node-name" title={node.name}>{node.name}</span>
-          <span className={`node-state state-${node.state}`}>{node.state}</span>
+          <NodeStateBadge state={node.state} />
         </button>
       )}
 

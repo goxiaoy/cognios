@@ -1,3 +1,4 @@
+import { House } from "lucide-react";
 import type { ExplorerNode } from "../types/explorer";
 
 export function Breadcrumbs({
@@ -17,7 +18,7 @@ export function Breadcrumbs({
         title="Workspace root"
         type="button"
       >
-        ⌂
+        <House size={14} />
       </button>
 
       {nodes.map((node) => (

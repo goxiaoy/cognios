@@ -17,63 +17,57 @@ export function ExplorerInspector({
 }) {
   if (selectionCount > 1) {
     const commonType =
-      new Set(selectedArtifacts.map((artifact) => formatNodeKindLabel(artifact))).size === 1
+      new Set(selectedArtifacts.map((a) => formatNodeKindLabel(a))).size === 1
         ? formatNodeKindLabel(selectedArtifacts[0])
         : "Mixed";
-    const combinedSize = selectedArtifacts.reduce(
-      (total, artifact) => total + artifact.sizeBytes,
-      0
-    );
+    const combinedSize = selectedArtifacts.reduce((sum, a) => sum + a.sizeBytes, 0);
 
     return (
-      <section className="inspector-block">
-        <header className="inspector-block-header">
-          <p className="eyebrow">Inspector</p>
-          <h3>{selectionCount} selected</h3>
-        </header>
-        <dl className="detail-grid">
-          <div>
-            <dt>Common type</dt>
+      <div className="inspector-pane">
+        <div className="inspector-pane-header">
+          <p className="inspector-pane-title">{selectionCount} items</p>
+          <p className="inspector-pane-kind">Multiple selection</p>
+        </div>
+        <dl className="inspector-meta">
+          <div className="inspector-meta-row">
+            <dt>Type</dt>
             <dd>{commonType}</dd>
           </div>
-          <div>
-            <dt>Combined size</dt>
+          <div className="inspector-meta-row">
+            <dt>Total size</dt>
             <dd>{formatNodeSize(combinedSize)}</dd>
           </div>
         </dl>
-      </section>
+      </div>
     );
   }
 
-  if (!node) {
-    return null;
-  }
+  if (!node) return null;
 
   return (
-    <section className="inspector-block">
-      <header className="inspector-block-header">
-        <p className="eyebrow">Inspector</p>
-        <h3>{node.name}</h3>
-        <p className="muted-copy">{formatInspectorKindLabel(node)}</p>
-      </header>
-      <dl className="detail-grid">
-        <div>
+    <div className="inspector-pane">
+      <div className="inspector-pane-header">
+        <p className="inspector-pane-title" title={node.name}>{node.name}</p>
+        <p className="inspector-pane-kind">{formatInspectorKindLabel(node)}</p>
+      </div>
+      <dl className="inspector-meta">
+        <div className="inspector-meta-row">
           <dt>Created</dt>
           <dd>{formatNodeDate(node.createdAt)}</dd>
         </div>
-        <div>
+        <div className="inspector-meta-row">
           <dt>Modified</dt>
           <dd>{formatNodeDate(node.modifiedAt)}</dd>
         </div>
-        <div>
+        <div className="inspector-meta-row">
           <dt>Size</dt>
           <dd>{formatNodeSize(node.sizeBytes)}</dd>
         </div>
-        <div>
+        <div className="inspector-meta-row">
           <dt>State</dt>
           <dd>{node.state}</dd>
         </div>
       </dl>
-    </section>
+    </div>
   );
 }

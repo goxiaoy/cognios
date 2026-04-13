@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
+import { BookOpen, Files, Home, MessageCircle, Search, X } from "lucide-react";
 
 export type AppSection = "home" | "chat" | "explorer" | "memory";
 
-const NAV_ITEMS: Array<{ id: AppSection; label: string; icon: string }> = [
-  { id: "home",     label: "Home",    icon: "⌂" },
-  { id: "chat",     label: "Chat",    icon: "◈" },
-  { id: "explorer", label: "Explorer",icon: "⊞" },
-  { id: "memory",   label: "Memory",  icon: "⊙" },
+type NavItem = { id: AppSection; label: string; Icon: React.ComponentType<{ size?: number }> };
+
+const NAV_ITEMS: NavItem[] = [
+  { id: "home",     label: "Home",    Icon: Home },
+  { id: "chat",     label: "Chat",    Icon: MessageCircle },
+  { id: "explorer", label: "Explorer",Icon: Files },
+  { id: "memory",   label: "Memory",  Icon: BookOpen },
 ];
 
 export function AppSidebar({
@@ -40,23 +43,23 @@ export function AppSidebar({
           onClick={() => setSearchOpen(true)}
           type="button"
         >
-          <span className="app-ops-icon" aria-hidden="true">⌕</span>
+          <Search className="app-ops-icon" size={15} aria-hidden="true" />
           <span className="app-ops-label">Search</span>
           <span className="app-ops-hint">⌘K</span>
         </button>
       </div>
 
       <nav aria-label="Primary" className="app-nav">
-        {NAV_ITEMS.map((item) => (
+        {NAV_ITEMS.map(({ id, label, Icon }) => (
           <button
-            aria-current={item.id === activeSection ? "page" : undefined}
-            className={`app-nav-item${item.id === activeSection ? " is-active" : ""}`}
-            key={item.id}
-            onClick={() => onSelect(item.id)}
+            aria-current={id === activeSection ? "page" : undefined}
+            className={`app-nav-item${id === activeSection ? " is-active" : ""}`}
+            key={id}
+            onClick={() => onSelect(id)}
             type="button"
           >
-            <span className="app-nav-icon" aria-hidden="true">{item.icon}</span>
-            <span className="app-nav-label">{item.label}</span>
+            <Icon size={15} aria-hidden="true" />
+            <span className="app-nav-label">{label}</span>
           </button>
         ))}
       </nav>
@@ -78,7 +81,7 @@ export function AppSidebar({
                 onClick={() => setSearchOpen(false)}
                 type="button"
               >
-                ✕
+                <X size={14} />
               </button>
             </header>
             <p className="muted-copy">
