@@ -4,16 +4,20 @@ import { ExplorerRow } from "./ExplorerRow";
 export function ExplorerTree({
   expandedIds,
   nodes,
+  pendingInlineRenameId,
   onRetry,
   onSelect,
   onToggle,
+  onInlineRename,
   selectedId
 }: {
   expandedIds: string[];
   nodes: ExplorerNode[];
+  pendingInlineRenameId: string | null;
   onRetry(nodeId: string): void;
   onSelect(nodeId: string): void;
   onToggle(nodeId: string): void;
+  onInlineRename(nodeId: string, newName: string): void;
   selectedId: string | null;
 }) {
   const expandedSet = new Set(expandedIds);
@@ -25,9 +29,11 @@ export function ExplorerTree({
           expandedSet={expandedSet}
           key={node.id}
           node={node}
+          pendingInlineRenameId={pendingInlineRenameId}
           onRetry={onRetry}
           onSelect={onSelect}
           onToggle={onToggle}
+          onInlineRename={onInlineRename}
           selectedId={selectedId}
         />
       ))}
@@ -38,17 +44,21 @@ export function ExplorerTree({
 function TreeBranch({
   expandedSet,
   node,
+  pendingInlineRenameId,
   onRetry,
   onSelect,
   onToggle,
+  onInlineRename,
   selectedId,
   depth = 0
 }: {
   expandedSet: Set<string>;
   node: ExplorerNode;
+  pendingInlineRenameId: string | null;
   onRetry(nodeId: string): void;
   onSelect(nodeId: string): void;
   onToggle(nodeId: string): void;
+  onInlineRename(nodeId: string, newName: string): void;
   selectedId: string | null;
   depth?: number;
 }) {
@@ -59,8 +69,10 @@ function TreeBranch({
       <ExplorerRow
         depth={depth}
         isExpanded={isExpanded}
+        isInlineRenaming={node.id === pendingInlineRenameId}
         isSelected={selectedId === node.id}
         node={node}
+        onInlineRename={onInlineRename}
         onRetry={onRetry}
         onSelect={onSelect}
         onToggle={onToggle}
@@ -73,9 +85,11 @@ function TreeBranch({
               expandedSet={expandedSet}
               key={child.id}
               node={child}
+              pendingInlineRenameId={pendingInlineRenameId}
               onRetry={onRetry}
               onSelect={onSelect}
               onToggle={onToggle}
+              onInlineRename={onInlineRename}
               selectedId={selectedId}
             />
           ))}

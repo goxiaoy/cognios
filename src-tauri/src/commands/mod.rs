@@ -1,5 +1,6 @@
 pub mod mounts;
 pub mod nodes;
+pub mod thumbnails;
 pub mod urls;
 
 use tauri::State;

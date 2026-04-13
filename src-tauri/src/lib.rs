@@ -81,6 +81,7 @@ pub fn run() {
             commands::mounts::create_mount,
             commands::nodes::rename_node,
             commands::nodes::delete_node,
+            commands::thumbnails::get_node_thumbnail,
             commands::urls::create_url,
             commands::urls::retry_url
         ])

@@ -32,6 +32,8 @@ describe("ExplorerTree", () => {
       <ExplorerTree
         expandedIds={["root"]}
         nodes={tree as never}
+        pendingInlineRenameId={null}
+        onInlineRename={vi.fn()}
         onRetry={vi.fn()}
         onSelect={vi.fn()}
         onToggle={vi.fn()}
@@ -51,6 +53,8 @@ describe("ExplorerTree", () => {
       <ExplorerTree
         expandedIds={[]}
         nodes={tree as never}
+        pendingInlineRenameId={null}
+        onInlineRename={vi.fn()}
         onRetry={vi.fn()}
         onSelect={onSelect}
         onToggle={onToggle}

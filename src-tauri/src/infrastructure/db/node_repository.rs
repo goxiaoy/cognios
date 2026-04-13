@@ -17,7 +17,7 @@ pub struct CreateFolderInput {
 pub fn list_snapshot(conn: &Connection) -> rusqlite::Result<ExplorerSnapshotDto> {
     let mut stmt = conn.prepare(
         "
-        SELECT id, parent_id, name, kind, state
+        SELECT id, parent_id, name, kind, state, created_at, updated_at, size_bytes
         FROM nodes
         ORDER BY parent_id IS NOT NULL, name COLLATE NOCASE ASC
         ",
@@ -31,6 +31,9 @@ pub fn list_snapshot(conn: &Connection) -> rusqlite::Result<ExplorerSnapshotDto>
                 name: row.get(2)?,
                 kind: NodeKind::from_db(&row.get::<_, String>(3)?),
                 state: NodeState::from_db(&row.get::<_, String>(4)?),
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+                size_bytes: row.get(7)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -61,8 +64,8 @@ pub fn create_folder(
 
     conn.execute(
         "
-        INSERT INTO nodes (id, parent_id, kind, name, state)
-        VALUES (?1, ?2, ?3, ?4, ?5)
+        INSERT INTO nodes (id, parent_id, kind, name, state, size_bytes)
+        VALUES (?1, ?2, ?3, ?4, ?5, 0)
         ",
         params![
             Uuid::new_v4().to_string(),
@@ -72,6 +75,8 @@ pub fn create_folder(
             NodeState::Ready.as_str()
         ],
     )?;
+
+    touch_node_modified_at(conn, input.parent_id.as_deref())?;
 
     list_snapshot(conn)
 }
@@ -114,6 +119,10 @@ fn build_snapshot(records: Vec<NodeRecord>) -> ExplorerSnapshotDto {
                 .collect();
         }
 
+        if matches!(node.kind.as_str(), "folder" | "mount" | "directory") {
+            node.size_bytes = node.children.iter().map(|child| child.size_bytes).sum();
+        }
+
         node
     }
 
@@ -123,4 +132,18 @@ fn build_snapshot(records: Vec<NodeRecord>) -> ExplorerSnapshotDto {
             .map(|root_id| assemble(root_id, &mut by_id, &child_ids_by_parent))
             .collect(),
     }
+}
+
+pub fn touch_node_modified_at(
+    conn: &Connection,
+    node_id: Option<&str>,
+) -> rusqlite::Result<()> {
+    if let Some(node_id) = node_id {
+        conn.execute(
+            "UPDATE nodes SET updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            [node_id],
+        )?;
+    }
+
+    Ok(())
 }

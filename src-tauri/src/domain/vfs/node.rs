@@ -40,6 +40,9 @@ pub struct NodeRecord {
     pub name: String,
     pub kind: NodeKind,
     pub state: NodeState,
+    pub created_at: String,
+    pub updated_at: String,
+    pub size_bytes: i64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -50,6 +53,9 @@ pub struct ExplorerNodeDto {
     pub name: String,
     pub kind: String,
     pub state: String,
+    pub created_at: String,
+    pub modified_at: String,
+    pub size_bytes: i64,
     pub children: Vec<ExplorerNodeDto>,
 }
 
@@ -66,6 +72,9 @@ impl From<NodeRecord> for ExplorerNodeDto {
             name: value.name,
             kind: value.kind.as_str().to_string(),
             state: value.state.as_str().to_string(),
+            created_at: value.created_at,
+            modified_at: value.updated_at,
+            size_bytes: value.size_bytes,
             children: Vec::new(),
         }
     }

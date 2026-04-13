@@ -28,8 +28,11 @@ export interface ExplorerClient {
   renameNode(input: RenameNodeInput): Promise<ExplorerSnapshot>;
   deleteNode(input: DeleteNodeInput): Promise<ExplorerSnapshot>;
   retryUrl(input: RetryUrlInput): Promise<void>;
+  getNodeThumbnail(nodeId: string): Promise<string>;
 }
 
 export interface ExplorerTreeNode extends ExplorerNode {
   depth: number;
 }
+
+export type ExplorerViewMode = "grid" | "list" | "date";

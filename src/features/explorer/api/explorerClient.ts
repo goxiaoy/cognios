@@ -4,6 +4,7 @@ import {
   createUrl,
   deleteNode,
   getExplorerSnapshot,
+  getNodeThumbnail,
   renameNode,
   retryUrl
 } from "../../../lib/tauri/ipc";
@@ -16,5 +17,6 @@ export const explorerClient: ExplorerClient = {
   createUrl,
   renameNode,
   deleteNode,
-  retryUrl
+  retryUrl,
+  getNodeThumbnail
 };

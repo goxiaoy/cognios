@@ -29,11 +29,20 @@ pub fn rename_node(
 
     match node.kind {
         NodeKind::Folder | NodeKind::Url | NodeKind::Mount => {
-            conn.execute(
-                "UPDATE nodes SET name = ?2 WHERE id = ?1",
-                params![input.node_id, trimmed_name],
-            )
-            .map_err(|error| error.to_string())?;
+            match node.kind {
+                NodeKind::Url => conn
+                    .execute(
+                        "UPDATE nodes SET name = ?2 WHERE id = ?1",
+                        params![input.node_id, trimmed_name],
+                    )
+                    .map_err(|error| error.to_string())?,
+                _ => conn
+                    .execute(
+                        "UPDATE nodes SET name = ?2, updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+                        params![input.node_id, trimmed_name],
+                    )
+                    .map_err(|error| error.to_string())?,
+            };
         }
         NodeKind::Directory | NodeKind::File => {
             let mount_info = load_mount_info(conn, node.mount_id.as_deref())

@@ -47,3 +47,7 @@ export async function deleteNode(
 export async function retryUrl(input: RetryUrlInput): Promise<void> {
   return invoke<void>("retry_url", { input });
 }
+
+export async function getNodeThumbnail(nodeId: string): Promise<string> {
+  return invoke<string>("get_node_thumbnail", { input: { nodeId } });
+}
