@@ -26,6 +26,30 @@ describe("ExplorerInspector", () => {
     expect(screen.getByText(/WEB LINK/i)).toBeInTheDocument();
   });
 
+  it("shows note metadata with NOTE kind label and size", () => {
+    render(
+      <ExplorerInspector
+        node={{
+          id: "note-1",
+          parentId: null,
+          name: "My Research",
+          kind: "note",
+          state: "ready",
+          createdAt: "2026-04-14 00:00:00",
+          modifiedAt: "2026-04-14 01:00:00",
+          sizeBytes: 512,
+          children: []
+        }}
+        selectedArtifacts={[]}
+        selectionCount={0}
+      />
+    );
+
+    expect(screen.getByText(/NOTE/)).toBeInTheDocument();
+    expect(screen.getByText("My Research")).toBeInTheDocument();
+    expect(screen.getByText("512 B")).toBeInTheDocument();
+  });
+
   it("shows aggregate metadata during multi-select", () => {
     render(
       <ExplorerInspector

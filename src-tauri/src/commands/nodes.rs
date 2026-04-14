@@ -25,7 +25,8 @@ pub fn delete_node(
     let mut conn =
         open_database(&state.db_path).map_err(|error: rusqlite::Error| error.to_string())?;
     let mount_id = resolve_mount_id(&conn, &input.node_id)?;
-    let snapshot = delete_node_record(&mut conn, &input)?;
+    let notes_dir = state.storage_dir.join("notes");
+    let snapshot = delete_node_record(&mut conn, &input, &notes_dir)?;
     if let Some(mount_id) = mount_id {
         state.mount_watchers.stop_mount(&mount_id);
     }
