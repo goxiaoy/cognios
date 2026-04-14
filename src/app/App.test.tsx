@@ -12,14 +12,24 @@ vi.mock("../lib/tauri/ipc", () => ({
   getNodeThumbnail: vi.fn().mockResolvedValue("data:image/png;base64,AA=="),
   createFolder: (input: unknown) => createFolder(input),
   createMount: (input: unknown) => createMount(input),
+  createNote: vi.fn(),
   createUrl: (input: unknown) => createUrl(input),
   renameNode: vi.fn(),
   deleteNode: vi.fn(),
-  retryUrl: vi.fn()
+  retryUrl: vi.fn(),
+  getNoteContent: vi.fn().mockResolvedValue(""),
+  saveNoteContent: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => Promise.resolve())
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    onCloseRequested: vi.fn().mockResolvedValue(() => {}),
+    close: vi.fn(),
+  }),
 }));
 
 describe("App", () => {

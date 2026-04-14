@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ExplorerClient, ExplorerNode } from "../types/explorer";
 import type { CreateAction } from "./CreateMenu";
 import { useExplorerEvents } from "../hooks/useExplorerEvents";
@@ -6,6 +7,7 @@ import { useExplorerStore } from "../store/useExplorerStore";
 import { ExplorerContentGrid } from "./ExplorerContentGrid";
 import { ExplorerInspector } from "./ExplorerInspector";
 import { MountModal } from "./MountModal";
+import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
 import { UrlModal } from "./UrlModal";
 
 export function ExplorerLayout({
@@ -17,6 +19,8 @@ export function ExplorerLayout({
 }) {
   const store = useExplorerStore(client);
   const [openModal, setOpenModal] = useState<CreateAction | null>(null);
+  const [noteFlushError, setNoteFlushError] = useState<string | null>(null);
+  const noteEditorRef = useRef<NoteEditorHandle>(null);
 
   useEffect(() => {
     void (async () => {
@@ -32,9 +36,51 @@ export function ExplorerLayout({
 
   useExplorerEvents(store.refresh);
 
+  // Flush any pending note save and close the editor. If flush fails, surface
+  // the error and keep the editor open (blocks navigation per R12).
+  async function flushAndCloseEditor() {
+    if (!noteEditorRef.current) {
+      store.setActiveNoteId(null);
+      setNoteFlushError(null);
+      return;
+    }
+    try {
+      await noteEditorRef.current.flush();
+      store.setActiveNoteId(null);
+      setNoteFlushError(null);
+    } catch (cause) {
+      setNoteFlushError(
+        cause instanceof Error ? cause.message : "Failed to save note"
+      );
+    }
+  }
+
+  // Register window close handler — flush before allowing the window to close.
+  useEffect(() => {
+    let unlistenFn: (() => void) | undefined;
+
+    getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (noteEditorRef.current) {
+          event.preventDefault();
+          await noteEditorRef.current.flush().catch(() => {});
+          getCurrentWindow().close();
+        }
+      })
+      .then((fn) => {
+        unlistenFn = fn;
+      });
+
+    return () => {
+      unlistenFn?.();
+    };
+  }, []);
+
   function handleCreateSelect(action: CreateAction) {
     if (action === "folder") {
       void handleFolderCreate();
+    } else if (action === "note") {
+      void handleNoteCreate();
     } else {
       setOpenModal(action);
     }
@@ -44,6 +90,25 @@ export function ExplorerLayout({
     const snapshot = await store.runAction("folder", () =>
       client.createFolder({
         name: "Untitled",
+        parentId: store.displayedFolder ? store.displayedFolder.id : undefined
+      })
+    );
+    if (snapshot) {
+      const prevIds = collectIds(store.snapshot.roots);
+      store.applySnapshot(snapshot);
+      for (const root of snapshot.roots) {
+        const newId = findNewId(root, prevIds);
+        if (newId) {
+          store.setPendingInlineRenameId(newId);
+          break;
+        }
+      }
+    }
+  }
+
+  async function handleNoteCreate() {
+    const snapshot = await store.runAction("note", () =>
+      client.createNote({
         parentId: store.displayedFolder ? store.displayedFolder.id : undefined
       })
     );
@@ -111,6 +176,8 @@ export function ExplorerLayout({
     }
   }
 
+  const noteIsOpen = !!store.activeNoteId && !!store.activeNote;
+
   return (
     <section
       aria-hidden={!active}
@@ -118,12 +185,27 @@ export function ExplorerLayout({
     >
       {store.error ? <p className="error-banner">{store.error}</p> : null}
 
-      <div className={`explorer-workspace${store.inspectorNode || store.selectionCount > 1 ? " has-inspector" : ""}`}>
+      <div className={`explorer-workspace${!noteIsOpen && (store.inspectorNode || store.selectionCount > 1) ? " has-inspector" : ""}`}>
         {store.isLoading ? (
           <p className="empty-state">Loading explorer...</p>
         ) : null}
 
-        {!store.isLoading ? (
+        {!store.isLoading && noteIsOpen ? (
+          <NoteEditor
+            ref={noteEditorRef}
+            client={client}
+            flushError={noteFlushError}
+            initialTitle={store.activeNote!.name}
+            nodeId={store.activeNoteId!}
+            onBack={() => void flushAndCloseEditor()}
+            onTitleChange={() => {
+              // Refresh the tree so the new title appears in the node list.
+              void store.refresh().catch(() => {});
+            }}
+          />
+        ) : null}
+
+        {!store.isLoading && !noteIsOpen ? (
           <ExplorerContentGrid
             breadcrumbs={store.breadcrumbs}
             loadThumbnail={client.getNodeThumbnail}
@@ -144,13 +226,15 @@ export function ExplorerLayout({
           />
         ) : null}
 
-        <aside className="inspector-panel">
-          <ExplorerInspector
-            node={store.inspectorNode}
-            selectedArtifacts={store.selectedArtifacts}
-            selectionCount={store.selectionCount}
-          />
-        </aside>
+        {!noteIsOpen ? (
+          <aside className="inspector-panel">
+            <ExplorerInspector
+              node={store.inspectorNode}
+              selectedArtifacts={store.selectedArtifacts}
+              selectionCount={store.selectionCount}
+            />
+          </aside>
+        ) : null}
       </div>
 
       {openModal === "mount" ? (

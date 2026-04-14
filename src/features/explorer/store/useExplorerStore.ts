@@ -19,11 +19,13 @@ export function useExplorerStore(client: ExplorerClient) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeAction, setActiveAction] = useState<
-    "folder" | "mount" | "url" | "rename" | "delete" | "retry" | null
+    "folder" | "mount" | "url" | "note" | "rename" | "delete" | "retry" | null
   >(null);
   const [pendingInlineRenameId, setPendingInlineRenameId] = useState<string | null>(null);
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
 
   const nodeIndex = useMemo(() => indexNodes(snapshot.roots), [snapshot]);
+  const activeNote = activeNoteId ? (nodeIndex.get(activeNoteId) ?? null) : null;
   const displayedFolder = displayedFolderId
     ? asDisplayFolder(nodeIndex.get(displayedFolderId) ?? null)
     : null;
@@ -148,8 +150,14 @@ export function useExplorerStore(client: ExplorerClient) {
   const activateArtifact = useCallback(
     (nodeId: string) => {
       const node = nodeIndex.get(nodeId) ?? null;
-      if (!node || !isDisplayFolder(node)) return;
-      selectDisplayedFolder(node.id);
+      if (!node) return;
+      if (isDisplayFolder(node)) {
+        selectDisplayedFolder(node.id);
+        return;
+      }
+      if (node.kind === "note") {
+        setActiveNoteId(node.id);
+      }
     },
     [nodeIndex, selectDisplayedFolder]
   );
@@ -208,7 +216,10 @@ export function useExplorerStore(client: ExplorerClient) {
     toggleHierarchyCollapsed,
     runAction,
     pendingInlineRenameId,
-    setPendingInlineRenameId
+    setPendingInlineRenameId,
+    activeNoteId,
+    setActiveNoteId,
+    activeNote,
   };
 }
 

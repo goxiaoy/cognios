@@ -47,11 +47,14 @@ describe("useExplorerStore", () => {
       getExplorerSnapshot: vi.fn().mockResolvedValue(snapshot),
       createFolder: vi.fn(),
       createMount: vi.fn(),
+      createNote: vi.fn(),
       createUrl: vi.fn(),
       renameNode: vi.fn(),
       deleteNode: vi.fn(),
       retryUrl: vi.fn(),
-      getNodeThumbnail: vi.fn()
+      getNodeThumbnail: vi.fn(),
+      getNoteContent: vi.fn(),
+      saveNoteContent: vi.fn(),
     };
 
     const { result } = renderHook(() => useExplorerStore(client));
