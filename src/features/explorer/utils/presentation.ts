@@ -31,6 +31,8 @@ export function formatNodeKindLabel(node: ExplorerNode) {
       return "DIRECTORY";
     case "file":
       return fileBadgeFromName(node.name);
+    case "note":
+      return "NOTE";
   }
 }
 
@@ -83,6 +85,8 @@ export function nodeGlyph(node: ExplorerNode) {
       return "↗";
     case "file":
       return glyphFromName(node.name);
+    case "note":
+      return "¶";
   }
 }
 
@@ -96,6 +100,7 @@ export function nodeIconComponent(node: ExplorerNode): React.ComponentType<{ siz
     case "directory": return FolderOpen;
     case "mount":     return HardDrive;
     case "url":       return Globe;
+    case "note":      return FileText;
     case "file": {
       const ext = extensionOf(node.name);
       if (IMAGE_EXTENSIONS.has(ext))    return FileImage;

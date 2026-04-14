@@ -2,12 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CreateFolderInput,
   CreateMountInput,
+  CreateNoteInput,
   CreateUrlInput,
   DeleteNodeInput,
-  ExplorerSnapshot
-  ,
+  ExplorerSnapshot,
   RenameNodeInput,
-  RetryUrlInput
+  RetryUrlInput,
 } from "../contracts/vfs";
 
 export async function getExplorerSnapshot(): Promise<ExplorerSnapshot> {
@@ -42,6 +42,23 @@ export async function deleteNode(
   input: DeleteNodeInput
 ): Promise<ExplorerSnapshot> {
   return invoke<ExplorerSnapshot>("delete_node", { input });
+}
+
+export async function createNote(
+  input: CreateNoteInput
+): Promise<ExplorerSnapshot> {
+  return invoke<ExplorerSnapshot>("create_note", { input });
+}
+
+export async function getNoteContent(noteId: string): Promise<string> {
+  return invoke<string>("get_note_content", { noteId });
+}
+
+export async function saveNoteContent(
+  noteId: string,
+  body: string
+): Promise<void> {
+  return invoke<void>("save_note_content", { input: { noteId, body } });
 }
 
 export async function retryUrl(input: RetryUrlInput): Promise<void> {

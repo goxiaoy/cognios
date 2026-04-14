@@ -1,11 +1,12 @@
 import { Plus } from "lucide-react";
 
-export type CreateAction = "mount" | "folder" | "url";
+export type CreateAction = "mount" | "folder" | "url" | "note";
 
 const MENU_ITEMS: Array<{ action: CreateAction; label: string; hint: string }> = [
   { action: "mount",  label: "Mount Directory", hint: "Link a local folder" },
   { action: "folder", label: "New Folder",       hint: "Create in workspace" },
-  { action: "url",    label: "Add URL",          hint: "Save a web resource" }
+  { action: "url",    label: "Add URL",          hint: "Save a web resource" },
+  { action: "note",   label: "New Note",         hint: "Write markdown locally" },
 ];
 
 export function CreateMenu({ onSelect }: { onSelect(action: CreateAction): void }) {

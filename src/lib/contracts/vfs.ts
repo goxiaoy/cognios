@@ -1,4 +1,4 @@
-export type NodeKind = "folder" | "url" | "mount" | "directory" | "file";
+export type NodeKind = "folder" | "url" | "mount" | "directory" | "file" | "note";
 
 export type NodeState =
   | "ready"
@@ -26,6 +26,10 @@ export interface ExplorerSnapshot {
 
 export interface CreateFolderInput {
   name: string;
+  parentId?: string | null;
+}
+
+export interface CreateNoteInput {
   parentId?: string | null;
 }
 
