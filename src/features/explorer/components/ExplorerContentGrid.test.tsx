@@ -27,26 +27,32 @@ const nodes = [
   }
 ] as const;
 
+const baseProps = {
+  breadcrumbs: [],
+  loadThumbnail: vi.fn().mockResolvedValue("data:image/png;base64,AA=="),
+  pendingInlineRenameId: null,
+  selectedIds: [] as string[],
+  selectionCount: 0,
+  onActivate: vi.fn(),
+  onBreadcrumbSelect: vi.fn(),
+  onCreateSelect: vi.fn(),
+  onDelete: vi.fn(),
+  onInlineRename: vi.fn(),
+  onRetry: vi.fn(),
+  onSelect: vi.fn(),
+  onStartRename: vi.fn(),
+  onViewModeChange: vi.fn()
+};
+
 describe("ExplorerContentGrid", () => {
   it("renders list mode name-sorted and forwards selection", () => {
     const onSelect = vi.fn();
 
     render(
       <ExplorerContentGrid
-        displayedFolderName="Inbox"
-        loadThumbnail={vi.fn().mockResolvedValue("data:image/png;base64,AA==")}
+        {...baseProps}
         nodes={nodes as never}
-        pendingInlineRenameId={null}
-        onActivate={vi.fn()}
-        onCreateSelect={vi.fn()}
-        onDelete={vi.fn()}
-        onInlineRename={vi.fn()}
-        onRetry={vi.fn()}
         onSelect={onSelect}
-        onStartRename={vi.fn()}
-        onViewModeChange={vi.fn()}
-        selectedIds={[]}
-        selectionCount={0}
         viewMode="list"
       />
     );
@@ -64,20 +70,8 @@ describe("ExplorerContentGrid", () => {
   it("renders required date buckets in date mode", () => {
     render(
       <ExplorerContentGrid
-        displayedFolderName="Inbox"
-        loadThumbnail={vi.fn().mockResolvedValue("data:image/png;base64,AA==")}
+        {...baseProps}
         nodes={nodes as never}
-        pendingInlineRenameId={null}
-        onActivate={vi.fn()}
-        onCreateSelect={vi.fn()}
-        onDelete={vi.fn()}
-        onInlineRename={vi.fn()}
-        onRetry={vi.fn()}
-        onSelect={vi.fn()}
-        onStartRename={vi.fn()}
-        onViewModeChange={vi.fn()}
-        selectedIds={[]}
-        selectionCount={0}
         viewMode="date"
       />
     );
@@ -85,5 +79,24 @@ describe("ExplorerContentGrid", () => {
     expect(
       screen.getAllByText(/Today|Yesterday|This Week|Earlier/i).length
     ).toBeGreaterThan(0);
+  });
+
+  it("shows breadcrumb ancestors and current folder name", () => {
+    render(
+      <ExplorerContentGrid
+        {...baseProps}
+        breadcrumbs={[
+          { id: "p", parentId: null, name: "Projects", kind: "folder", state: "ready",
+            createdAt: "", modifiedAt: "", sizeBytes: 0, children: [] },
+          { id: "c", parentId: "p", name: "Code", kind: "folder", state: "ready",
+            createdAt: "", modifiedAt: "", sizeBytes: 0, children: [] }
+        ] as never}
+        nodes={[] as never}
+        viewMode="grid"
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Projects" })).toBeInTheDocument();
+    expect(screen.getByText("Code")).toBeInTheDocument();
   });
 });

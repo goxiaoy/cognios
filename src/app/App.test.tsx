@@ -67,7 +67,6 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByText(/no visible artifacts/i);
-    // The create dropdown items are in the DOM even when CSS-hidden
     fireEvent.click(screen.getByRole("menuitem", { name: /New Folder/i }));
 
     await waitFor(() => {
@@ -114,7 +113,6 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByText(/no visible artifacts/i);
-    // Open mount modal from the dropdown (CSS-hidden but queryable in JSDOM)
     fireEvent.click(screen.getByRole("menuitem", { name: /Mount Directory/i }));
 
     fireEvent.change(screen.getByPlaceholderText(/~\/projects\/example/i), {
@@ -159,7 +157,6 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByText(/no visible artifacts/i);
-    // Open URL modal from the dropdown
     fireEvent.click(screen.getByRole("menuitem", { name: /Add URL/i }));
 
     fireEvent.change(screen.getByPlaceholderText(/https:\/\/example.com/i), {

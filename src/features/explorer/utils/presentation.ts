@@ -1,3 +1,14 @@
+import type React from "react";
+import {
+  File,
+  FileCode,
+  FileImage,
+  FileText,
+  Folder,
+  FolderOpen,
+  Globe,
+  HardDrive
+} from "lucide-react";
 import type { ExplorerNode } from "../types/explorer";
 
 const DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
@@ -77,6 +88,22 @@ export function nodeGlyph(node: ExplorerNode) {
 
 export function isImageNode(node: ExplorerNode) {
   return node.kind === "file" && IMAGE_EXTENSIONS.has(extensionOf(node.name));
+}
+
+export function nodeIconComponent(node: ExplorerNode): React.ComponentType<{ size?: number; className?: string; "aria-hidden"?: boolean }> {
+  switch (node.kind) {
+    case "folder":    return Folder;
+    case "directory": return FolderOpen;
+    case "mount":     return HardDrive;
+    case "url":       return Globe;
+    case "file": {
+      const ext = extensionOf(node.name);
+      if (IMAGE_EXTENSIONS.has(ext))    return FileImage;
+      if (MARKDOWN_EXTENSIONS.has(ext)) return FileText;
+      if (CODE_EXTENSIONS.has(ext))     return FileCode;
+      return File;
+    }
+  }
 }
 
 function fileBadgeFromName(name: string) {

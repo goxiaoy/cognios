@@ -1,9 +1,11 @@
+import { Plus } from "lucide-react";
+
 export type CreateAction = "mount" | "folder" | "url";
 
 const MENU_ITEMS: Array<{ action: CreateAction; label: string; hint: string }> = [
-  { action: "mount", label: "Mount Directory", hint: "Link a local folder" },
-  { action: "folder", label: "New Folder",      hint: "Create in workspace" },
-  { action: "url",   label: "Add URL",          hint: "Save a web resource" }
+  { action: "mount",  label: "Mount Directory", hint: "Link a local folder" },
+  { action: "folder", label: "New Folder",       hint: "Create in workspace" },
+  { action: "url",    label: "Add URL",          hint: "Save a web resource" }
 ];
 
 export function CreateMenu({ onSelect }: { onSelect(action: CreateAction): void }) {
@@ -14,7 +16,8 @@ export function CreateMenu({ onSelect }: { onSelect(action: CreateAction): void 
         className="create-trigger"
         type="button"
       >
-        + New
+        <Plus size={13} aria-hidden="true" />
+        New
       </button>
       <div className="create-dropdown" role="menu">
         {MENU_ITEMS.map(({ action, label, hint }) => (

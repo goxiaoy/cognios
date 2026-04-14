@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { House } from "lucide-react";
 import type { ExplorerNode, ExplorerViewMode } from "../types/explorer";
 import { dateBucketLabel } from "../utils/presentation";
 import { ArtifactCard } from "./ArtifactCard";
@@ -6,7 +7,7 @@ import { CreateMenu, type CreateAction } from "./CreateMenu";
 import { ViewModeToggle } from "./ViewModeToggle";
 
 export function ExplorerContentGrid({
-  displayedFolderName,
+  breadcrumbs,
   loadThumbnail,
   nodes,
   selectedIds,
@@ -14,6 +15,7 @@ export function ExplorerContentGrid({
   viewMode,
   pendingInlineRenameId,
   onActivate,
+  onBreadcrumbSelect,
   onCreateSelect,
   onDelete,
   onInlineRename,
@@ -22,7 +24,7 @@ export function ExplorerContentGrid({
   onStartRename,
   onViewModeChange
 }: {
-  displayedFolderName: string;
+  breadcrumbs: ExplorerNode[];
   loadThumbnail(nodeId: string): Promise<string>;
   nodes: ExplorerNode[];
   selectedIds: string[];
@@ -30,6 +32,7 @@ export function ExplorerContentGrid({
   viewMode: ExplorerViewMode;
   pendingInlineRenameId: string | null;
   onActivate(nodeId: string): void;
+  onBreadcrumbSelect(nodeId: string | null): void;
   onCreateSelect(action: CreateAction): void;
   onDelete(nodeId: string, cascade: boolean): void;
   onInlineRename(nodeId: string, newName: string): void;
@@ -47,15 +50,46 @@ export function ExplorerContentGrid({
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const groupedByDate = useMemo(() => groupByDate(sortedNodes), [sortedNodes]);
 
+  const currentName = breadcrumbs.length > 0
+    ? breadcrumbs[breadcrumbs.length - 1].name
+    : "Workspace";
+  const ancestors = breadcrumbs.slice(0, -1);
+  const fullPath = breadcrumbs.length > 0
+    ? breadcrumbs.map((n) => n.name).join(" / ")
+    : "Workspace";
+
   return (
     <section className="content-panel">
       <header className="content-header">
-        <div className="content-header-title">
-          <h3>{displayedFolderName}</h3>
-          <span className="content-header-count">
-            {nodes.length}{selectionCount > 0 ? ` · ${selectionCount} selected` : ""}
-          </span>
-        </div>
+        <nav aria-label="Location" className="content-nav">
+          <button
+            aria-label="Go to workspace root"
+            className="content-nav-home"
+            onClick={() => onBreadcrumbSelect(null)}
+            title={fullPath}
+            type="button"
+          >
+            <House size={13} aria-hidden="true" />
+          </button>
+          {ancestors.map((node) => (
+            <span key={node.id} className="content-nav-crumb">
+              <span className="content-nav-sep">/</span>
+              <button
+                className="content-nav-ancestor"
+                onClick={() => onBreadcrumbSelect(node.id)}
+                type="button"
+              >
+                {node.name}
+              </button>
+            </span>
+          ))}
+          {breadcrumbs.length > 0 ? (
+            <span className="content-nav-crumb">
+              <span className="content-nav-sep">/</span>
+            </span>
+          ) : null}
+          <h2 className="content-nav-title">{currentName}</h2>
+        </nav>
         <div className="content-header-actions">
           <CreateMenu onSelect={onCreateSelect} />
           <ViewModeToggle onChange={onViewModeChange} value={viewMode} />
@@ -115,6 +149,10 @@ export function ExplorerContentGrid({
             </section>
           ))}
         </div>
+      ) : null}
+
+      {sortedNodes.length > 0 ? (
+        <p className="content-total">{sortedNodes.length} items</p>
       ) : null}
     </section>
   );

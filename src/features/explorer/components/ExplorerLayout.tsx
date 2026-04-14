@@ -3,7 +3,6 @@ import type { ExplorerClient, ExplorerNode } from "../types/explorer";
 import type { CreateAction } from "./CreateMenu";
 import { useExplorerEvents } from "../hooks/useExplorerEvents";
 import { useExplorerStore } from "../store/useExplorerStore";
-import { Breadcrumbs } from "./Breadcrumbs";
 import { ExplorerContentGrid } from "./ExplorerContentGrid";
 import { ExplorerInspector } from "./ExplorerInspector";
 import { MountModal } from "./MountModal";
@@ -117,13 +116,6 @@ export function ExplorerLayout({
       aria-hidden={!active}
       className={`explorer-layout${active ? " is-active" : " is-hidden"}`}
     >
-      <div className="explorer-breadcrumb-bar">
-        <Breadcrumbs
-          nodes={store.breadcrumbs}
-          onSelect={(id) => store.selectDisplayedFolder(id)}
-        />
-      </div>
-
       {store.error ? <p className="error-banner">{store.error}</p> : null}
 
       <div className={`explorer-workspace${store.inspectorNode || store.selectionCount > 1 ? " has-inspector" : ""}`}>
@@ -133,11 +125,12 @@ export function ExplorerLayout({
 
         {!store.isLoading ? (
           <ExplorerContentGrid
-            displayedFolderName={store.displayedFolder?.name ?? "Workspace"}
+            breadcrumbs={store.breadcrumbs}
             loadThumbnail={client.getNodeThumbnail}
             nodes={store.visibleArtifacts}
             pendingInlineRenameId={store.pendingInlineRenameId}
             onActivate={store.activateArtifact}
+            onBreadcrumbSelect={store.selectDisplayedFolder}
             onCreateSelect={handleCreateSelect}
             onDelete={handleDeleteById}
             onInlineRename={handleInlineRename}

@@ -3,9 +3,8 @@ import type { ExplorerNode, ExplorerViewMode } from "../types/explorer";
 import { isDisplayFolder } from "../store/useExplorerStore";
 import {
   formatNodeDate,
-  formatNodeKindLabel,
   isImageNode,
-  nodeGlyph
+  nodeIconComponent
 } from "../utils/presentation";
 
 const thumbnailCache = new Map<string, string>();
@@ -135,18 +134,23 @@ export function ArtifactCard({
   return (
     <>
       <button
-        className={`artifact-card artifact-card-${mode}${selected ? " is-selected" : ""}`}
+        className={`artifact-card${selected ? " is-selected" : ""}`}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         onDoubleClick={() => onActivate(node.id)}
         onKeyDown={handleKeyDown}
         type="button"
       >
+        {/* Inner div owns the grid layout — WebKit doesn't apply grid-template-rows on <button> */}
+        <div className={`artifact-card-inner artifact-card-${mode}`}>
         <span className="artifact-visual" aria-hidden="true">
           {thumbnailSrc ? (
             <img alt="" className="artifact-thumbnail" src={thumbnailSrc} />
           ) : (
-            nodeGlyph(node)
+            (() => {
+              const Icon = nodeIconComponent(node);
+              return <Icon className="artifact-type-icon" aria-hidden={true} />;
+            })()
           )}
         </span>
         <span className="artifact-copy">
@@ -164,10 +168,10 @@ export function ArtifactCard({
             <span className="artifact-name">{node.name}</span>
           )}
           <span className="artifact-meta">
-            <span className="artifact-badge">{formatNodeKindLabel(node)}</span>
             <span className="artifact-date">{formatNodeDate(node.modifiedAt)}</span>
           </span>
         </span>
+        </div>
       </button>
 
       {menuPos ? (
