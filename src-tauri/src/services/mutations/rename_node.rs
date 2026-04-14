@@ -28,7 +28,7 @@ pub fn rename_node(
     let node = load_node(conn, &input.node_id)?.ok_or_else(|| "node not found".to_string())?;
 
     match node.kind {
-        NodeKind::Folder | NodeKind::Url | NodeKind::Mount => {
+        NodeKind::Folder | NodeKind::Url | NodeKind::Mount | NodeKind::Note => {
             match node.kind {
                 NodeKind::Url => conn
                     .execute(

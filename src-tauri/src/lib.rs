@@ -19,6 +19,7 @@ const VFS_EVENT_NAME: &str = "vfs://changed";
 
 pub struct AppState {
     pub db_path: PathBuf,
+    pub storage_dir: PathBuf,
     pub mount_watchers: Arc<MountWatcherRegistry>,
     pub url_jobs: Arc<UrlJobRunner>,
 }
@@ -44,6 +45,8 @@ pub fn run() {
             let app_data_dir = storage_dir_from_home(home_dir);
 
             fs::create_dir_all(&app_data_dir).map_err(|error| error.to_string())?;
+            fs::create_dir_all(app_data_dir.join("notes"))
+                .map_err(|error| error.to_string())?;
 
             let db_path = app_data_dir.join("cognios.db");
             let cache_dir = app_data_dir.join("url-cache");
@@ -70,6 +73,7 @@ pub fn run() {
 
             app.manage(AppState {
                 db_path,
+                storage_dir: app_data_dir,
                 mount_watchers,
                 url_jobs,
             });
@@ -82,6 +86,9 @@ pub fn run() {
             commands::mounts::create_mount,
             commands::nodes::rename_node,
             commands::nodes::delete_node,
+            commands::notes::create_note,
+            commands::notes::get_note_content,
+            commands::notes::save_note_content,
             commands::thumbnails::get_node_thumbnail,
             commands::urls::create_url,
             commands::urls::retry_url

@@ -9,6 +9,7 @@ pub enum NodeKind {
     Mount,
     Directory,
     File,
+    Note,
 }
 
 impl NodeKind {
@@ -19,6 +20,7 @@ impl NodeKind {
             Self::Mount => "mount",
             Self::Directory => "directory",
             Self::File => "file",
+            Self::Note => "note",
         }
     }
 
@@ -28,6 +30,7 @@ impl NodeKind {
             "mount" => Self::Mount,
             "directory" => Self::Directory,
             "file" => Self::File,
+            "note" => Self::Note,
             _ => Self::Folder,
         }
     }

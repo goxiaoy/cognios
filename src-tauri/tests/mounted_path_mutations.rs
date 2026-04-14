@@ -14,6 +14,8 @@ fn renames_and_deletes_mounted_paths_and_rejects_unavailable_mounts() {
     let app_tempdir = tempdir().expect("app tempdir");
     let mount_tempdir = tempdir().expect("mount tempdir");
     let db_path = app_tempdir.path().join("cognios.db");
+    let notes_dir = app_tempdir.path().join("notes");
+    fs::create_dir_all(&notes_dir).expect("notes dir");
 
     fs::write(mount_tempdir.path().join("alpha.txt"), "alpha").expect("alpha file");
 
@@ -68,6 +70,7 @@ fn renames_and_deletes_mounted_paths_and_rejects_unavailable_mounts() {
                 node_id: renamed_file_id.clone(),
                 cascade: None,
             },
+            &notes_dir,
         )
         .expect("delete mounted file");
         assert!(!snapshot.roots[0]

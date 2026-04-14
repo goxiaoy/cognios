@@ -15,6 +15,8 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
     let app_tempdir = tempdir().expect("app tempdir");
     let mount_tempdir = tempdir().expect("mount tempdir");
     let db_path = app_tempdir.path().join("cognios.db");
+    let notes_dir = app_tempdir.path().join("notes");
+    fs::create_dir_all(&notes_dir).expect("notes dir");
     fs::write(mount_tempdir.path().join("keep.txt"), "keep").expect("mount file");
 
     let (root_folder_id, child_folder_id, url_node_id, mount_node_id) = {
@@ -102,6 +104,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
                 node_id: root_folder_id.clone(),
                 cascade: None,
             },
+            &notes_dir,
         )
         .expect_err("non-empty folder should require cascade");
         assert!(error.contains("folder not empty"));
@@ -115,6 +118,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
                 node_id: url_node_id.clone(),
                 cascade: None,
             },
+            &notes_dir,
         )
         .expect("delete url");
         assert!(!snapshot.roots.iter().any(|node| node.id == url_node_id));
@@ -136,6 +140,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
                 node_id: mount_node_id.clone(),
                 cascade: None,
             },
+            &notes_dir,
         )
         .expect("delete mount");
         assert!(!snapshot.roots.iter().any(|node| node.id == mount_node_id));
@@ -153,6 +158,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
                 node_id: root_folder_id,
                 cascade: Some(true),
             },
+            &notes_dir,
         )
         .expect("delete folder cascade");
         assert!(!snapshot.roots.iter().any(|node| node.id == child_folder_id));

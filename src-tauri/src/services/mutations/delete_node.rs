@@ -20,6 +20,7 @@ pub struct DeleteNodeInput {
 pub fn delete_node(
     conn: &mut Connection,
     input: &DeleteNodeInput,
+    notes_dir: &std::path::Path,
 ) -> Result<ExplorerSnapshotDto, String> {
     let node = load_node(conn, &input.node_id)?.ok_or_else(|| "node not found".to_string())?;
 
@@ -42,6 +43,16 @@ pub fn delete_node(
                 .map_err(|error| error.to_string())?;
         }
         NodeKind::Mount => {
+            conn.execute("DELETE FROM nodes WHERE id = ?1", [&input.node_id])
+                .map_err(|error| error.to_string())?;
+            touch_node_modified_at(conn, node.parent_id.as_deref())
+                .map_err(|error| error.to_string())?;
+        }
+        NodeKind::Note => {
+            let note_path = notes_dir.join(format!("{}.md", input.node_id));
+            if note_path.exists() {
+                fs::remove_file(&note_path).map_err(|error| error.to_string())?;
+            }
             conn.execute("DELETE FROM nodes WHERE id = ?1", [&input.node_id])
                 .map_err(|error| error.to_string())?;
             touch_node_modified_at(conn, node.parent_id.as_deref())
