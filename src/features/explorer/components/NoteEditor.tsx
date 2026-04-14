@@ -37,15 +37,25 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
     const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
+      let cancelled = false;
       void (async () => {
         try {
           const content = await client.getNoteContent(nodeId);
-          setBody(content);
+          if (!cancelled) setBody(content);
         } finally {
-          setIsLoadingBody(false);
+          if (!cancelled) setIsLoadingBody(false);
         }
       })();
+      return () => { cancelled = true; };
     }, [client, nodeId]);
+
+    useEffect(() => {
+      return () => {
+        if (debounceTimerRef.current !== null) {
+          clearTimeout(debounceTimerRef.current);
+        }
+      };
+    }, []);
 
     useImperativeHandle(ref, () => ({
       async flush() {
@@ -58,7 +68,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
         pendingBodyRef.current = null;
         await client.saveNoteContent(nodeId, toSave);
       },
-    }));
+    }), [client, nodeId]);
 
     function handleBodyChange(value: string) {
       setBody(value);

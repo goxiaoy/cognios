@@ -61,9 +61,10 @@ export function ExplorerLayout({
 
     getCurrentWindow()
       .onCloseRequested(async (event) => {
-        if (noteEditorRef.current) {
+        const editor = noteEditorRef.current;
+        if (editor) {
           event.preventDefault();
-          await noteEditorRef.current.flush().catch(() => {});
+          await editor.flush().catch(() => {});
           getCurrentWindow().close();
         }
       })
