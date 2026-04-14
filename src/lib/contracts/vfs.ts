@@ -14,6 +14,9 @@ export interface ExplorerNode {
   name: string;
   kind: NodeKind;
   state: NodeState;
+  createdAt: string;
+  modifiedAt: string;
+  sizeBytes: number;
   children: ExplorerNode[];
 }
 

@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
@@ -12,6 +13,9 @@ pub struct ScannedMountEntry {
     pub parent_relative_path: Option<String>,
     pub name: String,
     pub kind: NodeKind,
+    pub created_at_epoch: Option<i64>,
+    pub modified_at_epoch: Option<i64>,
+    pub size_bytes: i64,
 }
 
 pub fn scan_mount(root: &Path, ignore_config: &str) -> Result<Vec<ScannedMountEntry>, String> {
@@ -51,6 +55,7 @@ fn scan_dir(
         let path = entry.path();
         let file_type = entry.file_type().map_err(|error| error.to_string())?;
         let is_dir = file_type.is_dir();
+        let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
 
         if matcher
             .matched_path_or_any_parents(&path, is_dir)
@@ -72,6 +77,10 @@ fn scan_dir(
             } else {
                 NodeKind::File
             },
+            created_at_epoch: to_unix_epoch_seconds(metadata.created().ok())
+                .or_else(|| to_unix_epoch_seconds(metadata.modified().ok())),
+            modified_at_epoch: to_unix_epoch_seconds(metadata.modified().ok()),
+            size_bytes: if is_dir { 0 } else { metadata.len() as i64 },
         });
 
         if is_dir {
@@ -115,4 +124,10 @@ fn shellexpand(path: &str) -> String {
     }
 
     path.to_string()
+}
+
+fn to_unix_epoch_seconds(value: Option<SystemTime>) -> Option<i64> {
+    value
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs() as i64)
 }

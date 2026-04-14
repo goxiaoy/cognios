@@ -1,21 +1,22 @@
-import { FormEvent, useEffect, useState } from "react";
-import { DEFAULT_MOUNT_IGNORE_CONFIG } from "../../../lib/contracts/vfs";
-import type { ExplorerClient } from "../types/explorer";
+import { useEffect, useState } from "react";
+import type { ExplorerClient, ExplorerNode } from "../types/explorer";
+import type { CreateAction } from "./CreateMenu";
 import { useExplorerEvents } from "../hooks/useExplorerEvents";
 import { useExplorerStore } from "../store/useExplorerStore";
-import { Breadcrumbs } from "./Breadcrumbs";
-import { CreateNodeDialog } from "./CreateNodeDialog";
-import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
-import { ExplorerTree } from "./ExplorerTree";
+import { ExplorerContentGrid } from "./ExplorerContentGrid";
+import { ExplorerInspector } from "./ExplorerInspector";
+import { MountModal } from "./MountModal";
+import { UrlModal } from "./UrlModal";
 
-export function ExplorerLayout({ client }: { client: ExplorerClient }) {
+export function ExplorerLayout({
+  active,
+  client
+}: {
+  active: boolean;
+  client: ExplorerClient;
+}) {
   const store = useExplorerStore(client);
-  const [folderName, setFolderName] = useState("");
-  const [mountPath, setMountPath] = useState("");
-  const [mountIgnoreConfig, setMountIgnoreConfig] = useState(DEFAULT_MOUNT_IGNORE_CONFIG);
-  const [urlValue, setUrlValue] = useState("");
-  const [renameValue, setRenameValue] = useState("");
-  const [cascadeDelete, setCascadeDelete] = useState(false);
+  const [openModal, setOpenModal] = useState<CreateAction | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -31,81 +32,49 @@ export function ExplorerLayout({ client }: { client: ExplorerClient }) {
 
   useExplorerEvents(store.refresh);
 
-  useEffect(() => {
-    setRenameValue(store.selectedNode?.name ?? "");
-    setCascadeDelete(false);
-  }, [store.selectedNode]);
+  function handleCreateSelect(action: CreateAction) {
+    if (action === "folder") {
+      void handleFolderCreate();
+    } else {
+      setOpenModal(action);
+    }
+  }
 
-  async function handleFolderSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmedName = folderName.trim();
-    if (!trimmedName) return;
-
+  async function handleFolderCreate() {
     const snapshot = await store.runAction("folder", () =>
-      client.createFolder({ name: trimmedName, parentId: store.selectedNode?.kind === "folder" ? store.selectedNode.id : undefined })
-    );
-    if (snapshot) {
-      store.applySnapshot(snapshot);
-      setFolderName("");
-    }
-  }
-
-  async function handleMountSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmedPath = mountPath.trim();
-    if (!trimmedPath) return;
-
-    const snapshot = await store.runAction("mount", () =>
-      client.createMount({
-        path: trimmedPath,
-        parentId: store.selectedNode?.kind === "folder" ? store.selectedNode.id : undefined,
-        ignoreConfig: mountIgnoreConfig
+      client.createFolder({
+        name: "Untitled",
+        parentId: store.displayedFolder ? store.displayedFolder.id : undefined
       })
     );
     if (snapshot) {
+      const prevIds = collectIds(store.snapshot.roots);
       store.applySnapshot(snapshot);
-      setMountPath("");
+      for (const root of snapshot.roots) {
+        const newId = findNewId(root, prevIds);
+        if (newId) {
+          store.setPendingInlineRenameId(newId);
+          break;
+        }
+      }
     }
   }
 
-  async function handleUrlSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmedUrl = urlValue.trim();
-    if (!trimmedUrl) return;
-
-    const snapshot = await store.runAction("url", () =>
-      client.createUrl({
-        url: trimmedUrl,
-        parentId: store.selectedNode?.kind === "folder" ? store.selectedNode.id : undefined
-      })
-    );
-    if (snapshot) {
-      store.applySnapshot(snapshot);
-      setUrlValue("");
-    }
-  }
-
-  async function handleRename() {
-    if (!store.selectedNode) return;
-    const trimmedName = renameValue.trim();
-    if (!trimmedName) return;
-
-    const snapshot = await store.runAction("rename", () =>
-      client.renameNode({ nodeId: store.selectedNode!.id, newName: trimmedName })
-    );
-    if (snapshot) {
-      store.applySnapshot(snapshot);
-    }
-  }
-
-  async function handleDelete() {
-    if (!store.selectedNode) return;
+  async function handleDeleteById(nodeId: string, cascade: boolean) {
     const snapshot = await store.runAction("delete", () =>
-      client.deleteNode({ nodeId: store.selectedNode!.id, cascade: cascadeDelete })
+      client.deleteNode({ nodeId, cascade })
     );
-    if (snapshot) {
-      store.applySnapshot(snapshot);
-    }
+    if (snapshot) store.applySnapshot(snapshot);
+  }
+
+  async function handleInlineRename(nodeId: string, newName: string) {
+    store.setPendingInlineRenameId(null);
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    const snapshot = await store.runAction("rename", () =>
+      client.renameNode({ nodeId, newName: trimmed })
+    );
+    if (snapshot) store.applySnapshot(snapshot);
   }
 
   async function handleRetry(nodeId: string) {
@@ -115,112 +84,110 @@ export function ExplorerLayout({ client }: { client: ExplorerClient }) {
     });
   }
 
-  return (
-    <section className="workspace-panel explorer-layout">
-      <header className="panel-header explorer-header">
-        <div>
-          <p className="eyebrow">Explorer</p>
-          <h2>VFS Graph</h2>
-        </div>
-        <Breadcrumbs nodes={store.breadcrumbs} onSelect={store.selectNode} />
-      </header>
+  async function handleMountSubmit(args: { path: string; name: string; ignoreConfig: string }) {
+    const snapshot = await store.runAction("mount", () =>
+      client.createMount({
+        path: args.path,
+        parentId: store.displayedFolder ? store.displayedFolder.id : undefined,
+        ignoreConfig: args.ignoreConfig || undefined
+      })
+    );
+    if (snapshot) {
+      store.applySnapshot(snapshot);
+      setOpenModal(null);
+    }
+  }
 
+  async function handleUrlSubmit(url: string) {
+    const snapshot = await store.runAction("url", () =>
+      client.createUrl({
+        url,
+        parentId: store.displayedFolder ? store.displayedFolder.id : undefined
+      })
+    );
+    if (snapshot) {
+      store.applySnapshot(snapshot);
+      setOpenModal(null);
+    }
+  }
+
+  return (
+    <section
+      aria-hidden={!active}
+      className={`explorer-layout${active ? " is-active" : " is-hidden"}`}
+    >
       {store.error ? <p className="error-banner">{store.error}</p> : null}
 
-      <div className="explorer-grid">
-        <section className="tree-panel">
-          {store.isLoading ? <p className="empty-state">Loading explorer...</p> : null}
-          {!store.isLoading && store.snapshot.roots.length === 0 ? (
-            <p className="empty-state">
-              No nodes yet. Create a folder, mount a directory, or add a URL to
-              verify the persistence pipeline.
-            </p>
-          ) : null}
-          {!store.isLoading && store.snapshot.roots.length > 0 ? (
-            <ExplorerTree
-              expandedIds={store.expandedIds}
-              nodes={store.snapshot.roots}
-              onRetry={handleRetry}
-              onSelect={store.selectNode}
-              onToggle={store.toggleNode}
-              selectedId={store.selectedId}
-            />
-          ) : null}
-        </section>
+      <div className={`explorer-workspace${store.inspectorNode || store.selectionCount > 1 ? " has-inspector" : ""}`}>
+        {store.isLoading ? (
+          <p className="empty-state">Loading explorer...</p>
+        ) : null}
+
+        {!store.isLoading ? (
+          <ExplorerContentGrid
+            breadcrumbs={store.breadcrumbs}
+            loadThumbnail={client.getNodeThumbnail}
+            nodes={store.visibleArtifacts}
+            pendingInlineRenameId={store.pendingInlineRenameId}
+            onActivate={store.activateArtifact}
+            onBreadcrumbSelect={store.selectDisplayedFolder}
+            onCreateSelect={handleCreateSelect}
+            onDelete={handleDeleteById}
+            onInlineRename={handleInlineRename}
+            onRetry={handleRetry}
+            onSelect={store.selectArtifact}
+            onStartRename={store.setPendingInlineRenameId}
+            onViewModeChange={store.setViewMode}
+            selectedIds={store.selectedArtifactIds}
+            selectionCount={store.selectionCount}
+            viewMode={store.viewMode}
+          />
+        ) : null}
 
         <aside className="inspector-panel">
-          <CreateNodeDialog
-            activeAction={store.activeAction}
-            folderName={folderName}
-            mountIgnoreConfig={mountIgnoreConfig}
-            mountPath={mountPath}
-            onFolderChange={setFolderName}
-            onFolderSubmit={handleFolderSubmit}
-            onMountChange={setMountPath}
-            onMountIgnoreChange={setMountIgnoreConfig}
-            onMountSubmit={handleMountSubmit}
-            onUrlChange={setUrlValue}
-            onUrlSubmit={handleUrlSubmit}
-            urlValue={urlValue}
-          />
-
-          <section className="inspector-block">
-            <header className="inspector-block-header">
-              <p className="eyebrow">Inspect</p>
-              <h3>{store.selectedNode?.name ?? "No node selected"}</h3>
-            </header>
-            {store.selectedNode ? (
-              <>
-                <dl className="detail-grid">
-                  <div>
-                    <dt>Kind</dt>
-                    <dd>{store.selectedNode.kind}</dd>
-                  </div>
-                  <div>
-                    <dt>State</dt>
-                    <dd>{store.selectedNode.state}</dd>
-                  </div>
-                  <div>
-                    <dt>Children</dt>
-                    <dd>{store.selectedNode.children.length}</dd>
-                  </div>
-                </dl>
-                <div className="field-stack">
-                  <label className="field-label" htmlFor="rename-value">
-                    Rename
-                  </label>
-                  <div className="inline-form">
-                    <input
-                      id="rename-value"
-                      onChange={(event) => setRenameValue(event.target.value)}
-                      value={renameValue}
-                    />
-                    <button
-                      disabled={store.activeAction !== null || !renameValue.trim()}
-                      onClick={handleRename}
-                      type="button"
-                    >
-                      {store.activeAction === "rename" ? "Renaming..." : "Rename"}
-                    </button>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <p className="muted-copy">
-                Select a node to inspect its metadata and mutation actions.
-              </p>
-            )}
-          </section>
-
-          <DeleteConfirmationDialog
-            activeAction={store.activeAction}
-            cascade={cascadeDelete}
-            onCascadeChange={setCascadeDelete}
-            onDelete={handleDelete}
-            selectedNode={store.selectedNode}
+          <ExplorerInspector
+            node={store.inspectorNode}
+            selectedArtifacts={store.selectedArtifacts}
+            selectionCount={store.selectionCount}
           />
         </aside>
       </div>
+
+      {openModal === "mount" ? (
+        <MountModal
+          activeAction={store.activeAction}
+          onClose={() => setOpenModal(null)}
+          onSubmit={handleMountSubmit}
+        />
+      ) : null}
+
+      {openModal === "url" ? (
+        <UrlModal
+          activeAction={store.activeAction}
+          onClose={() => setOpenModal(null)}
+          onSubmit={handleUrlSubmit}
+        />
+      ) : null}
     </section>
   );
+}
+
+
+function collectIds(nodes: ExplorerNode[]): Set<string> {
+  const ids = new Set<string>();
+  function visit(node: ExplorerNode) {
+    ids.add(node.id);
+    node.children.forEach(visit);
+  }
+  nodes.forEach(visit);
+  return ids;
+}
+
+function findNewId(node: ExplorerNode, prevIds: Set<string>): string | null {
+  if (!prevIds.has(node.id)) return node.id;
+  for (const child of node.children) {
+    const found = findNewId(child, prevIds);
+    if (found) return found;
+  }
+  return null;
 }

@@ -8,7 +8,7 @@ export function useExplorerEvents(onRefresh: () => Promise<void>) {
 
     void (async () => {
       unlisten = await listen<VfsChangeEvent>(VFS_EVENT_NAME, async () => {
-        await onRefresh();
+        try { await onRefresh(); } catch { /* best-effort */ }
       });
     })();
 

@@ -9,6 +9,7 @@ const createUrl = vi.fn();
 
 vi.mock("../lib/tauri/ipc", () => ({
   getExplorerSnapshot: () => getExplorerSnapshot(),
+  getNodeThumbnail: vi.fn().mockResolvedValue("data:image/png;base64,AA=="),
   createFolder: (input: unknown) => createFolder(input),
   createMount: (input: unknown) => createMount(input),
   createUrl: (input: unknown) => createUrl(input),
@@ -38,7 +39,11 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText(/No nodes yet/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Explorer/i })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+    expect(await screen.findByText(/no visible artifacts/i)).toBeInTheDocument();
   });
 
   it("submits a new folder and renders it in the tree", async () => {
@@ -48,9 +53,12 @@ describe("App", () => {
         {
           id: "folder-1",
           parentId: null,
-          name: "Inbox",
+          name: "Untitled",
           kind: "folder",
           state: "ready",
+          createdAt: "2026-04-13 00:00:00",
+          modifiedAt: "2026-04-13 00:00:00",
+          sizeBytes: 0,
           children: []
         }
       ]
@@ -58,20 +66,18 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByText(/No nodes yet/i);
-    fireEvent.change(screen.getByPlaceholderText(/New folder/i), {
-      target: { value: "Inbox" }
-    });
-    fireEvent.click(screen.getByRole("button", { name: /Add Folder/i }));
+    await screen.findByText(/no visible artifacts/i);
+    fireEvent.click(screen.getByRole("menuitem", { name: /New Folder/i }));
 
     await waitFor(() => {
       expect(createFolder).toHaveBeenCalledWith({
-        name: "Inbox",
+        name: "Untitled",
         parentId: undefined
       });
     });
 
-    expect((await screen.findAllByText("Inbox")).length).toBeGreaterThan(0);
+    // New folder starts in inline rename mode — appears as an input with value "Untitled"
+    expect(await screen.findByDisplayValue("Untitled")).toBeInTheDocument();
   });
 
   it("submits a mount path and renders the mounted tree", async () => {
@@ -84,6 +90,9 @@ describe("App", () => {
           name: "workspace",
           kind: "mount",
           state: "ready",
+          createdAt: "2026-04-13 00:00:00",
+          modifiedAt: "2026-04-13 00:00:00",
+          sizeBytes: 4,
           children: [
             {
               id: "file-1",
@@ -91,6 +100,9 @@ describe("App", () => {
               name: "notes.txt",
               kind: "file",
               state: "ready",
+              createdAt: "2026-04-13 00:00:00",
+              modifiedAt: "2026-04-13 00:00:00",
+              sizeBytes: 4,
               children: []
             }
           ]
@@ -100,11 +112,13 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByText(/No nodes yet/i);
+    await screen.findByText(/no visible artifacts/i);
+    fireEvent.click(screen.getByRole("menuitem", { name: /Mount Directory/i }));
+
     fireEvent.change(screen.getByPlaceholderText(/~\/projects\/example/i), {
       target: { value: "~/workspace" }
     });
-    fireEvent.click(screen.getByRole("button", { name: /Add Mount/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Mount$/i }));
 
     await waitFor(() => {
       expect(createMount).toHaveBeenCalledWith(
@@ -115,7 +129,10 @@ describe("App", () => {
       );
     });
 
-    expect((await screen.findAllByText("workspace")).length).toBeGreaterThan(0);
+    // Root shows the mount; double-click navigates into it to reveal children
+    const mountCards = await screen.findAllByText("workspace");
+    expect(mountCards.length).toBeGreaterThan(0);
+    fireEvent.dblClick(mountCards[0].closest("button")!);
     expect((await screen.findAllByText("notes.txt")).length).toBeGreaterThan(0);
   });
 
@@ -129,6 +146,9 @@ describe("App", () => {
           name: "https://example.com",
           kind: "url",
           state: "pending",
+          createdAt: "2026-04-13 00:00:00",
+          modifiedAt: "2026-04-13 00:00:00",
+          sizeBytes: 0,
           children: []
         }
       ]
@@ -136,11 +156,13 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByText(/No nodes yet/i);
+    await screen.findByText(/no visible artifacts/i);
+    fireEvent.click(screen.getByRole("menuitem", { name: /Add URL/i }));
+
     fireEvent.change(screen.getByPlaceholderText(/https:\/\/example.com/i), {
       target: { value: "https://example.com" }
     });
-    fireEvent.click(screen.getByRole("button", { name: /Add URL/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Fetch & Create/i }));
 
     await waitFor(() => {
       expect(createUrl).toHaveBeenCalledWith({
@@ -150,6 +172,32 @@ describe("App", () => {
     });
 
     expect((await screen.findAllByText("https://example.com")).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText("pending")).length).toBeGreaterThan(0);
+  });
+
+  it("keeps explorer state when switching to another shell section and back", async () => {
+    getExplorerSnapshot.mockResolvedValue({
+      roots: [
+        {
+          id: "folder-1",
+          parentId: null,
+          name: "Inbox",
+          kind: "folder",
+          state: "ready",
+          createdAt: "2026-04-13 00:00:00",
+          modifiedAt: "2026-04-13 00:00:00",
+          sizeBytes: 0,
+          children: []
+        }
+      ]
+    });
+
+    render(<App />);
+
+    expect(await screen.findAllByText("Inbox")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /^Home$/i }));
+    expect(screen.getByText(/This section is stubbed in Milestone 2/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Explorer$/i }));
+    expect((await screen.findAllByText("Inbox")).length).toBeGreaterThan(0);
+    expect(getExplorerSnapshot).toHaveBeenCalledTimes(1);
   });
 });

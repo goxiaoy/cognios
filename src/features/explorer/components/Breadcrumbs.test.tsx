@@ -15,6 +15,9 @@ describe("Breadcrumbs", () => {
             name: "Root",
             kind: "folder",
             state: "ready",
+            createdAt: "2026-04-13 00:00:00",
+            modifiedAt: "2026-04-13 00:00:00",
+            sizeBytes: 0,
             children: []
           },
           {
@@ -23,6 +26,9 @@ describe("Breadcrumbs", () => {
             name: "Child",
             kind: "folder",
             state: "ready",
+            createdAt: "2026-04-13 00:00:00",
+            modifiedAt: "2026-04-13 00:00:00",
+            sizeBytes: 0,
             children: []
           }
         ]}

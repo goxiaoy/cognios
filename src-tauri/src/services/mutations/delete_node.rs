@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::domain::vfs::node::{ExplorerSnapshotDto, NodeKind};
 use crate::domain::vfs::state::NodeState;
 use crate::infrastructure::db::mount_repository::reconcile_mount;
-use crate::infrastructure::db::node_repository::list_snapshot;
+use crate::infrastructure::db::node_repository::{list_snapshot, touch_node_modified_at};
 use crate::infrastructure::db::url_repository::delete_url_artifacts;
 
 #[derive(Debug, Deserialize)]
@@ -31,14 +31,20 @@ pub fn delete_node(
             }
             conn.execute("DELETE FROM nodes WHERE id = ?1", [&input.node_id])
                 .map_err(|error| error.to_string())?;
+            touch_node_modified_at(conn, node.parent_id.as_deref())
+                .map_err(|error| error.to_string())?;
         }
         NodeKind::Url => {
             delete_url_artifacts(conn, &input.node_id).map_err(|error| error.to_string())?;
             conn.execute("DELETE FROM nodes WHERE id = ?1", [&input.node_id])
                 .map_err(|error| error.to_string())?;
+            touch_node_modified_at(conn, node.parent_id.as_deref())
+                .map_err(|error| error.to_string())?;
         }
         NodeKind::Mount => {
             conn.execute("DELETE FROM nodes WHERE id = ?1", [&input.node_id])
+                .map_err(|error| error.to_string())?;
+            touch_node_modified_at(conn, node.parent_id.as_deref())
                 .map_err(|error| error.to_string())?;
         }
         NodeKind::Directory | NodeKind::File => {
@@ -67,6 +73,7 @@ pub fn delete_node(
 #[derive(Debug)]
 struct MutationNode {
     kind: NodeKind,
+    parent_id: Option<String>,
     mount_id: Option<String>,
     relative_path: Option<String>,
 }
@@ -81,7 +88,7 @@ struct MountInfo {
 fn load_node(conn: &Connection, node_id: &str) -> Result<Option<MutationNode>, String> {
     conn.query_row(
         "
-        SELECT kind, mount_id, relative_path
+        SELECT kind, parent_id, mount_id, relative_path
         FROM nodes
         WHERE id = ?1
         ",
@@ -89,8 +96,9 @@ fn load_node(conn: &Connection, node_id: &str) -> Result<Option<MutationNode>, S
         |row| {
             Ok(MutationNode {
                 kind: NodeKind::from_db(&row.get::<_, String>(0)?),
-                mount_id: row.get(1)?,
-                relative_path: row.get(2)?,
+                parent_id: row.get(1)?,
+                mount_id: row.get(2)?,
+                relative_path: row.get(3)?,
             })
         },
     )

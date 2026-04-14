@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { useExplorerStore } from "./useExplorerStore";
 
 describe("useExplorerStore", () => {
-  it("hydrates snapshot state and derives breadcrumbs for the selected node", async () => {
+  it("hydrates snapshot state and separates displayed folder from artifact selection", async () => {
     const snapshot = {
       roots: [
         {
@@ -12,6 +12,9 @@ describe("useExplorerStore", () => {
           name: "Root",
           kind: "folder",
           state: "ready",
+          createdAt: "2026-04-13 00:00:00",
+          modifiedAt: "2026-04-13 00:00:00",
+          sizeBytes: 128,
           children: [
             {
               id: "child",
@@ -19,7 +22,22 @@ describe("useExplorerStore", () => {
               name: "Child",
               kind: "folder",
               state: "ready",
-              children: []
+              createdAt: "2026-04-13 00:00:00",
+              modifiedAt: "2026-04-13 00:00:00",
+              sizeBytes: 64,
+              children: [
+                {
+                  id: "leaf",
+                  parentId: "child",
+                  name: "notes.md",
+                  kind: "file",
+                  state: "ready",
+                  createdAt: "2026-04-13 00:00:00",
+                  modifiedAt: "2026-04-13 00:00:00",
+                  sizeBytes: 64,
+                  children: []
+                }
+              ]
             }
           ]
         }
@@ -32,7 +50,8 @@ describe("useExplorerStore", () => {
       createUrl: vi.fn(),
       renameNode: vi.fn(),
       deleteNode: vi.fn(),
-      retryUrl: vi.fn()
+      retryUrl: vi.fn(),
+      getNodeThumbnail: vi.fn()
     };
 
     const { result } = renderHook(() => useExplorerStore(client));
@@ -42,11 +61,13 @@ describe("useExplorerStore", () => {
     });
 
     act(() => {
-      result.current.selectNode("child");
+      result.current.selectTreeNode("child");
+      result.current.selectArtifact("leaf");
     });
 
     expect(result.current.snapshot.roots).toHaveLength(1);
-    expect(result.current.selectedNode?.name).toBe("Child");
+    expect(result.current.displayedFolder?.name).toBe("Child");
+    expect(result.current.inspectorNode?.name).toBe("notes.md");
     expect(result.current.breadcrumbs.map((node) => node.name)).toEqual([
       "Root",
       "Child"

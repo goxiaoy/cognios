@@ -4,16 +4,24 @@ import { ExplorerRow } from "./ExplorerRow";
 export function ExplorerTree({
   expandedIds,
   nodes,
+  pendingInlineRenameId,
+  onDelete,
   onRetry,
   onSelect,
   onToggle,
+  onInlineRename,
+  onStartRename,
   selectedId
 }: {
   expandedIds: string[];
   nodes: ExplorerNode[];
+  pendingInlineRenameId: string | null;
+  onDelete(nodeId: string, cascade: boolean): void;
   onRetry(nodeId: string): void;
   onSelect(nodeId: string): void;
   onToggle(nodeId: string): void;
+  onInlineRename(nodeId: string, newName: string): void;
+  onStartRename(nodeId: string): void;
   selectedId: string | null;
 }) {
   const expandedSet = new Set(expandedIds);
@@ -25,9 +33,13 @@ export function ExplorerTree({
           expandedSet={expandedSet}
           key={node.id}
           node={node}
+          pendingInlineRenameId={pendingInlineRenameId}
+          onDelete={onDelete}
           onRetry={onRetry}
           onSelect={onSelect}
           onToggle={onToggle}
+          onInlineRename={onInlineRename}
+          onStartRename={onStartRename}
           selectedId={selectedId}
         />
       ))}
@@ -38,17 +50,25 @@ export function ExplorerTree({
 function TreeBranch({
   expandedSet,
   node,
+  pendingInlineRenameId,
+  onDelete,
   onRetry,
   onSelect,
   onToggle,
+  onInlineRename,
+  onStartRename,
   selectedId,
   depth = 0
 }: {
   expandedSet: Set<string>;
   node: ExplorerNode;
+  pendingInlineRenameId: string | null;
+  onDelete(nodeId: string, cascade: boolean): void;
   onRetry(nodeId: string): void;
   onSelect(nodeId: string): void;
   onToggle(nodeId: string): void;
+  onInlineRename(nodeId: string, newName: string): void;
+  onStartRename(nodeId: string): void;
   selectedId: string | null;
   depth?: number;
 }) {
@@ -59,10 +79,14 @@ function TreeBranch({
       <ExplorerRow
         depth={depth}
         isExpanded={isExpanded}
+        isInlineRenaming={node.id === pendingInlineRenameId}
         isSelected={selectedId === node.id}
         node={node}
+        onDelete={onDelete}
+        onInlineRename={onInlineRename}
         onRetry={onRetry}
         onSelect={onSelect}
+        onStartRename={onStartRename}
         onToggle={onToggle}
       />
       {isExpanded && node.children.length > 0 ? (
@@ -73,9 +97,13 @@ function TreeBranch({
               expandedSet={expandedSet}
               key={child.id}
               node={child}
+              pendingInlineRenameId={pendingInlineRenameId}
+              onDelete={onDelete}
               onRetry={onRetry}
               onSelect={onSelect}
               onToggle={onToggle}
+              onInlineRename={onInlineRename}
+              onStartRename={onStartRename}
               selectedId={selectedId}
             />
           ))}

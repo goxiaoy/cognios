@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::domain::vfs::node::{ExplorerSnapshotDto, NodeKind};
 use crate::domain::vfs::state::NodeState;
-use crate::infrastructure::db::node_repository::list_snapshot;
+use crate::infrastructure::db::node_repository::{list_snapshot, touch_node_modified_at};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,8 +55,8 @@ pub fn create_url(conn: &mut Connection, input: &CreateUrlInput) -> rusqlite::Re
     let tx = conn.transaction()?;
     tx.execute(
         "
-        INSERT INTO nodes (id, parent_id, kind, name, state)
-        VALUES (?1, ?2, ?3, ?4, ?5)
+        INSERT INTO nodes (id, parent_id, kind, name, state, size_bytes)
+        VALUES (?1, ?2, ?3, ?4, ?5, 0)
         ",
         params![
             node_id,
@@ -74,6 +74,7 @@ pub fn create_url(conn: &mut Connection, input: &CreateUrlInput) -> rusqlite::Re
         params![node_id, trimmed_url],
     )?;
     tx.commit()?;
+    touch_node_modified_at(conn, input.parent_id.as_deref())?;
 
     Ok(CreatedUrl {
         node_id,
@@ -169,13 +170,22 @@ pub fn mark_url_indexed(
         .or_else(|| result.canonical_url.clone())
         .unwrap_or_else(|| "URL".into());
 
+    let cache_size = std::fs::metadata(&result.html_cache_path)
+        .map(|metadata| metadata.len() as i64)
+        .unwrap_or_default();
+
     conn.execute(
         "
         UPDATE nodes
-        SET state = ?2, name = ?3
+        SET state = ?2, name = ?3, updated_at = CURRENT_TIMESTAMP, size_bytes = ?4
         WHERE id = ?1
         ",
-        params![node_id, NodeState::Indexed.as_str(), display_name],
+        params![
+            node_id,
+            NodeState::Indexed.as_str(),
+            display_name,
+            cache_size
+        ],
     )?;
     conn.execute(
         "

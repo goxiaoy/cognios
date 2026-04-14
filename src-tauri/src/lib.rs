@@ -30,6 +30,7 @@ fn storage_dir_from_home(home_dir: PathBuf) -> PathBuf {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Debug)
@@ -81,6 +82,7 @@ pub fn run() {
             commands::mounts::create_mount,
             commands::nodes::rename_node,
             commands::nodes::delete_node,
+            commands::thumbnails::get_node_thumbnail,
             commands::urls::create_url,
             commands::urls::retry_url
         ])

@@ -16,7 +16,8 @@
         "title": "CogniOS",
         "width": 1280,
         "height": 840,
-        "resizable": true
+        "resizable": true,
+        "titleBarStyle": "Overlay"
       }
     ],
     "security": {
