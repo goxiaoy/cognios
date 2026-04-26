@@ -37,8 +37,3 @@ export interface ExplorerClient {
   readFileContent(nodeId: string): Promise<string>;
 }
 
-export interface ExplorerTreeNode extends ExplorerNode {
-  depth: number;
-}
-
-export type ExplorerViewMode = "grid" | "list" | "date";
