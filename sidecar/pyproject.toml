@@ -1,0 +1,30 @@
+[project]
+name = "search-sidecar"
+version = "0.0.1"
+description = "Cognios search sidecar — FastAPI HTTP server for hybrid retrieval"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "fastapi==0.115.6",
+  "uvicorn[standard]==0.32.1",
+]
+
+[project.scripts]
+search-sidecar = "search_sidecar.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["search_sidecar"]
+
+[dependency-groups]
+dev = [
+  "pytest==8.3.4",
+  "httpx==0.28.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = ["-q", "--strict-markers", "--strict-config"]
