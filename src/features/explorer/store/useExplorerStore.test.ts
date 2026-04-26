@@ -55,6 +55,7 @@ describe("useExplorerStore", () => {
       getNodeThumbnail: vi.fn(),
       getNoteContent: vi.fn(),
       saveNoteContent: vi.fn(),
+      readFileContent: vi.fn(),
     };
 
     const { result } = renderHook(() => useExplorerStore(client));

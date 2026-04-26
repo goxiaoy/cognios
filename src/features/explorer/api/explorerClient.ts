@@ -7,6 +7,7 @@ import {
   getExplorerSnapshot,
   getNodeThumbnail,
   getNoteContent,
+  readFileContent,
   renameNode,
   retryUrl,
   saveNoteContent,
@@ -25,4 +26,5 @@ export const explorerClient: ExplorerClient = {
   getNodeThumbnail,
   getNoteContent,
   saveNoteContent,
+  readFileContent,
 };

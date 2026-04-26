@@ -68,3 +68,7 @@ export async function retryUrl(input: RetryUrlInput): Promise<void> {
 export async function getNodeThumbnail(nodeId: string): Promise<string> {
   return invoke<string>("get_node_thumbnail", { input: { nodeId } });
 }
+
+export async function readFileContent(nodeId: string): Promise<string> {
+  return invoke<string>("read_file_content", { input: { nodeId } });
+}

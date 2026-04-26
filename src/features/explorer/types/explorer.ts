@@ -34,6 +34,7 @@ export interface ExplorerClient {
   getNodeThumbnail(nodeId: string): Promise<string>;
   getNoteContent(noteId: string): Promise<string>;
   saveNoteContent(noteId: string, body: string): Promise<void>;
+  readFileContent(nodeId: string): Promise<string>;
 }
 
 export interface ExplorerTreeNode extends ExplorerNode {

@@ -19,6 +19,7 @@ vi.mock("../lib/tauri/ipc", () => ({
   retryUrl: vi.fn(),
   getNoteContent: vi.fn().mockResolvedValue(""),
   saveNoteContent: vi.fn(),
+  readFileContent: vi.fn().mockResolvedValue(""),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
