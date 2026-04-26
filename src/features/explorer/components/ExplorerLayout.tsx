@@ -64,8 +64,14 @@ export function ExplorerLayout({
         const editor = noteEditorRef.current;
         if (editor) {
           event.preventDefault();
-          await editor.flush().catch(() => {});
-          getCurrentWindow().close();
+          try {
+            await editor.flush();
+            getCurrentWindow().close();
+          } catch (cause) {
+            setNoteFlushError(
+              cause instanceof Error ? cause.message : "Failed to save note"
+            );
+          }
         }
       })
       .then((fn) => {
@@ -127,6 +133,9 @@ export function ExplorerLayout({
   }
 
   async function handleDeleteById(nodeId: string, cascade: boolean) {
+    if (store.activeNoteId === nodeId) {
+      store.setActiveNoteId(null);
+    }
     const snapshot = await store.runAction("delete", () =>
       client.deleteNode({ nodeId, cascade })
     );

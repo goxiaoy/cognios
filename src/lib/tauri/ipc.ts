@@ -51,7 +51,7 @@ export async function createNote(
 }
 
 export async function getNoteContent(noteId: string): Promise<string> {
-  return invoke<string>("get_note_content", { noteId });
+  return invoke<string>("get_note_content", { input: { noteId } });
 }
 
 export async function saveNoteContent(

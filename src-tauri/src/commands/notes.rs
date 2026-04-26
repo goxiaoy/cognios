@@ -19,13 +19,19 @@ pub fn create_note(
     create_note_record(&mut conn, &input, &notes_dir)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetNoteContentInput {
+    pub note_id: String,
+}
+
 #[tauri::command]
 pub fn get_note_content(
     state: State<'_, AppState>,
-    note_id: String,
+    input: GetNoteContentInput,
 ) -> Result<String, String> {
     let notes_dir = state.storage_dir.join("notes");
-    get_note_content_record(&note_id, &notes_dir)
+    get_note_content_record(&input.note_id, &notes_dir)
 }
 
 #[derive(Debug, Deserialize)]
