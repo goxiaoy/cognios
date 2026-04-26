@@ -1,15 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as openExternal } from "@tauri-apps/plugin-shell";
 import type { ExplorerClient, ExplorerNode } from "../types/explorer";
 import type { CreateAction } from "./CreateMenu";
+import type { SelectModifiers } from "./ExplorerRow";
 import { useExplorerEvents } from "../hooks/useExplorerEvents";
-import { useExplorerStore } from "../store/useExplorerStore";
-import { ExplorerContentGrid } from "./ExplorerContentGrid";
+import { useExplorerStore, isDisplayFolder } from "../store/useExplorerStore";
+import { Breadcrumbs } from "./Breadcrumbs";
+import { CreateMenu } from "./CreateMenu";
 import { ExplorerInspector } from "./ExplorerInspector";
-import { MountModal } from "./MountModal";
+import { ExplorerTree } from "./ExplorerTree";
+import { ImageViewer } from "./ImageViewer";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { MountModal } from "./MountModal";
 import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
 import { UrlModal } from "./UrlModal";
+import { error as logError } from "../../../lib/logger";
 
 export function ExplorerLayout({
   active,
@@ -20,8 +26,14 @@ export function ExplorerLayout({
 }) {
   const store = useExplorerStore(client);
   const [openModal, setOpenModal] = useState<CreateAction | null>(null);
+  // parentId snapshot at modal-open time so the user can change selection
+  // mid-modal without shifting the new node's parent.
+  const [modalParentId, setModalParentId] = useState<string | null>(null);
   const [noteFlushError, setNoteFlushError] = useState<string | null>(null);
   const noteEditorRef = useRef<NoteEditorHandle>(null);
+  // Anchor for shift-click range selection. Tracks the most recent
+  // single-clicked node id; reset by plain or toggle clicks.
+  const selectionAnchorRef = useRef<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -56,13 +68,14 @@ export function ExplorerLayout({
     }
   }
 
-  // Register window close handler — flush before allowing the window to close.
+  // Window close: only the note editor has pending writes to flush. Previews
+  // are read-only and cannot block close.
   useEffect(() => {
     let unlistenFn: (() => void) | undefined;
+    let unmounted = false;
 
     getCurrentWindow()
       .onCloseRequested(async (event) => {
-        // Only the note editor has pending writes to flush; previews are read-only.
         const editor = noteEditorRef.current;
         if (editor) {
           event.preventDefault();
@@ -77,30 +90,154 @@ export function ExplorerLayout({
         }
       })
       .then((fn) => {
-        unlistenFn = fn;
+        if (unmounted) {
+          fn();
+        } else {
+          unlistenFn = fn;
+        }
+      })
+      .catch(() => {
+        // onCloseRequested registration failed; nothing we can do client-side.
       });
 
     return () => {
+      unmounted = true;
       unlistenFn?.();
     };
   }, []);
 
-  function handleCreateSelect(action: CreateAction) {
-    if (action === "folder") {
-      void handleFolderCreate();
-    } else if (action === "note") {
-      void handleNoteCreate();
+  // Selected single container, used as parentId for create operations.
+  const selectedContainer = useMemo(() => {
+    if (store.selectedArtifacts.length !== 1) return null;
+    const node = store.selectedArtifacts[0];
+    return isDisplayFolder(node) ? node : null;
+  }, [store.selectedArtifacts]);
+  const selectedContainerId = selectedContainer?.id;
+
+  // The "active file" surface — the most-recent file activation drives the
+  // center pane and breadcrumbs. Mutual-exclusion enforcement: note editor
+  // takes render priority if multiple fields are inadvertently set.
+  const activeFileNode: ExplorerNode | null =
+    store.activeNote ?? store.activePreview ?? store.activeImagePreview ?? null;
+
+  // Compute breadcrumb path for the active file node from the snapshot.
+  const breadcrumbNodes = useMemo(() => {
+    if (!activeFileNode) return [];
+    const path: ExplorerNode[] = [];
+    const index = new Map<string, ExplorerNode>();
+    const visit = (node: ExplorerNode) => {
+      index.set(node.id, node);
+      node.children.forEach(visit);
+    };
+    store.snapshot.roots.forEach(visit);
+    let cursor: ExplorerNode | null = activeFileNode;
+    while (cursor) {
+      path.unshift(cursor);
+      cursor = cursor.parentId ? index.get(cursor.parentId) ?? null : null;
+    }
+    return path;
+  }, [activeFileNode, store.snapshot]);
+
+  // Visible flat tree order (respects expansion). Used for shift-click range.
+  const visibleOrder = useMemo(() => {
+    const ordered: string[] = [];
+    const expandedSet = new Set(store.expandedIds);
+    function visit(node: ExplorerNode) {
+      ordered.push(node.id);
+      if (expandedSet.has(node.id)) {
+        for (const child of node.children) visit(child);
+      }
+    }
+    store.snapshot.roots.forEach(visit);
+    return ordered;
+  }, [store.snapshot, store.expandedIds]);
+
+  // Layout-level wrapper that flushes any open note before delegating to the
+  // store. Required because store.activateArtifact is synchronous and has no
+  // ref to call flush().
+  async function handleActivate(nodeId: string, modifiers: SelectModifiers) {
+    setNoteFlushError(null);
+
+    // Update selection based on modifier first (so the inspector reflects
+    // the click target even if flush fails).
+    if (modifiers.shift) {
+      const anchor = selectionAnchorRef.current;
+      const anchorIdx = anchor ? visibleOrder.indexOf(anchor) : -1;
+      const targetIdx = visibleOrder.indexOf(nodeId);
+      if (anchorIdx === -1 || targetIdx === -1) {
+        // Anchor invisible (collapsed) or missing — fall back to plain click.
+        selectionAnchorRef.current = nodeId;
+        store.selectArtifact(nodeId, false);
+      } else {
+        const [start, end] =
+          anchorIdx <= targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
+        const range = visibleOrder.slice(start, end + 1);
+        store.replaceSelection(range);
+      }
+    } else if (modifiers.toggle) {
+      selectionAnchorRef.current = nodeId;
+      store.selectArtifact(nodeId, true);
     } else {
+      selectionAnchorRef.current = nodeId;
+      store.selectArtifact(nodeId, false);
+    }
+
+    // Then the activation side effect (note flush, surface change, URL open).
+    if (store.activeNoteId && noteEditorRef.current) {
+      try {
+        await noteEditorRef.current.flush();
+        store.setActiveNoteId(null);
+      } catch (cause) {
+        setNoteFlushError(
+          cause instanceof Error ? cause.message : "Failed to save note"
+        );
+        return;
+      }
+    }
+
+    // Look up the activated node to handle URL-open externally.
+    const indexed = (function findInTree(roots: ExplorerNode[]): ExplorerNode | null {
+      for (const root of roots) {
+        if (root.id === nodeId) return root;
+        const found = findInTree(root.children);
+        if (found) return found;
+      }
+      return null;
+    })(store.snapshot.roots);
+
+    if (indexed?.kind === "url") {
+      // Open the URL in the system default browser. Treat failures as
+      // selection-only fallback.
+      try {
+        await openExternal(indexed.name);
+      } catch (cause) {
+        void logError(
+          `[ExplorerLayout] failed to open URL: ${cause instanceof Error ? cause.message : String(cause)}`
+        );
+      }
+      return;
+    }
+
+    store.activateArtifact(nodeId);
+  }
+
+  function handleCreateSelect(action: CreateAction) {
+    const parentId = selectedContainerId ?? null;
+    if (action === "folder") {
+      void handleFolderCreate(parentId);
+    } else if (action === "note") {
+      void handleNoteCreate(parentId);
+    } else {
+      // Modal-based create: snapshot parentId at open time so changing the
+      // tree selection mid-modal doesn't shift the new node's parent.
+      setModalParentId(parentId);
       setOpenModal(action);
     }
   }
 
-  async function handleFolderCreate() {
+  async function handleFolderCreate(parentId: string | null) {
     const snapshot = await store.runAction("folder", () =>
-      client.createFolder({
-        name: "Untitled",
-        parentId: store.displayedFolder ? store.displayedFolder.id : undefined
-      })
+      client.createFolder({ name: "Untitled", parentId: parentId ?? undefined })
     );
     if (snapshot) {
       const prevIds = collectIds(store.snapshot.roots);
@@ -115,11 +252,9 @@ export function ExplorerLayout({
     }
   }
 
-  async function handleNoteCreate() {
+  async function handleNoteCreate(parentId: string | null) {
     const snapshot = await store.runAction("note", () =>
-      client.createNote({
-        parentId: store.displayedFolder ? store.displayedFolder.id : undefined
-      })
+      client.createNote({ parentId: parentId ?? undefined })
     );
     if (snapshot) {
       const prevIds = collectIds(store.snapshot.roots);
@@ -142,30 +277,13 @@ export function ExplorerLayout({
     if (store.activePreviewId === nodeId) {
       store.setActivePreviewId(null);
     }
+    if (store.activeImagePreviewId === nodeId) {
+      store.setActiveImagePreviewId(null);
+    }
     const snapshot = await store.runAction("delete", () =>
       client.deleteNode({ nodeId, cascade })
     );
     if (snapshot) store.applySnapshot(snapshot);
-  }
-
-  // Wrapper that flushes any open note before delegating to the store's
-  // activation. Required because store.activateArtifact has no ref to call
-  // flush() — flush has to live at the layout level. Also resets any stale
-  // noteFlushError so a previously failed flush doesn't bleed into the next session.
-  async function handleActivate(nodeId: string) {
-    setNoteFlushError(null);
-    if (store.activeNoteId && noteEditorRef.current) {
-      try {
-        await noteEditorRef.current.flush();
-        store.setActiveNoteId(null);
-      } catch (cause) {
-        setNoteFlushError(
-          cause instanceof Error ? cause.message : "Failed to save note"
-        );
-        return;
-      }
-    }
-    store.activateArtifact(nodeId);
   }
 
   async function handleInlineRename(nodeId: string, newName: string) {
@@ -189,34 +307,49 @@ export function ExplorerLayout({
     const snapshot = await store.runAction("mount", () =>
       client.createMount({
         path: args.path,
-        parentId: store.displayedFolder ? store.displayedFolder.id : undefined,
+        parentId: modalParentId ?? undefined,
         ignoreConfig: args.ignoreConfig || undefined
       })
     );
     if (snapshot) {
       store.applySnapshot(snapshot);
       setOpenModal(null);
+      setModalParentId(null);
     }
   }
 
   async function handleUrlSubmit(url: string) {
     const snapshot = await store.runAction("url", () =>
-      client.createUrl({
-        url,
-        parentId: store.displayedFolder ? store.displayedFolder.id : undefined
-      })
+      client.createUrl({ url, parentId: modalParentId ?? undefined })
     );
     if (snapshot) {
       store.applySnapshot(snapshot);
       setOpenModal(null);
+      setModalParentId(null);
     }
   }
 
-  const noteIsOpen = !!store.activeNoteId && !!store.activeNote;
-  const previewIsOpen = !!store.activePreviewId && !!store.activePreview;
-  // Single derived predicate used at every gating site so the inspector and
-  // workspace layout never misalign with the rendered editor surface.
-  const editorIsOpen = noteIsOpen || previewIsOpen;
+  function handleModalClose() {
+    setOpenModal(null);
+    setModalParentId(null);
+  }
+
+  // Center surface decision. Note takes render priority if both fields are set.
+  const showNote = !!store.activeNoteId && !!store.activeNote;
+  const showMarkdown = !showNote && !!store.activePreviewId && !!store.activePreview;
+  const showImage =
+    !showNote &&
+    !showMarkdown &&
+    !!store.activeImagePreviewId &&
+    !!store.activeImagePreview;
+  // Cannot-preview placeholder: a single non-previewable file node is selected.
+  const showCannotPreview =
+    !showNote &&
+    !showMarkdown &&
+    !showImage &&
+    store.selectionCount === 1 &&
+    store.selectedArtifacts[0].kind === "file";
+  const showWelcome = !showNote && !showMarkdown && !showImage && !showCannotPreview;
 
   return (
     <section
@@ -225,73 +358,85 @@ export function ExplorerLayout({
     >
       {store.error ? <p className="error-banner">{store.error}</p> : null}
 
-      <div className={`explorer-workspace${!editorIsOpen && (store.inspectorNode || store.selectionCount > 1) ? " has-inspector" : ""}`}>
-        {store.isLoading ? (
-          <p className="empty-state">Loading explorer...</p>
-        ) : null}
-
-        {/* Note editor takes render priority if both fields are inadvertently set —
-            dirty content wins so it cannot be silently shadowed by a preview. */}
-        {!store.isLoading && noteIsOpen ? (
-          <NoteEditor
-            ref={noteEditorRef}
-            client={client}
-            flushError={noteFlushError}
-            initialTitle={store.activeNote!.name}
-            nodeId={store.activeNoteId!}
-            onBack={() => void flushAndCloseEditor()}
-            onTitleChange={() => {
-              // Refresh the tree so the new title appears in the node list.
-              void store.refresh().catch(() => {});
-            }}
-          />
-        ) : null}
-
-        {!store.isLoading && !noteIsOpen && previewIsOpen ? (
-          <MarkdownPreview
-            client={client}
-            name={store.activePreview!.name}
-            nodeId={store.activePreviewId!}
-            onBack={() => store.setActivePreviewId(null)}
-          />
-        ) : null}
-
-        {!store.isLoading && !editorIsOpen ? (
-          <ExplorerContentGrid
-            breadcrumbs={store.breadcrumbs}
-            loadThumbnail={client.getNodeThumbnail}
-            nodes={store.visibleArtifacts}
-            pendingInlineRenameId={store.pendingInlineRenameId}
-            onActivate={handleActivate}
-            onBreadcrumbSelect={store.selectDisplayedFolder}
-            onCreateSelect={handleCreateSelect}
+      <div className="explorer-workspace">
+        <aside className="tree-sidebar">
+          <ExplorerTree
+            expandedIds={store.expandedIds}
+            nodes={store.snapshot.roots}
             onDelete={handleDeleteById}
             onInlineRename={handleInlineRename}
             onRetry={handleRetry}
-            onSelect={store.selectArtifact}
+            onSelect={(id, modifiers) => void handleActivate(id, modifiers)}
             onStartRename={store.setPendingInlineRenameId}
-            onViewModeChange={store.setViewMode}
+            onToggle={store.toggleNode}
+            pendingInlineRenameId={store.pendingInlineRenameId}
             selectedIds={store.selectedArtifactIds}
-            selectionCount={store.selectionCount}
-            viewMode={store.viewMode}
+            toolbar={<CreateMenu onSelect={handleCreateSelect} />}
           />
-        ) : null}
+        </aside>
 
-        {!editorIsOpen ? (
-          <aside className="inspector-panel">
-            <ExplorerInspector
-              node={store.inspectorNode}
-              selectedArtifacts={store.selectedArtifacts}
-              selectionCount={store.selectionCount}
-            />
-          </aside>
-        ) : null}
+        <main className="detail-surface">
+          {store.isLoading ? (
+            <p className="empty-state">Loading explorer...</p>
+          ) : (
+            <>
+              {activeFileNode ? <Breadcrumbs nodes={breadcrumbNodes} /> : null}
+              {showNote ? (
+                <NoteEditor
+                  ref={noteEditorRef}
+                  client={client}
+                  flushError={noteFlushError}
+                  initialTitle={store.activeNote!.name}
+                  nodeId={store.activeNoteId!}
+                  onBack={() => void flushAndCloseEditor()}
+                  onTitleChange={() => {
+                    void store.refresh().catch(() => {});
+                  }}
+                />
+              ) : null}
+              {showMarkdown ? (
+                <MarkdownPreview
+                  client={client}
+                  name={store.activePreview!.name}
+                  nodeId={store.activePreviewId!}
+                  onBack={() => store.setActivePreviewId(null)}
+                />
+              ) : null}
+              {showImage ? (
+                <ImageViewer
+                  client={client}
+                  name={store.activeImagePreview!.name}
+                  nodeId={store.activeImagePreviewId!}
+                  onBack={() => store.setActiveImagePreviewId(null)}
+                />
+              ) : null}
+              {showCannotPreview ? (
+                <div className="detail-placeholder">
+                  <p>This file type cannot be previewed</p>
+                </div>
+              ) : null}
+              {showWelcome ? (
+                <div className="detail-placeholder">
+                  <p>Select an item to preview</p>
+                </div>
+              ) : null}
+            </>
+          )}
+        </main>
+
+        <aside className="inspector-panel">
+          <ExplorerInspector
+            node={store.inspectorNode}
+            selectedArtifacts={store.selectedArtifacts}
+            selectionCount={store.selectionCount}
+          />
+        </aside>
       </div>
 
       {openModal === "mount" ? (
         <MountModal
           activeAction={store.activeAction}
-          onClose={() => setOpenModal(null)}
+          onClose={handleModalClose}
           onSubmit={handleMountSubmit}
         />
       ) : null}
@@ -299,14 +444,13 @@ export function ExplorerLayout({
       {openModal === "url" ? (
         <UrlModal
           activeAction={store.activeAction}
-          onClose={() => setOpenModal(null)}
+          onClose={handleModalClose}
           onSubmit={handleUrlSubmit}
         />
       ) : null}
     </section>
   );
 }
-
 
 function collectIds(nodes: ExplorerNode[]): Set<string> {
   const ids = new Set<string>();

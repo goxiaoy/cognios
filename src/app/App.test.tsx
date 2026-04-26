@@ -7,6 +7,7 @@ const createFolder = vi.fn();
 const createMount = vi.fn();
 const createUrl = vi.fn();
 const readFileContent = vi.fn().mockResolvedValue("");
+const openExternal = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../lib/tauri/ipc", () => ({
   getExplorerSnapshot: () => getExplorerSnapshot(),
@@ -24,7 +25,7 @@ vi.mock("../lib/tauri/ipc", () => ({
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn().mockResolvedValue(() => Promise.resolve())
+  listen: vi.fn().mockResolvedValue(() => Promise.resolve()),
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -34,6 +35,21 @@ vi.mock("@tauri-apps/api/window", () => ({
   }),
 }));
 
+vi.mock("@tauri-apps/plugin-shell", () => ({
+  open: (target: string) => openExternal(target),
+}));
+
+function clickTreeRow(name: string) {
+  const buttons = screen.getAllByRole("button");
+  const target = buttons.find(
+    (btn) => btn.classList.contains("tree-row-main") && btn.textContent?.includes(name)
+  );
+  if (!target) {
+    throw new Error(`tree row not found for: ${name}`);
+  }
+  fireEvent.click(target);
+}
+
 describe("App", () => {
   beforeEach(() => {
     getExplorerSnapshot.mockReset();
@@ -42,13 +58,15 @@ describe("App", () => {
     createUrl.mockReset();
     readFileContent.mockReset();
     readFileContent.mockResolvedValue("");
+    openExternal.mockReset();
+    openExternal.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  it("renders the empty explorer state from the backend snapshot", async () => {
+  it("renders the welcome state with empty backend snapshot", async () => {
     getExplorerSnapshot.mockResolvedValue({ roots: [] });
 
     render(<App />);
@@ -57,10 +75,12 @@ describe("App", () => {
       "aria-current",
       "page"
     );
-    expect(await screen.findByText(/no visible artifacts/i)).toBeInTheDocument();
+    expect(await screen.findByText(/select an item to preview/i)).toBeInTheDocument();
+    // Inspector empty placeholder
+    expect(screen.getByText("No selection")).toBeInTheDocument();
   });
 
-  it("submits a new folder and renders it in the tree", async () => {
+  it("submits a new folder via the tree toolbar and renders it in the tree", async () => {
     getExplorerSnapshot.mockResolvedValue({ roots: [] });
     createFolder.mockResolvedValue({
       roots: [
@@ -73,24 +93,24 @@ describe("App", () => {
           createdAt: "2026-04-13 00:00:00",
           modifiedAt: "2026-04-13 00:00:00",
           sizeBytes: 0,
-          children: []
-        }
-      ]
+          children: [],
+        },
+      ],
     });
 
     render(<App />);
 
-    await screen.findByText(/no visible artifacts/i);
+    await screen.findByText(/select an item to preview/i);
     fireEvent.click(screen.getByRole("menuitem", { name: /New Folder/i }));
 
     await waitFor(() => {
       expect(createFolder).toHaveBeenCalledWith({
         name: "Untitled",
-        parentId: undefined
+        parentId: undefined,
       });
     });
 
-    // New folder starts in inline rename mode — appears as an input with value "Untitled"
+    // New folder lands in inline-rename mode (input with the placeholder name)
     expect(await screen.findByDisplayValue("Untitled")).toBeInTheDocument();
   });
 
@@ -117,40 +137,34 @@ describe("App", () => {
               createdAt: "2026-04-13 00:00:00",
               modifiedAt: "2026-04-13 00:00:00",
               sizeBytes: 4,
-              children: []
-            }
-          ]
-        }
-      ]
+              children: [],
+            },
+          ],
+        },
+      ],
     });
 
     render(<App />);
 
-    await screen.findByText(/no visible artifacts/i);
+    await screen.findByText(/select an item to preview/i);
     fireEvent.click(screen.getByRole("menuitem", { name: /Mount Directory/i }));
 
     fireEvent.change(screen.getByPlaceholderText(/~\/projects\/example/i), {
-      target: { value: "~/workspace" }
+      target: { value: "~/workspace" },
     });
     fireEvent.click(screen.getByRole("button", { name: /^Mount$/i }));
 
     await waitFor(() => {
       expect(createMount).toHaveBeenCalledWith(
-        expect.objectContaining({
-          path: "~/workspace",
-          parentId: undefined
-        })
+        expect.objectContaining({ path: "~/workspace", parentId: undefined })
       );
     });
 
-    // Root shows the mount; double-click navigates into it to reveal children
-    const mountCards = await screen.findAllByText("workspace");
-    expect(mountCards.length).toBeGreaterThan(0);
-    fireEvent.dblClick(mountCards[0].closest("button")!);
-    expect((await screen.findAllByText("notes.txt")).length).toBeGreaterThan(0);
+    // Mount auto-expands as a root, so the child file is visible in the tree
+    expect(await screen.findByText("notes.txt")).toBeInTheDocument();
   });
 
-  it("submits a url and renders the pending node immediately", async () => {
+  it("submits a url and renders the pending node in the tree", async () => {
     getExplorerSnapshot.mockResolvedValue({ roots: [] });
     createUrl.mockResolvedValue({
       roots: [
@@ -163,32 +177,32 @@ describe("App", () => {
           createdAt: "2026-04-13 00:00:00",
           modifiedAt: "2026-04-13 00:00:00",
           sizeBytes: 0,
-          children: []
-        }
-      ]
+          children: [],
+        },
+      ],
     });
 
     render(<App />);
 
-    await screen.findByText(/no visible artifacts/i);
+    await screen.findByText(/select an item to preview/i);
     fireEvent.click(screen.getByRole("menuitem", { name: /Add URL/i }));
 
     fireEvent.change(screen.getByPlaceholderText(/https:\/\/example.com/i), {
-      target: { value: "https://example.com" }
+      target: { value: "https://example.com" },
     });
     fireEvent.click(screen.getByRole("button", { name: /Fetch & Create/i }));
 
     await waitFor(() => {
       expect(createUrl).toHaveBeenCalledWith({
         url: "https://example.com",
-        parentId: undefined
+        parentId: undefined,
       });
     });
 
-    expect((await screen.findAllByText("https://example.com")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("https://example.com")).toBeInTheDocument();
   });
 
-  it("opens markdown preview when double-clicking a .md file in a mount", async () => {
+  it("opens markdown preview when clicking a .md file row", async () => {
     getExplorerSnapshot.mockResolvedValue({
       roots: [
         {
@@ -210,32 +224,144 @@ describe("App", () => {
               createdAt: "2026-04-26 00:00:00",
               modifiedAt: "2026-04-26 00:00:00",
               sizeBytes: 32,
-              children: []
-            }
-          ]
-        }
-      ]
+              children: [],
+            },
+          ],
+        },
+      ],
     });
     readFileContent.mockResolvedValue("# Welcome to the workspace");
 
     render(<App />);
 
-    // Navigate into the mount
-    const mountCards = await screen.findAllByText("workspace");
-    fireEvent.dblClick(mountCards[0].closest("button")!);
-
-    // Double-click the .md file to open preview
-    const fileCard = await screen.findByText("README.md");
-    fireEvent.dblClick(fileCard.closest("button")!);
+    // Mount auto-expands; file row is visible immediately
+    await screen.findByText("README.md");
+    clickTreeRow("README.md");
 
     await waitFor(() => {
       expect(readFileContent).toHaveBeenCalledWith("md-file");
     });
     expect(await screen.findByText("Read-only preview")).toBeInTheDocument();
+  });
 
-    // Back button returns to grid
-    fireEvent.click(screen.getByRole("button", { name: /back to explorer/i }));
-    expect((await screen.findAllByText("README.md")).length).toBeGreaterThan(0);
+  it("opens the system browser when a URL row is clicked", async () => {
+    getExplorerSnapshot.mockResolvedValue({
+      roots: [
+        {
+          id: "url-1",
+          parentId: null,
+          name: "https://example.com",
+          kind: "url",
+          state: "indexed",
+          createdAt: "2026-04-26 00:00:00",
+          modifiedAt: "2026-04-26 00:00:00",
+          sizeBytes: 0,
+          children: [],
+        },
+      ],
+    });
+
+    render(<App />);
+
+    await screen.findByText("https://example.com");
+    clickTreeRow("https://example.com");
+
+    await waitFor(() => {
+      expect(openExternal).toHaveBeenCalledWith("https://example.com");
+    });
+    // Center stays on welcome (no surface for URL kind)
+    expect(screen.getByText(/select an item to preview/i)).toBeInTheDocument();
+  });
+
+  it("shows 'cannot preview' placeholder for unsupported file kinds", async () => {
+    getExplorerSnapshot.mockResolvedValue({
+      roots: [
+        {
+          id: "mount-1",
+          parentId: null,
+          name: "workspace",
+          kind: "mount",
+          state: "ready",
+          createdAt: "2026-04-26 00:00:00",
+          modifiedAt: "2026-04-26 00:00:00",
+          sizeBytes: 0,
+          children: [
+            {
+              id: "bin-file",
+              parentId: "mount-1",
+              name: "data.bin",
+              kind: "file",
+              state: "ready",
+              createdAt: "2026-04-26 00:00:00",
+              modifiedAt: "2026-04-26 00:00:00",
+              sizeBytes: 1024,
+              children: [],
+            },
+          ],
+        },
+      ],
+    });
+
+    render(<App />);
+
+    await screen.findByText("data.bin");
+    clickTreeRow("data.bin");
+
+    expect(await screen.findByText(/this file type cannot be previewed/i)).toBeInTheDocument();
+    // Inspector reflects the selected file (tree row + inspector header both contain the name)
+    expect(screen.getAllByText("data.bin").length).toBeGreaterThan(0);
+  });
+
+  it("toggles folder expansion when the row is clicked, no center change", async () => {
+    getExplorerSnapshot.mockResolvedValue({
+      roots: [
+        {
+          id: "mount-1",
+          parentId: null,
+          name: "workspace",
+          kind: "mount",
+          state: "ready",
+          createdAt: "2026-04-26 00:00:00",
+          modifiedAt: "2026-04-26 00:00:00",
+          sizeBytes: 0,
+          children: [
+            {
+              id: "folder-1",
+              parentId: "mount-1",
+              name: "docs",
+              kind: "folder",
+              state: "ready",
+              createdAt: "2026-04-26 00:00:00",
+              modifiedAt: "2026-04-26 00:00:00",
+              sizeBytes: 0,
+              children: [
+                {
+                  id: "child",
+                  parentId: "folder-1",
+                  name: "guide.md",
+                  kind: "file",
+                  state: "ready",
+                  createdAt: "2026-04-26 00:00:00",
+                  modifiedAt: "2026-04-26 00:00:00",
+                  sizeBytes: 8,
+                  children: [],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    render(<App />);
+
+    await screen.findByText("docs");
+    // child is hidden until folder is expanded
+    expect(screen.queryByText("guide.md")).toBeNull();
+    clickTreeRow("docs");
+    expect(await screen.findByText("guide.md")).toBeInTheDocument();
+    // welcome stays
+    expect(screen.getByText(/select an item to preview/i)).toBeInTheDocument();
   });
 
   it("keeps explorer state when switching to another shell section and back", async () => {
@@ -250,18 +376,18 @@ describe("App", () => {
           createdAt: "2026-04-13 00:00:00",
           modifiedAt: "2026-04-13 00:00:00",
           sizeBytes: 0,
-          children: []
-        }
-      ]
+          children: [],
+        },
+      ],
     });
 
     render(<App />);
 
-    expect(await screen.findAllByText("Inbox")).not.toHaveLength(0);
+    expect(await screen.findByText("Inbox")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Home$/i }));
     expect(screen.getByText(/This section is stubbed in Milestone 2/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Explorer$/i }));
-    expect((await screen.findAllByText("Inbox")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Inbox")).toBeInTheDocument();
     expect(getExplorerSnapshot).toHaveBeenCalledTimes(1);
   });
 });

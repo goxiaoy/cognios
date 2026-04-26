@@ -811,40 +811,115 @@ button:disabled {
 
 .explorer-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 0px;
+  grid-template-columns: 240px minmax(0, 1fr) 280px;
   gap: 0;
-  align-items: start;
-  transition: grid-template-columns 220ms ease;
+  align-items: stretch;
+  height: 100%;
+  min-height: 0;
 }
 
-.explorer-workspace.has-inspector {
-  grid-template-columns: minmax(0, 1fr) 240px;
+.tree-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid color-mix(in srgb, var(--line) 55%, transparent 45%);
+  overflow: hidden;
 }
 
-/* Flat panels — no card chrome; white container provides the background */
-
-.content-panel {
-  padding: 0 1rem 1rem 0;
-  border-right: 1px solid transparent;
-  transition: border-color 220ms ease;
+.detail-surface {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 1rem 1rem 1rem;
+  overflow: hidden;
 }
 
-.explorer-workspace.has-inspector .content-panel {
-  border-right-color: color-mix(in srgb, var(--line) 55%, transparent 45%);
+.detail-placeholder {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-3);
+  font-size: 0.9rem;
+}
+
+.detail-placeholder p {
+  margin: 0;
 }
 
 .inspector-panel {
   padding: 0 0 1rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0;
+  min-height: 0;
   overflow: hidden;
-  opacity: 0;
-  transition: opacity 180ms ease 60ms;
+  border-left: 1px solid color-mix(in srgb, var(--line) 55%, transparent 45%);
 }
 
-.explorer-workspace.has-inspector .inspector-panel {
-  opacity: 1;
+.explorer-tree-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.explorer-tree-toolbar {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
+}
+
+.explorer-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.25rem 0;
+}
+
+.inspector-pane--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+
+.inspector-empty-hint {
+  color: var(--ink-3);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+/* Compact display-only breadcrumb above the active file surface */
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 0;
+  margin-bottom: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--ink-3);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.breadcrumb-segment-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.breadcrumb-separator {
+  color: var(--ink-3);
+  opacity: 0.7;
+}
+
+.breadcrumb-segment {
+  color: var(--ink-2);
+}
+
+.breadcrumb-segment-group:last-child .breadcrumb-segment {
+  color: var(--ink);
+  font-weight: 500;
 }
 
 /* ── Content header ── */

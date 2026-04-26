@@ -277,7 +277,7 @@ describe("useExplorerStore", () => {
           ),
         },
       ],
-    };
+    } as Parameters<typeof result.current.applySnapshot>[0];
     act(() => {
       result.current.applySnapshot(trimmed);
     });
