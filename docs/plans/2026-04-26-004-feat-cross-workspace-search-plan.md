@@ -104,7 +104,7 @@ Authoritative findings from research (full citations in research dispatch output
 - **`tauri-plugin-shell` Rust API** — `app.shell().sidecar("name").args([...]).spawn()` returns `(rx, child)`; `child.kill()` and `rx.recv()` for `CommandEvent::{Stdout, Stderr, Terminated}`. No built-in supervisor — restart loop is our work.
 - **`bundle.active = false`** only suppresses release packaging; dev-mode sidecar resolution is unaffected.
 - **lancedb** ([lancedb.github.io/lancedb](https://lancedb.github.io/lancedb/python/python/)) — has stable native hybrid search (`tbl.search(text, query_type="hybrid")`) with `RRFReranker` default, FTS via lance-index (no Tantivy build dep with `use_tantivy=False`). Latest release is 0.30.x; macOS x86_64 wheels dropped at 0.26 — Apple Silicon only.
-- **Gemma 3n E2B** ([huggingface.co/google/gemma-3n-E2B-it](https://huggingface.co/google/gemma-3n-E2B-it)) — multimodal (image + text → text), 4.46 B raw params, ~2 B effective via MatFormer. `unsloth/gemma-3n-E2B-it-GGUF` Q4_K_M is ~3 GB. Serve via `llama-cpp-python` for CPU inference on macOS arm64; Metal acceleration available. Gated download (Gemma license acceptance) — bundle license-acceptance flow into ModelManager UI, do **not** redistribute weights in the installer.
+- **Gemma 3n E2B** ([huggingface.co/google/gemma-3n-E2B-it](https://huggingface.co/google/gemma-3n-E2B-it)) — multimodal (image + text → text), 4.46 B raw params, ~2 B effective via MatFormer. `unsloth/gemma-3n-E2B-it-GGUF` Q4_K_M is ~3 GB. **Serving via the `llama-server` C++ binary out-of-process** (the official llama.cpp HTTP server distributed at [github.com/ggml-org/llama.cpp/releases](https://github.com/ggml-org/llama.cpp/releases)). Prebuilt binaries available for macOS arm64, macOS x86_64, Windows, Linux x86_64, and Linux arm64 — eliminates the cmake + xcode-select source-build dependency that the Python `llama-cpp-python` binding would otherwise require. Spike v1 (sidecar/spike/README.md F-1) confirmed `llama-cpp-python` is sdist-only on PyPI; the out-of-process binary is the strict win. Multimodal vision is enabled via the `--mmproj <vision-encoder.gguf>` flag (Gemma 3n ships a separate vision projection head). Gated download (Gemma license acceptance) — bundle license-acceptance flow into ModelManager UI, do **not** redistribute weights in the installer.
 - **gte multilingual ONNX** — `onnx-community/gte-multilingual-base` and `onnx-community/gte-multilingual-reranker-base` ship pre-quantized ONNX. Reranker int8 = 341 MB. `optimum.onnxruntime.ORTModelForSequenceClassification.from_pretrained(..., file_name="model_int8.onnx")` is the call path. Neither is in fastembed's curated registry — do not rely on fastembed.
 - **PaddleOCR ONNX-only** ([github.com/PaddlePaddle/PaddleOCR/discussions/14572](https://github.com/PaddlePaddle/PaddleOCR/discussions/14572)) — use `paddleocr-onnx` or `paddlex[ocr-core]>=3.4` + `onnxruntime`. Drop `paddlepaddle` entirely. PP-OCRv4 mobile det+rec+cls ONNX combined ~15-20 MB.
 - **PyInstaller** ([pyinstaller.org/en/stable](https://pyinstaller.org/en/stable/usage.html)) — `--onedir` only (not `--onefile`) for ML stacks. Use CPU-only PyTorch wheels if torch is needed (we likely won't ship torch since the sidecar uses ONNX + GGUF).
@@ -114,7 +114,7 @@ Authoritative findings from research (full citations in research dispatch output
 **Architecture**
 
 - **lancedb owns both FTS and vector storage.** Originally the brainstorm split FTS5 (SQLite) from vectors (lancedb); research confirms lancedb has stable native hybrid retrieval. Single storage technology, single hybrid API call (`query_type="hybrid"`), simpler crash recovery. The brainstorm's mention of "FTS database (SQLite FTS5 via Python `sqlite3`)" is superseded by this plan; the queue state alone uses SQLite.
-- **GGUF + llama.cpp for Gemma serving.** `llama-cpp-python` against `unsloth/gemma-3n-E2B-it-GGUF` Q4_K_M (~3 GB) replaces the brainstorm's implied transformers-based path. Eliminates torch from the sidecar bundle, halves disk footprint.
+- **GGUF + `llama-server` (out-of-process) for Gemma serving.** The official llama.cpp `llama-server` C++ binary is bundled under `src-tauri/binaries/llama-server-<host-tuple>` (sibling of `search-sidecar`). The Python sidecar invokes it via OpenAI-compatible HTTP on a separate loopback port. Replaces the brainstorm's implied transformers + torch path. Net wins: (a) eliminates `cmake` + `xcode-select` source-build dependency and `llama-cpp-python`'s sdist-only PyPI gap (spike v1 finding F-1), (b) cleaner cross-platform story (llama.cpp publishes prebuilt binaries for all v1 targets vs. `llama-cpp-python`'s no-prebuilds-anywhere), (c) strict process isolation — captioning crashes do not bring down the search sidecar, and the captioner can be killed + respawned by the supervisor to bound KV-cache growth. The runtime topology gains one process; the bundle topology stays single-installer.
 - **ONNX + `optimum.onnxruntime` for embedding and reranker.** Pulls pre-quantized models from `onnx-community/*`. Avoids `optimum-cli` export step in CI.
 - **PaddleOCR ONNX-only** via `paddleocr-onnx` (or `paddlex[ocr-core]` + `onnxruntime`). No `paddlepaddle` dependency.
 - **Sidecar packaging via PyInstaller `--onedir`** with the platform-suffixed binary placed at `src-tauri/binaries/search-sidecar-<host-tuple>`. Build is a separate CI step that runs before `tauri build`.
@@ -172,7 +172,7 @@ All requests require `Authorization: Bearer <token>` (read from `sidecar.runtime
 
 ### Resolved During Planning
 
-- **Gemma serving stack:** GGUF + `llama-cpp-python`, not transformers + torch. (Saves ~1 GB bundle; eliminates torch dep.)
+- **Gemma serving stack:** GGUF + `llama-server` C++ binary out-of-process, not `llama-cpp-python` in-process. (Saves ~1 GB bundle vs. the transformers + torch path; saves another ~80 MB + cmake/xcode prereqs vs. the embedded `llama-cpp-python` path; provides strict process isolation; better cross-platform binary distribution story.)
 - **FTS storage:** lancedb's native FTS, not SQLite FTS5. (Single storage technology; native hybrid retrieval.)
 - **Reranker quantization:** ship `model_int8.onnx` directly from `onnx-community/*`. No `optimum-cli` export.
 - **OCR runtime:** ONNX-only path (`paddleocr-onnx`). Drop `paddlepaddle`.
@@ -294,33 +294,21 @@ When `embedding.state != "ready"`, the embed step is skipped, the lancedb call u
 
 ### Phase 0 — De-risk before building
 
-- [ ] **Unit 0: PyInstaller packaging spike (run before Phase 2)**
+- [x] **Unit 0: PyInstaller packaging spike (completed 2026-04-26)**
 
-  **Goal:** Prove the deep-ML sidecar bundle is viable on macOS arm64 *before* writing any indexing or retrieval code. The packaging risk is the single largest unknown; discovering an unbundleable dep at the end of Phase 5 would force rework into Units 4-6. Catch it in week 1.
+  **Goal:** Prove the deep-ML sidecar bundle is viable on macOS arm64 *before* writing any indexing or retrieval code.
 
-  **Requirements:** None directly — risk reduction.
+  **Status:** Done. Spike v1 lives at `sidecar/spike/`; full findings at [sidecar/spike/README.md](../../sidecar/spike/README.md). Headline: the lancedb (Rust-extension) + pyarrow + onnxruntime + pymupdf + fastapi + uvicorn core bundles cleanly to 335 MB with `--collect-all numpy` (mandatory for numpy 2.x — F-3); wall-clock cold-start is 1.16 s warm-cache, in-process import 61 ms; ONNX Runtime `CoreMLExecutionProvider` is reachable inside the bundle (Metal acceleration confirmed for Phase 2's <300 ms target).
 
-  **Dependencies:** None.
+  **Decisions resulting from the spike:**
+  - **F-1 resolved → switch to `llama-server` out-of-process** for Gemma captioning. `llama-cpp-python` is sdist-only on PyPI for all platforms and requires `cmake` + `xcode-select` source build. The official llama.cpp `llama-server` binary publishes prebuilt artifacts for every v1 target. See Key Technical Decisions and Unit 4.
+  - **F-3 → mandatory `--collect-all numpy`** added to Unit 12's PyInstaller invocation.
+  - **F-2 → `cmake` + `xcode-select` are no longer required** as developer prereqs (the only consumer was `llama-cpp-python`, now removed from the sidecar).
 
-  **Files:**
-  - Create: `sidecar/spike/hello.py` (FastAPI app importing `lancedb`, `llama_cpp`, `paddleocr` (or `paddleocr-onnx`), `pymupdf`, `optimum.onnxruntime`; one trivial `/spike` endpoint that calls into each).
-  - Create: `sidecar/spike/build_spike.sh` (PyInstaller `--onedir` invocation with the hidden-imports list).
-  - Create: `sidecar/spike/README.md` (capture findings: which deps required which hidden-imports, which dylibs needed manual bundling, total bundle size, cold-start time).
-
-  **Approach:**
-  - `pip install` each dep (lancedb, llama-cpp-python, paddleocr-onnx, pymupdf, optimum, onnxruntime, fastapi, uvicorn, transformers, accelerate, tokenizers).
-  - Run `pyinstaller --onedir --collect-all transformers --collect-all accelerate --collect-all tokenizers --collect-binaries onnxruntime --collect-binaries lancedb --collect-binaries pymupdf --collect-binaries llama_cpp --hidden-import uvicorn.logging --hidden-import uvicorn.loops.auto --hidden-import uvicorn.protocols.http.auto --hidden-import uvicorn.protocols.websockets.auto sidecar/spike/hello.py`.
-  - Boot the resulting binary; `curl localhost:<port>/spike`; expect each dep call to return without error.
-  - Validate: bundle size, cold-start time, codesigning the dylibs in `dist/hello/_internal/` with `codesign --deep --options runtime` succeeds.
-  - **Known potential failures** to record explicitly: llama-cpp-python's `ggml-metal.metal` shader file may not be auto-collected (Metal backend segfaults if missing); lancedb's liblzma dynamic linkage; onnxruntime CoreML provider dylib (`libonnxruntime_providers_coreml.dylib`).
-
-  **Test scenarios:**
-  - Test expectation: manual — the spike's success is "all imports succeed, all four trivial calls return, the bundle is reproducible in CI".
-
-  **Verification:**
-  - The bundle launches and serves `/spike` on a clean macOS arm64 runner with no Python environment installed.
-  - Cold-start time is measured and recorded.
-  - If any dep cannot be bundled, the plan revisits the architectural choice (drop captioning? swap lancedb for something Python-bundleable?) before Phase 2 commits to it.
+  **Spike v2 priorities** (run before Unit 12 finalises):
+  1. End-to-end captioning round-trip via `llama-server` — bundle the binary, boot it, send a base64-encoded image to `/v1/chat/completions`, confirm Gemma 3n vision works.
+  2. Bundle transformers + `optimum.onnxruntime` + paddleocr-onnx into the spike — confirm the embedding/reranker/OCR layer survives PyInstaller. (Spike v1 deferred these.)
+  3. Cold-disk-cache boot time (requires `sudo purge` on a clean machine) — feeds the supervisor's 30 s startup budget tuning.
 
 ### Phase 1 — Sidecar foundations
 
@@ -365,35 +353,48 @@ When `embedding.state != "ready"`, the embed step is skipped, the lancedb call u
   - Failure paths fire zero events.
   - Existing tests continue to pass; the existing url-indexing event reasons are unchanged.
 
-- [ ] **Unit 2: Tauri sidecar wiring (Rust supervisor + ACL + runtime file)**
+- [ ] **Unit 2: Tauri sidecar wiring (Rust supervisor + ACL + runtime files for both children)**
 
-  **Goal:** A `search-sidecar` binary is launched by Rust at app start, supervised on crash, and produces a runtime file (`~/.cogios/search/sidecar.runtime`) that Rust reads to discover the port and bearer token.
+  **Goal:** Two child processes are launched by Rust at app start and supervised independently: `search-sidecar` (Python; FastAPI on loopback) and `llama-server` (C++; OpenAI-compatible HTTP on a separate loopback port). Each writes its own runtime file that Rust reads to discover its port and auth token.
 
   **Requirements:** R10, R22, R23, security decisions (sidecar auth, scoped ACL).
 
   **Dependencies:** None — pure infrastructure.
 
   **Files:**
-  - Modify: `src-tauri/tauri.conf.json` (add `bundle.externalBin`)
-  - Modify: `src-tauri/capabilities/default.json` (add scoped `shell:allow-execute` and `shell:allow-spawn`)
+  - Modify: `src-tauri/tauri.conf.json` (add `bundle.externalBin` for both `search-sidecar` and `llama-server`)
+  - Modify: `src-tauri/capabilities/default.json` (add scoped `shell:allow-execute` and `shell:allow-spawn` entries for both binaries)
   - Create: `src-tauri/src/services/search/mod.rs`
-  - Create: `src-tauri/src/services/search/supervisor.rs`
+  - Create: `src-tauri/src/services/search/supervisor.rs` (generic supervisor; spawns and supervises both children)
   - Create: `src-tauri/src/services/search/runtime_file.rs`
   - Modify: `src-tauri/src/lib.rs` (spawn supervisor in `setup`, register state, attach kill on window-close)
-  - Modify: `src-tauri/Cargo.toml` (only if a new crate is needed; reqwest is already in deps)
-  - Create: `src-tauri/binaries/.gitkeep` (directory placeholder; real binary placed by CI from Unit 12 or by a developer-side build script for local dev)
+  - Modify: `src-tauri/Cargo.toml` (only if a new crate is needed; reqwest is already in deps; add `rand = "0.8"` for token generation if not transitively pulled in)
+  - Create: `src-tauri/binaries/.gitkeep` (directory placeholder; real binaries placed by CI from Unit 12 or by a developer-side build script for local dev)
   - Test: `src-tauri/tests/sidecar_supervisor.rs` (new)
 
   **Approach:**
-  - Capability scope (verbatim shape — see research):
+  - Capability scope (two parallel entries — one per binary):
     ```json
     { "identifier": "shell:allow-execute",
-      "allow": [{ "name": "binaries/search-sidecar", "sidecar": true,
-                  "args": ["serve", "--storage-dir", { "validator": ".+" }] }] }
+      "allow": [
+        { "name": "binaries/search-sidecar", "sidecar": true,
+          "args": ["serve", "--storage-dir", { "validator": "^/[^\\x00]+$" }] },
+        { "name": "binaries/llama-server", "sidecar": true,
+          "args": [
+            "--host", "127.0.0.1",
+            "--port", "0",
+            "-m", { "validator": "^/[^\\x00]+\\.gguf$" },
+            "--mmproj", { "validator": "^/[^\\x00]+\\.gguf$" },
+            "--api-key", { "validator": "^[0-9a-f]{64}$" },
+            "--ctx-size", { "validator": "^[0-9]{1,5}$" },
+            "--parallel", { "validator": "^[1-4]$" }
+          ] }
+      ] }
     ```
-    Add a parallel entry under `shell:allow-spawn`.
-  - `bundle.externalBin: ["binaries/search-sidecar"]` (no platform suffix).
-  - Supervisor: spawn via `app.shell().sidecar("search-sidecar").args(["serve", "--storage-dir", path]).spawn()`. Pump `rx` events. On `Terminated`, exponential-backoff restart up to 3 attempts.
+    Add a parallel `shell:allow-spawn` block with the same two entries.
+  - `bundle.externalBin: ["binaries/search-sidecar", "binaries/llama-server"]` (no platform suffix on either; Tauri appends `-<host-tuple>` when resolving siblings).
+  - **Supervisor** is generic over child type. It tracks two `CommandChild` handles in `Arc<Mutex<...>>`. Spawn order: `search-sidecar` first; once Rust reads its runtime file and confirms `/healthz`, the supervisor spawns `llama-server` and writes its `(port, api-key)` to a second runtime file (`~/.cogios/search/llama-server.runtime`, mode 0600). The Python sidecar reads the llama-server runtime file when it needs to make caption calls.
+  - **Restart budget per child.** Each child has its own exponential-backoff (1 s → 2 s → 4 s) up to 3 attempts. `search-sidecar` failure → "search unavailable"; `llama-server` failure → captioning disabled, OCR continues, search remains available.
   - Runtime file: 256-bit token via `rand::random::<[u8; 32]>()` (or `tauri::utils::random`), serialised JSON `{ "port": u16, "token": "<hex>" }`, written by the *sidecar* (Unit 3) to `~/.cogios/search/sidecar.runtime` with mode 0600. Rust polls for the file (1 s ticks, 30 s timeout); the path of "Rust starts the sidecar, sidecar writes the file, Rust reads it" is the sequencing.
   - Sentinel: on sidecar startup, if `sidecar.runtime` already exists, the new sidecar instance overwrites it. On clean shutdown the supervisor deletes the file.
   - The Rust HTTP client (a thin wrapper around `reqwest::blocking`) reads `port` + `token` once, caches in memory, and re-reads on supervisor restart.
@@ -404,12 +405,14 @@ When `embedding.state != "ready"`, the embed step is skipped, the lancedb call u
   - For the HTTP client, mirror `src-tauri/src/services/url_indexing/pipelines/default_web.rs` use of `reqwest::blocking`.
 
   **Test scenarios:**
-  - Happy path: supervisor spawns a stub binary that writes a known runtime file; Rust reads `port`/`token` and constructs an authenticated request that the stub binary echoes back.
-  - Edge: stub binary that exits immediately — supervisor reports failure after the configured retry budget.
+  - Happy path: supervisor spawns both stub binaries; Rust reads each runtime file; an authenticated request to each round-trips successfully.
+  - Edge: `search-sidecar` stub exits immediately — supervisor reports failure after the configured retry budget; `llama-server` is never started (search-sidecar is the prerequisite).
+  - Edge: `llama-server` stub fails to start (e.g. missing GGUF) — search-sidecar continues serving FTS/vector results; the captioning role is reported as `unavailable` via `/models/status`.
   - Edge: stub binary that writes the runtime file with mode 0644 — Rust logs a warning but proceeds (mode is the sidecar's responsibility, not Rust's gate).
   - Error: missing `binaries/search-sidecar-<host-tuple>` — Rust surfaces a typed "search unavailable" error rather than panicking.
+  - Error: missing `binaries/llama-server-<host-tuple>` — search continues; captioning disabled with a typed status.
   - Error: orphaned runtime file from a previous crashed run — sidecar overwrites it; Rust's cached token is invalidated and re-read.
-  - Integration: full app start → sidecar process visible in process table → `child.kill()` on app shutdown removes it.
+  - Integration: full app start → both child processes visible in process table → `child.kill()` for each on app shutdown removes them.
 
   **Verification:**
   - Sidecar process is launched on app start and killed on app close.
@@ -488,11 +491,15 @@ When `embedding.state != "ready"`, the embed step is skipped, the lancedb call u
       "reranker":  ModelSpec(repo="onnx-community/gte-multilingual-reranker-base", ...),
       "ocr":       ModelSpec(repo="PaddlePaddle/PP-OCRv4_mobile_det", ...),  # plus rec/cls
       "captioner": ModelSpec(repo="unsloth/gemma-3n-E2B-it-GGUF",
-                             commit="<pinned>", files={"gemma-3n-E2B-it-Q4_K_M.gguf": "<sha256>"},
+                             commit="<pinned>",
+                             files={
+                               "gemma-3n-E2B-it-Q4_K_M.gguf":  "<sha256>",
+                               "mmproj-gemma-3n-E2B-it-f16.gguf": "<sha256>",  # vision projection head
+                             },
                              license="gemma", requires_acceptance=True),
     }
     ```
-    The exact commit hashes and SHA-256 values are fetched at plan-implementation time (deferred to implementation — mirror current HF state).
+    The exact commit hashes and SHA-256 values are fetched at plan-implementation time (deferred to implementation — mirror current HF state). **Captioner downloads only the GGUF weights** (model + mmproj). The `llama-server` binary itself is **not** managed by ModelManager — it is bundled in the installer at `src-tauri/binaries/llama-server-<host-tuple>` (Unit 12). When `captioner` is selected and weights are ready, Unit 2's supervisor spawns `llama-server` with `-m <model-path> --mmproj <mmproj-path>` arguments.
   - Download: HTTP GET with `Range: bytes=...` for resume support. Files written to a `tmp/` directory inside the role folder, renamed atomically after SHA-256 verification.
   - Activation: a `current` symlink (or sentinel file on Windows in v2) in `~/.cogios/search/models/<role>/` points at the verified commit folder. Cold-start reads the symlink target.
   - Gemma license gate: `models/select` for `role="captioner"` rejects with `licenseAccepted: false` until the UI calls `models/accept-license` with the role; the manager records acceptance in `~/.cogios/search/models/captioner/license.accepted`. **Critical: HuggingFace gating.** Both `google/gemma-3n-E2B-it` and `unsloth/gemma-3n-E2B-it-GGUF` are gated repos on HuggingFace — downloading them requires an HF account that has accepted the Gemma TOS at huggingface.co AND an HF auth token. The plan's local `license.accepted` sentinel does not bypass this. v1 design: the LicenseAcceptanceModal (Unit 10) collects the user's HF token (linked from the modal text "Sign in to HuggingFace and accept the Gemma terms; paste your token below"); the token is stored in OS keychain (same path as API keys); ModelManager reads it at download time and sends `Authorization: Bearer <hf_token>` to HuggingFace. If the user declines, the captioner stays unconfigured and image-caption indexing is disabled (OCR alone runs). This must be wired before the captioner can be downloaded.
@@ -564,15 +571,15 @@ When `embedding.state != "ready"`, the embed step is skipped, the lancedb call u
   - **Database hardening.** Open `queue.db` with `PRAGMA journal_mode=WAL`, `PRAGMA synchronous=NORMAL`, `PRAGMA foreign_keys=ON`. Run `PRAGMA quick_check` at sidecar startup; on failure (corruption from a hard kill mid-write), rename the corrupt file to `queue.db.corrupt-<timestamp>`, recreate the schema empty, and trigger a fresh resync from Rust (`POST /events/resync` is idempotent). This recovers without losing the search experience — lancedb still has indexed content; only the queue state is rebuilt.
   - Resume on startup: any rows in `state="indexing"` are reset to `pending` (mirrors `requeue_stale_jobs`).
   - Worker pool: a single worker for OCR/caption (memory-bound — Gemma + paddleocr-onnx loaded together push past 2 GB), N=4 workers for text/PDF/url_cache. The dispatch table chooses the worker pool by content type.
-  - Per-job timeout: 60 s default, 300 s for image-caption + ocr. **Implementation: subprocess isolation, not threading.** OCR and caption workers run as separate child processes (via `multiprocessing.Process` or `subprocess.Popen`); the runner sends `SIGTERM` after timeout and `SIGKILL` after a grace period. `signal.alarm` is **not viable** because it only fires on the main Python thread and FastAPI/uvicorn worker pools run handlers on threadpool workers; `threading.Timer` + cooperative cancellation cannot interrupt PyMuPDF or llama.cpp because those release the GIL during native execution and ignore Python-level cooperative checks. Process isolation also lets us recycle worker processes every N jobs to bound memory growth (see Risks: llama.cpp KV cache).
+  - Per-job timeout: 60 s default, 300 s for image OCR; image captioning is bounded by an HTTP-level timeout on the call to `llama-server` (default 240 s). **In-sidecar implementation: subprocess isolation for the heavy in-process worker (OCR), not threading.** OCR runs as a separate child process (via `multiprocessing.Process`); the runner sends `SIGTERM` after timeout and `SIGKILL` after a grace period. `signal.alarm` is **not viable** because it only fires on the main Python thread and FastAPI/uvicorn worker pools run handlers on threadpool workers; `threading.Timer` + cooperative cancellation cannot interrupt PyMuPDF native calls. The captioner's KV-cache growth is solved by Unit 2's `llama-server` process recycling (every 200 captions or 30 minutes); the search-sidecar never sees that growth.
   - Error isolation: every processor runs inside a try/except that converts any exception to `mark_error(node_id, str(e))`. PyMuPDF and llama.cpp can crash on malformed input; the wrapper catches `BaseException` for those calls.
   - Per-content-type pipelines:
     - text: read file → chunk → embed batch → upsert to lancedb.
     - PDF: PyMuPDF page text; if a page returns empty text, fall back to per-page OCR; chunk → embed → upsert.
-    - image: parallel OCR (paddleocr-onnx) and caption (llama-cpp via Gemma 3n vision API). Concatenate `"OCR: <text>\nCaption: <caption>"` as the document text. If either pipeline fails the other still indexes; both failing → error state.
+    - image: parallel OCR (paddleocr-onnx, in-process) and caption (HTTP POST to the local `llama-server` `/v1/chat/completions` endpoint with the image as a base64-encoded `image_url` content part). Concatenate `"OCR: <text>\nCaption: <caption>"` as the document text. If either pipeline fails the other still indexes; both failing → error state. The caption HTTP client honours the same `Authorization: Bearer <api-key>` scheme as the search-sidecar's own auth, reading the `(port, api-key)` from `~/.cogios/search/llama-server.runtime` (mode 0600, written by Rust at supervisor startup).
     - url_cache: read `html_cache_path` from Rust event payload. **Important — the cache file contains raw HTML, not stripped text.** `src-tauri/src/services/url_indexing/cache.rs::write_html_cache` writes the raw `html` string from `PipelineOutput`; only the 320-char `preview_text` is stripped (and that lives in `cognios.db`'s `url_jobs.preview_text`, not in the cache file). The sidecar must therefore strip HTML itself. Add `selectolax` (fast, lxml-based, ~5 MB wheel) to the Python deps for this. Fall back to using the truncated `preview_text` (forwarded via the IPC event payload) only if the cache file is missing.
-  - Memory cap: **`RLIMIT_AS` is not effective on Darwin** (the macOS kernel honours `RLIMIT_DATA` and is documented as not enforcing `RLIMIT_AS` for most processes). Real memory bounding on the v1 platform comes from (a) running OCR/caption in subprocess workers that the runner can SIGKILL when memory grows, and (b) recycling the captioner worker process every N jobs (see Risks: llama.cpp KV cache). On Linux, `RLIMIT_AS` is honoured and we set it to 6 GB; on macOS it is set as a best-effort hint only. The "memory cap" success criterion does not literally rely on `RLIMIT_AS` on the v1 platform.
-  - **Worker process recycling for the captioner.** llama-cpp-python's `Llama` instance retains KV cache across calls unless `llm.reset()` is called or a new instance is constructed. Unbounded growth + Darwin's missing `RLIMIT_AS` means a 1000-image mount could OOM the user's machine. Recycle the captioner worker process every 50 captions: the runner spawns a fresh worker, drains the previous worker's queue, kills it. This also bounds memory leaks in any of the native deps.
+  - Memory cap for the **search-sidecar** itself: best-effort `RLIMIT_AS` on Linux (set to 6 GB at startup); not enforced on Darwin (the kernel ignores `RLIMIT_AS` for most processes). The captioner is no longer in-process so its memory is irrelevant to the search-sidecar's bound; OCR is the only heavy in-process workload, and its memory is bounded by per-job timeouts.
+  - **Captioner process recycling.** The `llama-server` child has its own KV cache that grows over the lifetime of the process. Unit 2's supervisor recycles `llama-server` every 200 caption requests (or every 30 minutes of uptime, whichever first): SIGTERM the current process, wait for in-flight requests to drain (~5 s grace), respawn with the same model paths. Process isolation makes this trivial — the search-sidecar never sees the recycle event.
 
   **Patterns to follow:**
   - The Rust url_indexing queue (`src-tauri/src/services/url_indexing/queue.rs`) for state transitions and crash-resume semantics.
@@ -959,12 +966,14 @@ The dedicated search view must additionally:
   **Dependencies:** Unit 8 + 9 + 10 (UI surfaces stable enough that the CSP can be derived from real render needs).
 
   **Files:**
-  - Modify: `src-tauri/tauri.conf.json` (`security.csp` set to a non-null directive set; `bundle.active` flipped to `true` for release packaging, kept `false` only during dev iteration)
-  - Create: `sidecar/requirements.lock` (uv-lock-style or `pip-compile --generate-hashes` output; pinned hashes for every transitive dep)
-  - Create: `docs/sidecar/packaging.md` (notes on the macOS-arm64 build, the platform gaps, the PyInstaller `--onedir` recipe)
+  - Modify: `src-tauri/tauri.conf.json` (`security.csp` set to a non-null directive set; `bundle.externalBin: ["binaries/search-sidecar", "binaries/llama-server"]`; `bundle.active` flipped to `true` for release packaging, kept `false` only during dev iteration)
+  - Create: `sidecar/uv.lock` (uv-managed lockfile with hashes; the `--locked` flag is the supply-chain baseline)
+  - Create: `docs/sidecar/packaging.md` (notes on the macOS-arm64 build, the platform gaps, the PyInstaller `--onedir` recipe, the `llama-server` fetch step)
   - Create: `sidecar/packaging/build_macos_arm64.sh` (developer-facing script — produces `dist/search-sidecar-aarch64-apple-darwin/` and copies the `search-sidecar` entry point to `src-tauri/binaries/search-sidecar-aarch64-apple-darwin`)
-  - Create: `.github/workflows/build-sidecar.yml` (CI that runs the script on push to main)
-  - Modify: `package.json` (add a `npm run build:sidecar` script that invokes the build helper)
+  - Create: `sidecar/packaging/fetch_llama_server.sh` (developer-facing script — downloads the platform-specific `llama-server` binary from the pinned llama.cpp GitHub release, verifies SHA-256, places it at `src-tauri/binaries/llama-server-aarch64-apple-darwin`)
+  - Create: `sidecar/packaging/llama_server_manifest.toml` (pinned llama.cpp release tag + per-platform binary URLs + SHA-256 hashes; the supply-chain manifest for the captioner runtime)
+  - Create: `.github/workflows/build-sidecar.yml` (CI that runs both build scripts on push to main)
+  - Modify: `package.json` (add `npm run build:sidecar` and `npm run fetch:llama-server` scripts)
   - Create: `src-tauri/tests/csp_smoke.rs` (boots a webview with the configured CSP and asserts the search surfaces render without violations — this may require a manual checklist instead of an automated test if Tauri's test harness can't validate CSP; flag in deferred questions)
 
   **Approach:**
@@ -980,7 +989,8 @@ The dedicated search view must additionally:
     frame-ancestors 'none';
     ```
     `connect-src` allows the Rust → sidecar HTTP traffic. Tighten `style-src` if CodeMirror can be configured without inline styles.
-  - **PyInstaller recipe.** `--onedir`, hidden imports per research (transformers, accelerate, tokenizers, onnxruntime, lancedb, paddleocr-onnx, pymupdf, llama-cpp-python). Sign all dylibs in `dist/<name>/_internal/` with `codesign --deep --options runtime`. **Inputs to PyInstaller come exclusively from `requirements.lock`** (installed via `pip install --require-hashes -r sidecar/requirements.lock`) — never from a freeform `pip install`. This is the supply-chain baseline; without it, a compromised PyPI mirror can inject code into the signed Cognios binary.
+  - **PyInstaller recipe.** `--onedir` with `--collect-all numpy lancedb pyarrow transformers tokenizers optimum paddleocr` and `--collect-binaries onnxruntime pymupdf` (the `--collect-all numpy` line is mandatory per spike v1 finding F-3 — without it, numpy 2.x crashes at runtime with `ModuleNotFoundError: numpy._core._exceptions`). **No `--collect-binaries llama_cpp`** — the captioner is a separate `llama-server` binary, not a Python wheel (see Architecture). Sign all dylibs in `dist/<name>/_internal/` with `codesign --deep --options runtime`. **Inputs to PyInstaller come exclusively from `uv.lock`** (installed via `uv sync --locked`) — never from a freeform install. This is the supply-chain baseline; without it, a compromised PyPI mirror can inject code into the signed Cognios binary.
+  - **`llama-server` packaging.** `fetch_llama_server.sh` downloads the host-tuple binary from the pinned llama.cpp GitHub release (e.g., `https://github.com/ggml-org/llama.cpp/releases/download/<tag>/llama-bin-macos-arm64.zip`), unzips, verifies SHA-256 against `llama_server_manifest.toml`, and places `llama-server` at `src-tauri/binaries/llama-server-<host-tuple>` ready for `bundle.externalBin`. The Metal shader file `ggml-metal.metal` is included in the official archive — no manual collection needed (this is the cross-platform-distribution win that drove the switch from `llama-cpp-python`). Codesigning the binary uses the same Developer ID as the rest of the bundle.
   - **Tighten `--storage-dir` validator regex.** The capability scope from Unit 2 currently uses `{"validator": ".+"}` which matches any non-empty string including path-traversal sequences. Tighten to `{"validator": "^/[^\\x00]+$"}` to require an absolute POSIX path with no null bytes; additionally, the sidecar's startup code asserts that `os.path.realpath(storage_dir)` resolves under the user's home directory before creating any files.
   - **Documentation.** `docs/sidecar/packaging.md` captures the platform support matrix, the build script invocation, and the troubleshooting notes for known pitfalls (onnxruntime CoreML EP, lancedb liblzma, notarization). This is the artifact a future contributor needs when extending support to a new platform.
   - **CI.** A separate workflow that installs Python, runs `build:sidecar`, and stashes the artifact for the next `tauri build` step. macOS arm64 is the only matrix entry for v1.
@@ -1002,7 +1012,7 @@ The dedicated search view must additionally:
 
 ## System-Wide Impact
 
-- **Interaction graph:** the new sidecar process runs alongside the Tauri app for the entire app lifetime. Every node mutation flows through Rust → HTTP `POST /events/node` → Python queue. Every search request flows React → Rust IPC → HTTP → Python → lancedb → response chain. The Cmd+K palette replaces an existing stub in `AppSidebar.tsx` — the existing keyboard-shortcut wiring is preserved.
+- **Interaction graph:** **two** new child processes run alongside the Tauri app for the entire app lifetime — `search-sidecar` (Python; FastAPI on its own loopback port) and `llama-server` (C++; OpenAI-compatible HTTP on a separate loopback port). Every node mutation flows through Rust → HTTP `POST /events/node` → Python queue. Every search request flows React → Rust IPC → HTTP → Python → lancedb → response chain. Caption requests flow Python → HTTP → `llama-server` → response back to Python (Rust does not see caption traffic). The Cmd+K palette replaces an existing stub in `AppSidebar.tsx` — the existing keyboard-shortcut wiring is preserved.
 - **Error propagation:** failures in the sidecar manifest as typed `{state}` envelopes on the Rust side, never as panics. The UI handles `unavailable | initialising | models_missing | degraded` distinctly. Network-level errors against the sidecar are caught by the Rust HTTP client and converted to typed envelopes.
 - **State lifecycle risks:**
   - Stale-`node_id` returned by search after delete — Unit 7 forwards the deletion event; until the sidecar processes it, search may name a deleted node. Agents and the UI must treat "not found" from `get_*_content` as a normal outcome (per origin doc).
@@ -1023,7 +1033,8 @@ The dedicated search view must additionally:
 
 | Risk | Mitigation |
 |------|------------|
-| **PyInstaller bundle on macOS arm64 fails for one of the deep ML deps** (lancedb, llama-cpp-python, paddleocr-onnx are the most likely offenders) | Unit 12 produces the bundle in CI on a clean runner. Each dep has known hidden-imports notes from research. If a dep cannot be bundled, fallback options: (a) ship as separate dylibs and reference at runtime, (b) drop the dep (e.g. defer captioning to v1b if llama-cpp-python is unbundleable). |
+| **PyInstaller bundle on macOS arm64 fails for one of the deep ML deps** (lancedb and paddleocr-onnx are the remaining offenders; `llama-cpp-python` is no longer in scope — see Architecture) | Spike v1 (sidecar/spike/) already validated lancedb. Spike v2 will validate paddleocr-onnx + transformers. If any dep still cannot be bundled, fallback options: (a) ship as separate dylibs and reference at runtime, (b) drop the dep — paddleocr can be replaced by a different OCR engine via the provider abstraction. |
+| **`llama-server` upstream API change breaks the captioner integration** | Pin to a specific llama.cpp release tag in `sidecar/packaging/llama_server_manifest.toml`. Verify SHA-256 of the binary at fetch time. The OpenAI-compatible chat-completions endpoint is the most stable surface llama.cpp offers; multimodal support (`--mmproj`) is also stable. Re-pin only when a deliberate upgrade is reviewed. |
 | **Gemma 3n GGUF inference is too slow on CPU for the indexing-throughput target** | Captioning is the slowest pipeline; if throughput is unacceptable, surface a "captioning disabled" toggle in Settings (still indexes OCR) and revisit in v1b. The 30-second / 1000-file success criterion already excludes captioning latency from the target. |
 | **lancedb's hybrid search has a known filter-clause bug** ([#1656](https://github.com/lancedb/lancedb/issues/1656)) | Verify on the chosen lancedb version (Unit 6). Workaround: use `prefilter=False` (post-filter) when both FTS and a scalar index are present on the table. |
 | **Sidecar HTTP unauthenticated traffic from co-resident processes** | Closed in Unit 2: bearer token + 127.0.0.1 binding. Verify in Unit 3's auth tests. |

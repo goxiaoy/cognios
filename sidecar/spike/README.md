@@ -51,8 +51,7 @@ extensions, native dylibs, CoreML provider) are already validated.
 
 ### F-1 — `llama-cpp-python` is sdist-only on PyPI for **all** platforms
 
-**Severity:** HIGH — affects v1 captioning pipeline and any CI that builds
-the sidecar without a pre-warmed cmake toolchain.
+**Severity:** HIGH (now **RESOLVED** — see "Resolution" below).
 
 `llama-cpp-python` (latest 0.3.20 as of 2026-04-26) ships only
 `llama_cpp_python-0.3.20.tar.gz` on PyPI; no `cp3xx-macosx_*_arm64.whl`
@@ -69,41 +68,31 @@ Every install triggers a source build via scikit-build-core which:
   `--add-data` or PyInstaller will silently omit it and inference
   segfaults at first call.
 
-**Implication for the plan:**
+**Original implication for the plan (now superseded by the resolution above):**
 
-- Phase 0 / Unit 0 (or Unit 12's packaging script) must add `cmake` +
-  `xcode-select` as **prerequisites** in `docs/sidecar/packaging.md`.
-- The PyInstaller invocation must explicitly collect
-  `ggml-metal.metal` and `libllama.dylib` from
-  `site-packages/llama_cpp/lib/` — this is `--add-data
+- The PyInstaller invocation would have needed `--add-data
   '<venv>/lib/python3.13/site-packages/llama_cpp/lib/*:llama_cpp/lib'`
-  or equivalent.
-- CI bundle build time is dominated by the llama.cpp compile, not by
-  PyInstaller itself.
-- **Alternative under consideration for Unit 4 / Phase 2:** ship the
-  official `llama-server` HTTP binary (the C++ server distributed with
-  llama.cpp itself, which publishes prebuilt macOS arm64 artifacts) and
-  have the Python sidecar shell out to it via HTTP. Swaps a Python
-  source-build for a precompiled C++ binary that we drop in
-  `src-tauri/binaries/` alongside `search-sidecar`. Adds one process to
-  the topology but eliminates the `cmake` source-build dependency
-  entirely. Decision deferred to Phase 2; this spike's finding is
-  evidence that the embedded-Python path is materially harder.
+  to bundle `ggml-metal.metal` and `libllama.dylib`.
+- CI bundle build time would have been dominated by the llama.cpp
+  source-compile step.
+- Developer machines would have needed `brew install cmake` and
+  `xcode-select --install` as prereqs.
+
+None of this applies in the resolved design — `llama-server` is a single
+prebuilt binary that we drop into `src-tauri/binaries/llama-server-<host-tuple>`
+and the Tauri bundler ships it inside the same `.app` / `.dmg` as
+`search-sidecar`. The user still gets a single installer.
 
 ### F-2 — `cmake` is not a default macOS developer tool
 
-**Severity:** LOW (documentation gap)
+**Severity:** LOW (now **MOOT** — only consumer was `llama-cpp-python`,
+which has been replaced with the prebuilt `llama-server` binary).
 
 The spike uncovered that `cmake` is not present on a stock developer
-machine. Add to `docs/sidecar/packaging.md` before any Phase 2 work:
-
-```sh
-brew install cmake
-xcode-select --install   # if not already done
-```
-
-Without this, the source build for `llama-cpp-python` (and any other
-native build that ships sdist-only) fails before reaching PyInstaller.
+machine. With the F-1 resolution this is no longer a blocker — no
+sidecar dep requires source-build. Kept here as a record. If a future
+sidecar dep ever ships sdist-only, `brew install cmake` +
+`xcode-select --install` are the standard remediation.
 
 ### F-3 — `--collect-all numpy` is **mandatory** for numpy 2.x bundles
 
@@ -244,9 +233,11 @@ validation pass before Phase 2 / Unit 12 commits:
 2. **paddleocr (or paddleocr-onnx)**. Brings opencv, pyclipper, shapely
    — all native deps. Risk: medium-high (heavy install seen in the
    first uv sync attempt).
-3. **llama-cpp-python end-to-end** (build → bundle → boot → caption).
-   Requires the cmake/xcode prereq + the Metal-shader file collection.
-   Risk: HIGH; this is the spike v2 priority.
+3. **`llama-server` end-to-end** (fetch prebuilt binary → bundle into
+   `src-tauri/binaries/` → spawn from Rust supervisor → POST a base64
+   image to `/v1/chat/completions` → confirm Gemma 3n vision response).
+   The F-1 resolution moved this from "build a Python wheel from source"
+   to "fetch a prebuilt binary"; risk dropped from HIGH to MEDIUM.
 4. **Cold-disk-cache boot time**. Requires `sudo purge` or a reboot.
    Worth measuring once the full v1 bundle exists, since the plan's
    3–10 s claim is the basis for the supervisor's 30 s startup budget.
@@ -255,20 +246,25 @@ validation pass before Phase 2 / Unit 12 commits:
 
 ## Spike v2 priorities
 
-In order of value:
+In order of value (post F-1 resolution — `llama-server` chosen):
 
-1. Resolve the captioning pipeline: build `llama-cpp-python` from
-   source with `cmake`, confirm the Metal shader file is collected by
-   PyInstaller, boot the bundle, run a minimal caption against a real
-   GGUF model. **OR** drop `llama-cpp-python` from the sidecar and ship
-   the official `llama-server` binary as a sibling under
-   `src-tauri/binaries/` — measure both paths, pick the cheaper one.
-2. Add transformers + optimum.onnxruntime + paddleocr to the bundle,
-   confirm boot + smoke. The first sync attempt's 15-minute hang
-   suggests these need separate verification.
-3. Measure cold-disk-cache boot time on the full bundle.
-4. Wire a hash-pinned `uv.lock` and run a CI smoke build on a clean
-   macOS arm64 runner to validate reproducibility.
+1. **`llama-server` end-to-end smoke.** Fetch the pinned llama.cpp
+   release binary for macOS arm64, drop it at
+   `src-tauri/binaries/llama-server-aarch64-apple-darwin`, spawn from a
+   stub Rust supervisor with `-m <gemma-gguf> --mmproj <vision-gguf>
+   --host 127.0.0.1 --port 0 --api-key <token>`, POST a base64-encoded
+   test image to `/v1/chat/completions`, confirm Gemma 3n vision
+   returns a sensible caption. This validates the captioning pipeline
+   end-to-end without needing the full sidecar.
+2. Add transformers + `optimum.onnxruntime` + paddleocr (or
+   paddleocr-onnx) to the spike bundle, confirm boot + smoke. The first
+   uv sync attempt's 15-minute hang suggests these need separate
+   verification.
+3. Measure cold-disk-cache boot time on the full bundle (post #2).
+4. Wire a hash-pinned `uv.lock` for the sidecar Python deps and a
+   pinned `llama_server_manifest.toml` for the C++ binary; run a CI
+   smoke build on a clean macOS arm64 runner to validate
+   reproducibility.
 
 ## Files
 
@@ -278,19 +274,19 @@ In order of value:
 - `build.log` — full output of the most recent run (gitignored).
 - `dist/`, `build/`, `.venv/` — PyInstaller + uv outputs (gitignored).
 
-## Decisions to feed back into the plan
+## Decisions fed back into the plan (2026-04-26)
 
-1. **Add F-1 / `llama-server` alternative as an explicit Unit 4 option.**
-   The plan currently assumes `llama-cpp-python` in-process; the spike
-   shows that's the most expensive bundle path. Phase 2 needs to make
-   an informed pick before committing.
-2. **Add `--collect-all numpy` to Unit 12's PyInstaller invocation.**
-   The plan's hidden-imports list is otherwise correct; numpy is a
-   silent gap.
-3. **Add `cmake` + `xcode-select` to the developer prereqs list** in
-   Unit 12's `docs/sidecar/packaging.md` deliverable.
+1. ✅ **F-1 resolved → `llama-server` out-of-process.** Plan Architecture,
+   Unit 2 (supervisor spawns both children), Unit 4 (no llama_cpp wheel
+   download — only Gemma GGUF weights), Unit 5 (image processor calls
+   `llama-server` over HTTP), Unit 12 (`fetch_llama_server.sh` +
+   `llama_server_manifest.toml`) all updated.
+2. ✅ **`--collect-all numpy` added** to Unit 12's PyInstaller recipe.
+3. ✅ **`cmake` + `xcode-select` removed** from the developer prereqs
+   list — no remaining sidecar dep requires them.
 4. **Adopt `--collect-all` over `--collect-binaries`** for any package
    shipping native data files (most ML wheels). The build_spike.sh
-   uses the correct mix; document this convention.
+   uses the correct mix; document this convention in
+   `docs/sidecar/packaging.md` (Unit 12).
 5. **Confirm the no-torch path** for transformers + optimum in spike
    v2; if torch sneaks in, the bundle jumps by ~700 MB.
