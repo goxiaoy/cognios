@@ -1,5 +1,20 @@
+import type { ReactNode } from "react";
 import type { ExplorerNode } from "../types/explorer";
-import { ExplorerRow } from "./ExplorerRow";
+import { ExplorerRow, type SelectModifiers } from "./ExplorerRow";
+
+interface ExplorerTreeProps {
+  expandedIds: string[];
+  nodes: ExplorerNode[];
+  pendingInlineRenameId: string | null;
+  onDelete(nodeId: string, cascade: boolean): void;
+  onRetry(nodeId: string): void;
+  onSelect(nodeId: string, modifiers: SelectModifiers): void;
+  onToggle(nodeId: string): void;
+  onInlineRename(nodeId: string, newName: string): void;
+  onStartRename(nodeId: string): void;
+  selectedIds: string[];
+  toolbar?: ReactNode;
+}
 
 export function ExplorerTree({
   expandedIds,
@@ -11,38 +26,32 @@ export function ExplorerTree({
   onToggle,
   onInlineRename,
   onStartRename,
-  selectedId
-}: {
-  expandedIds: string[];
-  nodes: ExplorerNode[];
-  pendingInlineRenameId: string | null;
-  onDelete(nodeId: string, cascade: boolean): void;
-  onRetry(nodeId: string): void;
-  onSelect(nodeId: string): void;
-  onToggle(nodeId: string): void;
-  onInlineRename(nodeId: string, newName: string): void;
-  onStartRename(nodeId: string): void;
-  selectedId: string | null;
-}) {
+  selectedIds,
+  toolbar
+}: ExplorerTreeProps) {
   const expandedSet = new Set(expandedIds);
+  const selectedSet = new Set(selectedIds);
 
   return (
-    <div className="explorer-tree" role="tree">
-      {nodes.map((node) => (
-        <TreeBranch
-          expandedSet={expandedSet}
-          key={node.id}
-          node={node}
-          pendingInlineRenameId={pendingInlineRenameId}
-          onDelete={onDelete}
-          onRetry={onRetry}
-          onSelect={onSelect}
-          onToggle={onToggle}
-          onInlineRename={onInlineRename}
-          onStartRename={onStartRename}
-          selectedId={selectedId}
-        />
-      ))}
+    <div className="explorer-tree-container">
+      {toolbar ? <div className="explorer-tree-toolbar">{toolbar}</div> : null}
+      <div className="explorer-tree" role="tree">
+        {nodes.map((node) => (
+          <TreeBranch
+            expandedSet={expandedSet}
+            key={node.id}
+            node={node}
+            pendingInlineRenameId={pendingInlineRenameId}
+            onDelete={onDelete}
+            onRetry={onRetry}
+            onSelect={onSelect}
+            onToggle={onToggle}
+            onInlineRename={onInlineRename}
+            onStartRename={onStartRename}
+            selectedSet={selectedSet}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -57,7 +66,7 @@ function TreeBranch({
   onToggle,
   onInlineRename,
   onStartRename,
-  selectedId,
+  selectedSet,
   depth = 0
 }: {
   expandedSet: Set<string>;
@@ -65,11 +74,11 @@ function TreeBranch({
   pendingInlineRenameId: string | null;
   onDelete(nodeId: string, cascade: boolean): void;
   onRetry(nodeId: string): void;
-  onSelect(nodeId: string): void;
+  onSelect(nodeId: string, modifiers: SelectModifiers): void;
   onToggle(nodeId: string): void;
   onInlineRename(nodeId: string, newName: string): void;
   onStartRename(nodeId: string): void;
-  selectedId: string | null;
+  selectedSet: Set<string>;
   depth?: number;
 }) {
   const isExpanded = expandedSet.has(node.id);
@@ -80,7 +89,7 @@ function TreeBranch({
         depth={depth}
         isExpanded={isExpanded}
         isInlineRenaming={node.id === pendingInlineRenameId}
-        isSelected={selectedId === node.id}
+        isSelected={selectedSet.has(node.id)}
         node={node}
         onDelete={onDelete}
         onInlineRename={onInlineRename}
@@ -104,7 +113,7 @@ function TreeBranch({
               onToggle={onToggle}
               onInlineRename={onInlineRename}
               onStartRename={onStartRename}
-              selectedId={selectedId}
+              selectedSet={selectedSet}
             />
           ))}
         </div>

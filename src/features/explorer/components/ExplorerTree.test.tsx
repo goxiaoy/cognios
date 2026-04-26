@@ -22,54 +22,105 @@ const tree = [
   }
 ] as const;
 
+function defaultProps(overrides: Record<string, unknown> = {}) {
+  return {
+    expandedIds: ["root"] as string[],
+    nodes: tree as never,
+    pendingInlineRenameId: null,
+    onDelete: vi.fn(),
+    onInlineRename: vi.fn(),
+    onRetry: vi.fn(),
+    onSelect: vi.fn(),
+    onStartRename: vi.fn(),
+    onToggle: vi.fn(),
+    selectedIds: [] as string[],
+    ...overrides,
+  };
+}
+
 describe("ExplorerTree", () => {
   afterEach(() => {
     cleanup();
   });
 
   it("renders nested rows when the parent is expanded", () => {
-    render(
-      <ExplorerTree
-        expandedIds={["root"]}
-        nodes={tree as never}
-        pendingInlineRenameId={null}
-        onDelete={vi.fn()}
-        onInlineRename={vi.fn()}
-        onRetry={vi.fn()}
-        onSelect={vi.fn()}
-        onStartRename={vi.fn()}
-        onToggle={vi.fn()}
-        selectedId={null}
-      />
-    );
-
+    render(<ExplorerTree {...defaultProps()} />);
     expect(screen.getByText("Workspace")).toBeInTheDocument();
     expect(screen.getByText("Readme.md")).toBeInTheDocument();
   });
 
-  it("calls select and toggle handlers", () => {
+  it("calls onSelect with no modifiers on a plain click", () => {
     const onSelect = vi.fn();
-    const onToggle = vi.fn();
+    render(<ExplorerTree {...defaultProps({ onSelect })} />);
 
+    fireEvent.click(screen.getAllByRole("button", { name: /Workspace/i })[0]);
+
+    expect(onSelect).toHaveBeenCalledWith("root", { shift: false, toggle: false });
+  });
+
+  it("calls onSelect with toggle=true when Cmd/Meta is held", () => {
+    const onSelect = vi.fn();
+    render(<ExplorerTree {...defaultProps({ onSelect })} />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Workspace/i })[0], {
+      metaKey: true,
+    });
+
+    expect(onSelect).toHaveBeenCalledWith("root", { shift: false, toggle: true });
+  });
+
+  it("calls onSelect with toggle=true when Ctrl is held", () => {
+    const onSelect = vi.fn();
+    render(<ExplorerTree {...defaultProps({ onSelect })} />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Workspace/i })[0], {
+      ctrlKey: true,
+    });
+
+    expect(onSelect).toHaveBeenCalledWith("root", { shift: false, toggle: true });
+  });
+
+  it("calls onSelect with shift=true when Shift is held", () => {
+    const onSelect = vi.fn();
+    render(<ExplorerTree {...defaultProps({ onSelect })} />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Readme.md/i })[0], {
+      shiftKey: true,
+    });
+
+    expect(onSelect).toHaveBeenCalledWith("child", { shift: true, toggle: false });
+  });
+
+  it("highlights every id in selectedIds", () => {
+    const { container } = render(
+      <ExplorerTree {...defaultProps({ selectedIds: ["root", "child"] })} />
+    );
+
+    const selectedRows = container.querySelectorAll(".tree-row.is-selected");
+    expect(selectedRows.length).toBe(2);
+  });
+
+  it("calls onToggle when the chevron is clicked", () => {
+    const onToggle = vi.fn();
+    render(<ExplorerTree {...defaultProps({ expandedIds: [], onToggle })} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Expand node/i }));
+    expect(onToggle).toHaveBeenCalledWith("root");
+  });
+
+  it("renders the toolbar slot above the tree", () => {
     render(
       <ExplorerTree
-        expandedIds={[]}
-        nodes={tree as never}
-        pendingInlineRenameId={null}
-        onDelete={vi.fn()}
-        onInlineRename={vi.fn()}
-        onRetry={vi.fn()}
-        onSelect={onSelect}
-        onStartRename={vi.fn()}
-        onToggle={onToggle}
-        selectedId={null}
+        {...defaultProps()}
+        toolbar={<button data-testid="tb-button">Create</button>}
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Expand node/i }));
-    fireEvent.click(screen.getAllByRole("button", { name: /Workspace/i })[0]);
+    expect(screen.getByTestId("tb-button")).toBeInTheDocument();
+  });
 
-    expect(onToggle).toHaveBeenCalledWith("root");
-    expect(onSelect).toHaveBeenCalledWith("root");
+  it("does not render a toolbar container when no toolbar is provided", () => {
+    const { container } = render(<ExplorerTree {...defaultProps()} />);
+    expect(container.querySelector(".explorer-tree-toolbar")).toBeNull();
   });
 });

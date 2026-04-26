@@ -3,6 +3,11 @@ import { KeyboardEvent as KE, MouseEvent, useEffect, useRef, useState } from "re
 import type { NodeKind, NodeState } from "../../../lib/contracts/vfs";
 import type { ExplorerNode } from "../types/explorer";
 
+export interface SelectModifiers {
+  shift: boolean;
+  toggle: boolean;
+}
+
 function NodeStateBadge({ state }: { state: NodeState }) {
   if (state === "ready") return null;
   if (state === "error" || state === "unavailable") {
@@ -42,7 +47,7 @@ export function ExplorerRow({
   isInlineRenaming?: boolean;
   onDelete(nodeId: string, cascade: boolean): void;
   onRetry(nodeId: string): void;
-  onSelect(nodeId: string): void;
+  onSelect(nodeId: string, modifiers: SelectModifiers): void;
   onToggle(nodeId: string): void;
   onInlineRename?(nodeId: string, newName: string): void;
   onStartRename(nodeId: string): void;
@@ -129,7 +134,12 @@ export function ExplorerRow({
       ) : (
         <button
           className="tree-row-main"
-          onClick={() => onSelect(node.id)}
+          onClick={(e) =>
+            onSelect(node.id, {
+              shift: e.shiftKey,
+              toggle: e.metaKey || e.ctrlKey,
+            })
+          }
           onDoubleClick={() => onStartRename(node.id)}
           type="button"
         >
