@@ -1,3 +1,4 @@
+pub mod files;
 pub mod mounts;
 pub mod nodes;
 pub mod notes;

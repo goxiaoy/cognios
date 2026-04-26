@@ -89,6 +89,7 @@ pub fn run() {
             commands::notes::create_note,
             commands::notes::get_note_content,
             commands::notes::save_note_content,
+            commands::files::read_file_content,
             commands::thumbnails::get_node_thumbnail,
             commands::urls::create_url,
             commands::urls::retry_url
