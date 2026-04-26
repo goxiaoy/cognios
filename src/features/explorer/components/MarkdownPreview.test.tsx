@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownPreview } from "./MarkdownPreview";
 import type { ExplorerClient } from "../types/explorer";
@@ -29,7 +29,32 @@ describe("MarkdownPreview", () => {
     cleanup();
   });
 
-  it("loads and displays file content via readFileContent", async () => {
+  it("loads file content and renders it as HTML in the default preview mode", async () => {
+    const client = makeClient({
+      readFileContent: vi.fn().mockResolvedValue("# Hello world\n\nA paragraph."),
+    });
+
+    render(
+      <MarkdownPreview
+        client={client}
+        name="README.md"
+        nodeId="node-1"
+        onBack={() => {}}
+      />
+    );
+
+    expect(client.readFileContent).toHaveBeenCalledWith("node-1");
+
+    // In preview mode the H1 is rendered as a real heading element, not as raw "# Hello world"
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Hello world" })
+    ).toBeInTheDocument();
+    expect(screen.getByText("A paragraph.")).toBeInTheDocument();
+    expect(screen.getByText("README.md")).toBeInTheDocument();
+    expect(screen.getByText("Read-only preview")).toBeInTheDocument();
+  });
+
+  it("toggles to source mode and shows raw markdown in CodeMirror", async () => {
     const client = makeClient({
       readFileContent: vi.fn().mockResolvedValue("# Hello world"),
     });
@@ -43,14 +68,61 @@ describe("MarkdownPreview", () => {
       />
     );
 
-    expect(client.readFileContent).toHaveBeenCalledWith("node-1");
+    // Wait for content to load (default preview mode)
+    await screen.findByRole("heading", { level: 1, name: "Hello world" });
+
+    // Switch to source mode
+    fireEvent.click(screen.getByRole("tab", { name: /^source$/i }));
 
     await waitFor(() => {
       const cm = container.querySelector(".cm-content");
       expect(cm?.textContent).toContain("# Hello world");
     });
-    expect(screen.getByText("README.md")).toBeInTheDocument();
-    expect(screen.getByText("Read-only preview")).toBeInTheDocument();
+    // Heading is gone (no longer rendered)
+    expect(screen.queryByRole("heading", { level: 1, name: "Hello world" })).toBeNull();
+  });
+
+  it("renders inline HTML in preview mode (rehype-raw)", async () => {
+    const client = makeClient({
+      readFileContent: vi
+        .fn()
+        .mockResolvedValue('<div align="center"><img src="https://example.com/logo.png" alt="logo" /></div>'),
+    });
+
+    const { container } = render(
+      <MarkdownPreview
+        client={client}
+        name="README.md"
+        nodeId="node-1"
+        onBack={() => {}}
+      />
+    );
+
+    await waitFor(() => {
+      const img = container.querySelector("img[alt='logo']");
+      expect(img).toBeInTheDocument();
+    });
+  });
+
+  it("renders GFM tables (remark-gfm)", async () => {
+    const client = makeClient({
+      readFileContent: vi
+        .fn()
+        .mockResolvedValue("| col1 | col2 |\n| --- | --- |\n| a | b |"),
+    });
+
+    const { container } = render(
+      <MarkdownPreview
+        client={client}
+        name="t.md"
+        nodeId="n"
+        onBack={() => {}}
+      />
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("table")).toBeInTheDocument();
+    });
   });
 
   it("calls onBack when the back button is clicked", async () => {
@@ -173,7 +245,7 @@ describe("MarkdownPreview", () => {
     );
 
     await waitFor(() => {
-      expect(container.querySelector(".cm-editor")).toBeInTheDocument();
+      expect(container.querySelector(".markdown-preview-rendered")).toBeInTheDocument();
     });
   });
 

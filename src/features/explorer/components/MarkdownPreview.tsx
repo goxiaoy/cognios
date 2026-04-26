@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import type { ExplorerClient } from "../types/explorer";
 import { MarkdownView } from "./MarkdownView";
+
+type ViewMode = "preview" | "source";
 
 interface MarkdownPreviewProps {
   client: ExplorerClient;
@@ -19,6 +24,7 @@ export function MarkdownPreview({
   const [body, setBody] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [mode, setMode] = useState<ViewMode>("preview");
   const backButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -61,6 +67,30 @@ export function MarkdownPreview({
           Back
         </button>
         <h2 className="markdown-preview-title">{name}</h2>
+        <div
+          className="markdown-preview-mode-toggle"
+          role="tablist"
+          aria-label="View mode"
+        >
+          <button
+            aria-pressed={mode === "preview"}
+            className={`markdown-preview-mode-button${mode === "preview" ? " is-active" : ""}`}
+            onClick={() => setMode("preview")}
+            role="tab"
+            type="button"
+          >
+            Preview
+          </button>
+          <button
+            aria-pressed={mode === "source"}
+            className={`markdown-preview-mode-button${mode === "source" ? " is-active" : ""}`}
+            onClick={() => setMode("source")}
+            role="tab"
+            type="button"
+          >
+            Source
+          </button>
+        </div>
       </header>
 
       <div className="markdown-preview-body">
@@ -69,11 +99,22 @@ export function MarkdownPreview({
         {loadError ? (
           <p className="markdown-preview-error">{loadError}</p>
         ) : !isLoading ? (
-          <MarkdownView
-            className="markdown-preview-codemirror"
-            readOnly={true}
-            value={body}
-          />
+          mode === "preview" ? (
+            <div className="markdown-preview-rendered">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeRaw]}
+              >
+                {body}
+              </ReactMarkdown>
+            </div>
+          ) : (
+            <MarkdownView
+              className="markdown-preview-codemirror"
+              readOnly={true}
+              value={body}
+            />
+          )
         ) : null}
       </div>
     </div>
