@@ -1,19 +1,16 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { ExplorerClient } from "../types/explorer";
 
 interface ImageViewerProps {
   client: ExplorerClient;
   nodeId: string;
   name: string;
-  onBack(): void;
 }
 
-export function ImageViewer({ client, nodeId, name, onBack }: ImageViewerProps) {
+export function ImageViewer({ client, nodeId, name }: ImageViewerProps) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const backButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,23 +38,9 @@ export function ImageViewer({ client, nodeId, name, onBack }: ImageViewerProps) 
     };
   }, [client, nodeId]);
 
-  useEffect(() => {
-    backButtonRef.current?.focus();
-  }, []);
-
   return (
     <div className="image-viewer">
       <header className="image-viewer-header">
-        <button
-          aria-label="Back to explorer"
-          className="image-viewer-back"
-          onClick={onBack}
-          ref={backButtonRef}
-          type="button"
-        >
-          <ArrowLeft size={14} aria-hidden="true" />
-          Back
-        </button>
         <h2 className="image-viewer-title">{name}</h2>
       </header>
 

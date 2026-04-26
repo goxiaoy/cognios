@@ -32,7 +32,7 @@ describe("ImageViewer", () => {
     });
 
     render(
-      <ImageViewer client={client} name="logo.png" nodeId="img-1" onBack={() => {}} />
+      <ImageViewer client={client} name="logo.png" nodeId="img-1" />
     );
 
     expect(client.getNodeThumbnail).toHaveBeenCalledWith("img-1");
@@ -42,36 +42,19 @@ describe("ImageViewer", () => {
     expect(screen.getByText("logo.png")).toBeInTheDocument();
   });
 
-  it("calls onBack when the back button is clicked", () => {
-    const onBack = vi.fn();
-    render(
-      <ImageViewer client={makeClient()} name="x.png" nodeId="n" onBack={onBack} />
-    );
-    screen.getByRole("button", { name: /back to explorer/i }).click();
-    expect(onBack).toHaveBeenCalled();
-  });
-
-  it("focuses the back button on mount", () => {
-    render(
-      <ImageViewer client={makeClient()} name="x.png" nodeId="n" onBack={() => {}} />
-    );
-    expect(screen.getByRole("button", { name: /back to explorer/i })).toHaveFocus();
-  });
-
   it("shows a generic error message when the IPC rejects", async () => {
     const client = makeClient({
       getNodeThumbnail: vi.fn().mockRejectedValue(new Error("thumbnail unavailable")),
     });
 
     render(
-      <ImageViewer client={client} name="big.jpg" nodeId="n" onBack={() => {}} />
+      <ImageViewer client={client} name="big.jpg" nodeId="n" />
     );
 
     expect(
       await screen.findByText(/too large or unavailable/i)
     ).toBeInTheDocument();
-    // Back button still accessible during error state
-    expect(screen.getByRole("button", { name: /back to explorer/i })).toBeInTheDocument();
+    expect(screen.getByText("big.jpg")).toBeInTheDocument();
   });
 
   it("re-fetches when nodeId changes", async () => {
@@ -82,14 +65,14 @@ describe("ImageViewer", () => {
     const client = makeClient({ getNodeThumbnail });
 
     const { rerender } = render(
-      <ImageViewer client={client} name="a.png" nodeId="a" onBack={() => {}} />
+      <ImageViewer client={client} name="a.png" nodeId="a" />
     );
     await waitFor(() => {
       expect(getNodeThumbnail).toHaveBeenCalledWith("a");
     });
 
     rerender(
-      <ImageViewer client={client} name="b.png" nodeId="b" onBack={() => {}} />
+      <ImageViewer client={client} name="b.png" nodeId="b" />
     );
     await waitFor(() => {
       expect(getNodeThumbnail).toHaveBeenCalledWith("b");
@@ -107,7 +90,7 @@ describe("ImageViewer", () => {
     });
 
     const { unmount } = render(
-      <ImageViewer client={client} name="x.png" nodeId="n" onBack={() => {}} />
+      <ImageViewer client={client} name="x.png" nodeId="n" />
     );
 
     unmount();

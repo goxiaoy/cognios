@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import type { ExplorerClient, ExplorerNode } from "../types/explorer";
@@ -17,6 +17,10 @@ import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
 import { UrlModal } from "./UrlModal";
 import { error as logError } from "../../../lib/logger";
 
+const DEFAULT_TREE_WIDTH = 240;
+const MIN_TREE_WIDTH = 208;
+const MAX_TREE_WIDTH = 520;
+
 export function ExplorerLayout({
   active,
   client
@@ -30,7 +34,10 @@ export function ExplorerLayout({
   // mid-modal without shifting the new node's parent.
   const [modalParentId, setModalParentId] = useState<string | null>(null);
   const [noteFlushError, setNoteFlushError] = useState<string | null>(null);
+  const [treeWidth, setTreeWidth] = useState(DEFAULT_TREE_WIDTH);
   const noteEditorRef = useRef<NoteEditorHandle>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
   // Anchor for shift-click range selection. Tracks the most recent
   // single-clicked node id; reset by plain or toggle clicks.
   const selectionAnchorRef = useRef<string | null>(null);
@@ -47,26 +54,14 @@ export function ExplorerLayout({
     })();
   }, []);
 
-  useExplorerEvents(store.refresh);
+  useEffect(() => {
+    return () => {
+      resizeCleanupRef.current?.();
+      resizeCleanupRef.current = null;
+    };
+  }, []);
 
-  // Flush any pending note save and close the editor. If flush fails, surface
-  // the error and keep the editor open (blocks navigation per R12).
-  async function flushAndCloseEditor() {
-    if (!noteEditorRef.current) {
-      store.setActiveNoteId(null);
-      setNoteFlushError(null);
-      return;
-    }
-    try {
-      await noteEditorRef.current.flush();
-      store.setActiveNoteId(null);
-      setNoteFlushError(null);
-    } catch (cause) {
-      setNoteFlushError(
-        cause instanceof Error ? cause.message : "Failed to save note"
-      );
-    }
-  }
+  useExplorerEvents(store.refresh);
 
   // Window close: only the note editor has pending writes to flush. Previews
   // are read-only and cannot block close.
@@ -350,6 +345,36 @@ export function ExplorerLayout({
     store.selectionCount === 1 &&
     store.selectedArtifacts[0].kind === "file";
   const showWelcome = !showNote && !showMarkdown && !showImage && !showCannotPreview;
+  const clampedTreeWidth = clampTreeWidth(treeWidth, workspaceRef.current);
+
+  function handleResizeStart(event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+
+    const startX = event.clientX;
+    const startWidth = clampedTreeWidth;
+
+    function handleMouseMove(moveEvent: MouseEvent) {
+      const delta = moveEvent.clientX - startX;
+      setTreeWidth(clampTreeWidth(startWidth + delta, workspaceRef.current));
+    }
+
+    function handleMouseUp() {
+      cleanupResizeListeners();
+    }
+
+    function cleanupResizeListeners() {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.body.classList.remove("is-resizing-pane");
+      resizeCleanupRef.current = null;
+    }
+
+    resizeCleanupRef.current?.();
+    resizeCleanupRef.current = cleanupResizeListeners;
+    document.body.classList.add("is-resizing-pane");
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp, { once: true });
+  }
 
   return (
     <section
@@ -358,7 +383,14 @@ export function ExplorerLayout({
     >
       {store.error ? <p className="error-banner">{store.error}</p> : null}
 
-      <div className="explorer-workspace">
+      <div
+        className="explorer-workspace"
+        data-testid="explorer-workspace"
+        ref={workspaceRef}
+        style={{
+          gridTemplateColumns: `${clampedTreeWidth}px 10px minmax(0, 1fr) 280px`,
+        }}
+      >
         <aside className="tree-sidebar">
           <ExplorerTree
             expandedIds={store.expandedIds}
@@ -375,61 +407,73 @@ export function ExplorerLayout({
           />
         </aside>
 
+        <div
+          aria-label="Resize file tree"
+          aria-orientation="vertical"
+          aria-valuemax={MAX_TREE_WIDTH}
+          aria-valuemin={MIN_TREE_WIDTH}
+          aria-valuenow={Math.round(clampedTreeWidth)}
+          className="tree-resize-handle"
+          onMouseDown={handleResizeStart}
+          role="separator"
+        />
+
         <main className="detail-surface">
-          {store.isLoading ? (
-            <p className="empty-state">Loading explorer...</p>
-          ) : (
-            <>
-              {activeFileNode ? <Breadcrumbs nodes={breadcrumbNodes} /> : null}
-              {showNote ? (
-                <NoteEditor
-                  ref={noteEditorRef}
-                  client={client}
-                  flushError={noteFlushError}
-                  initialTitle={store.activeNote!.name}
-                  nodeId={store.activeNoteId!}
-                  onBack={() => void flushAndCloseEditor()}
-                  onTitleChange={() => {
-                    void store.refresh().catch(() => {});
-                  }}
-                />
-              ) : null}
-              {showMarkdown ? (
-                <MarkdownPreview
-                  client={client}
-                  name={store.activePreview!.name}
-                  nodeId={store.activePreviewId!}
-                  onBack={() => store.setActivePreviewId(null)}
-                />
-              ) : null}
-              {showImage ? (
-                <ImageViewer
-                  client={client}
-                  name={store.activeImagePreview!.name}
-                  nodeId={store.activeImagePreviewId!}
-                  onBack={() => store.setActiveImagePreviewId(null)}
-                />
-              ) : null}
-              {showCannotPreview ? (
-                <div className="detail-placeholder">
-                  <p>This file type cannot be previewed</p>
-                </div>
-              ) : null}
-              {showWelcome ? (
-                <div className="detail-placeholder">
-                  <p>Select an item to preview</p>
-                </div>
-              ) : null}
-            </>
-          )}
+          <div className="detail-surface-scroll">
+            {store.isLoading ? (
+              <p className="empty-state">Loading explorer...</p>
+            ) : (
+              <>
+                {activeFileNode ? <Breadcrumbs nodes={breadcrumbNodes} /> : null}
+                {showNote ? (
+                  <NoteEditor
+                    ref={noteEditorRef}
+                    client={client}
+                    flushError={noteFlushError}
+                    initialTitle={store.activeNote!.name}
+                    nodeId={store.activeNoteId!}
+                    onTitleChange={() => {
+                      void store.refresh().catch(() => {});
+                    }}
+                  />
+                ) : null}
+                {showMarkdown ? (
+                  <MarkdownPreview
+                    client={client}
+                    name={store.activePreview!.name}
+                    nodeId={store.activePreviewId!}
+                  />
+                ) : null}
+                {showImage ? (
+                  <ImageViewer
+                    client={client}
+                    name={store.activeImagePreview!.name}
+                    nodeId={store.activeImagePreviewId!}
+                  />
+                ) : null}
+                {showCannotPreview ? (
+                  <div className="detail-placeholder">
+                    <p>This file type cannot be previewed</p>
+                  </div>
+                ) : null}
+                {showWelcome ? (
+                  <div className="detail-placeholder">
+                    <p>Select an item to preview</p>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
         </main>
 
         <aside className="inspector-panel">
-          <ExplorerInspector
-            node={store.inspectorNode}
-            selectedArtifacts={store.selectedArtifacts}
-            selectionCount={store.selectionCount}
-          />
+          <div className="inspector-panel-scroll">
+            <ExplorerInspector
+              node={store.inspectorNode}
+              selectedArtifacts={store.selectedArtifacts}
+              selectionCount={store.selectionCount}
+            />
+          </div>
         </aside>
       </div>
 
@@ -469,4 +513,13 @@ function findNewId(node: ExplorerNode, prevIds: Set<string>): string | null {
     if (found) return found;
   }
   return null;
+}
+
+function clampTreeWidth(nextWidth: number, workspace: HTMLDivElement | null) {
+  const workspaceWidth = workspace?.getBoundingClientRect().width ?? 0;
+  const maxWidthFromViewport =
+    workspaceWidth > 0 ? Math.max(MIN_TREE_WIDTH, workspaceWidth - 280 - 320 - 10) : MAX_TREE_WIDTH;
+  const maxWidth = Math.min(MAX_TREE_WIDTH, maxWidthFromViewport);
+
+  return Math.max(MIN_TREE_WIDTH, Math.min(nextWidth, maxWidth));
 }

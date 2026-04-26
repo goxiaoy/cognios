@@ -38,6 +38,7 @@ export function ExplorerTree({
       <div className="explorer-tree" role="tree">
         {nodes.map((node) => (
           <TreeBranch
+            ancestorNodes={[]}
             expandedSet={expandedSet}
             key={node.id}
             node={node}
@@ -57,6 +58,7 @@ export function ExplorerTree({
 }
 
 function TreeBranch({
+  ancestorNodes,
   expandedSet,
   node,
   pendingInlineRenameId,
@@ -69,6 +71,7 @@ function TreeBranch({
   selectedSet,
   depth = 0
 }: {
+  ancestorNodes: ExplorerNode[];
   expandedSet: Set<string>;
   node: ExplorerNode;
   pendingInlineRenameId: string | null;
@@ -82,6 +85,7 @@ function TreeBranch({
   depth?: number;
 }) {
   const isExpanded = expandedSet.has(node.id);
+  const pathNodes = [...ancestorNodes, node];
 
   return (
     <div className="tree-branch">
@@ -97,11 +101,13 @@ function TreeBranch({
         onSelect={onSelect}
         onStartRename={onStartRename}
         onToggle={onToggle}
+        pathNodes={pathNodes}
       />
       {isExpanded && node.children.length > 0 ? (
         <div className="tree-children" role="group">
           {node.children.map((child) => (
             <TreeBranch
+              ancestorNodes={pathNodes}
               depth={depth + 1}
               expandedSet={expandedSet}
               key={child.id}

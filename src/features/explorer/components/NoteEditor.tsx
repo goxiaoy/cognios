@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { ArrowLeft } from "lucide-react";
 import type { ExplorerClient } from "../types/explorer";
 import { MarkdownView } from "./MarkdownView";
 
@@ -18,13 +17,12 @@ interface NoteEditorProps {
   nodeId: string;
   initialTitle: string;
   onTitleChange(newTitle: string): void;
-  onBack(): void;
   flushError: string | null;
 }
 
 export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
   function NoteEditor(
-    { client, nodeId, initialTitle, onTitleChange, onBack, flushError },
+    { client, nodeId, initialTitle, onTitleChange, flushError },
     ref
   ) {
     const [title, setTitle] = useState(initialTitle);
@@ -100,18 +98,6 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
 
     return (
       <div className="note-editor">
-        <header className="note-editor-header">
-          <button
-            aria-label="Back to explorer"
-            className="note-editor-back"
-            onClick={onBack}
-            type="button"
-          >
-            <ArrowLeft size={14} aria-hidden="true" />
-            Back
-          </button>
-        </header>
-
         {flushError ? (
           <p className="note-editor-flush-error">{flushError}</p>
         ) : null}

@@ -1,7 +1,11 @@
-import { AlertTriangle, File, Folder, FolderOpen, Globe, HardDrive, Loader } from "lucide-react";
+import { AlertTriangle, ChevronRight, File, Folder, FolderOpen, Globe, HardDrive, Loader } from "lucide-react";
 import { KeyboardEvent as KE, MouseEvent, useEffect, useRef, useState } from "react";
 import type { NodeKind, NodeState } from "../../../lib/contracts/vfs";
 import type { ExplorerNode } from "../types/explorer";
+import {
+  formatCompactNodeMeta,
+  formatTreeDisclosurePath,
+} from "../utils/presentation";
 
 export interface SelectModifiers {
   shift: boolean;
@@ -38,7 +42,8 @@ export function ExplorerRow({
   onSelect,
   onToggle,
   onInlineRename,
-  onStartRename
+  onStartRename,
+  pathNodes
 }: {
   node: ExplorerNode;
   depth: number;
@@ -51,12 +56,15 @@ export function ExplorerRow({
   onToggle(nodeId: string): void;
   onInlineRename?(nodeId: string, newName: string): void;
   onStartRename(nodeId: string): void;
+  pathNodes: ExplorerNode[];
 }) {
   const hasChildren = node.children.length > 0;
   const [editValue, setEditValue] = useState(node.name);
   const inputRef = useRef<HTMLInputElement>(null);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const disclosureTitle = formatTreeDisclosurePath(pathNodes) || node.name;
+  const compactMeta = formatCompactNodeMeta(node);
 
   useEffect(() => {
     if (isInlineRenaming) {
@@ -104,7 +112,7 @@ export function ExplorerRow({
   return (
     <div
       className={`tree-row${isSelected ? " is-selected" : ""}`}
-      style={{ paddingLeft: `${0.75 + depth * 1.1}rem` }}
+      style={{ paddingLeft: `${0.5 + depth * 0.7}rem` }}
       onContextMenu={handleContextMenu}
     >
       <button
@@ -114,17 +122,27 @@ export function ExplorerRow({
         onClick={() => hasChildren && onToggle(node.id)}
         type="button"
       >
-        <span className={`tree-expander-icon${isExpanded ? " is-expanded" : ""}`}>
-          {hasChildren ? "›" : "·"}
-        </span>
+        {hasChildren ? (
+          <ChevronRight
+            aria-hidden="true"
+            className={`tree-expander-icon${isExpanded ? " is-expanded" : ""}`}
+            size={11}
+            strokeWidth={2.2}
+          />
+        ) : (
+          <span aria-hidden="true" className="tree-expander-placeholder">
+            ·
+          </span>
+        )}
       </button>
 
       {isInlineRenaming ? (
-        <div className="tree-row-main">
+        <div className="tree-row-main tree-row-main--editing">
           <KindIcon kind={node.kind} />
           <input
             ref={inputRef}
             className="tree-inline-input"
+            title={disclosureTitle}
             onBlur={commit}
             onChange={(e) => setEditValue(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -140,12 +158,17 @@ export function ExplorerRow({
               toggle: e.metaKey || e.ctrlKey,
             })
           }
-          onDoubleClick={() => onStartRename(node.id)}
+          title={disclosureTitle}
           type="button"
         >
-          <KindIcon kind={node.kind} />
-          <span className="node-name" title={node.name}>{node.name}</span>
-          <NodeStateBadge state={node.state} />
+          <span className="tree-row-primary">
+            <KindIcon kind={node.kind} />
+            <span className="node-name">{node.name}</span>
+          </span>
+          <span className="tree-row-secondary">
+            {compactMeta ? <span className="tree-row-meta">{compactMeta}</span> : null}
+            <NodeStateBadge state={node.state} />
+          </span>
         </button>
       )}
 

@@ -39,7 +39,6 @@ describe("MarkdownPreview", () => {
         client={client}
         name="README.md"
         nodeId="node-1"
-        onBack={() => {}}
       />
     );
 
@@ -64,7 +63,6 @@ describe("MarkdownPreview", () => {
         client={client}
         name="README.md"
         nodeId="node-1"
-        onBack={() => {}}
       />
     );
 
@@ -94,7 +92,6 @@ describe("MarkdownPreview", () => {
         client={client}
         name="README.md"
         nodeId="node-1"
-        onBack={() => {}}
       />
     );
 
@@ -116,45 +113,12 @@ describe("MarkdownPreview", () => {
         client={client}
         name="t.md"
         nodeId="n"
-        onBack={() => {}}
       />
     );
 
     await waitFor(() => {
       expect(container.querySelector("table")).toBeInTheDocument();
     });
-  });
-
-  it("calls onBack when the back button is clicked", async () => {
-    const onBack = vi.fn();
-    const client = makeClient();
-    render(
-      <MarkdownPreview
-        client={client}
-        name="x.md"
-        nodeId="n"
-        onBack={onBack}
-      />
-    );
-
-    const backButton = screen.getByRole("button", { name: /back to explorer/i });
-    backButton.click();
-    expect(onBack).toHaveBeenCalled();
-  });
-
-  it("focuses the back button on mount for keyboard accessibility", async () => {
-    const client = makeClient();
-    render(
-      <MarkdownPreview
-        client={client}
-        name="x.md"
-        nodeId="n"
-        onBack={() => {}}
-      />
-    );
-
-    const backButton = screen.getByRole("button", { name: /back to explorer/i });
-    expect(backButton).toHaveFocus();
   });
 
   it("shows file-too-large error for that error category", async () => {
@@ -167,7 +131,6 @@ describe("MarkdownPreview", () => {
         client={client}
         name="big.md"
         nodeId="n"
-        onBack={() => {}}
       />
     );
 
@@ -186,7 +149,6 @@ describe("MarkdownPreview", () => {
         client={client}
         name="missing.md"
         nodeId="n"
-        onBack={() => {}}
       />
     );
 
@@ -203,7 +165,6 @@ describe("MarkdownPreview", () => {
         client={client}
         name="x.bin"
         nodeId="n"
-        onBack={() => {}}
       />
     );
 
@@ -212,7 +173,7 @@ describe("MarkdownPreview", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the back button while showing an error (no white screen)", async () => {
+  it("renders the title while showing an error (no white screen)", async () => {
     const client = makeClient({
       readFileContent: vi.fn().mockRejectedValue(new Error("file unavailable")),
     });
@@ -222,12 +183,11 @@ describe("MarkdownPreview", () => {
         client={client}
         name="x.md"
         nodeId="n"
-        onBack={() => {}}
       />
     );
 
     await screen.findByText(/not available/i);
-    expect(screen.getByRole("button", { name: /back to explorer/i })).toBeInTheDocument();
+    expect(screen.getByText("x.md")).toBeInTheDocument();
   });
 
   it("renders empty file content without crashing", async () => {
@@ -240,7 +200,6 @@ describe("MarkdownPreview", () => {
         client={client}
         name="empty.md"
         nodeId="n"
-        onBack={() => {}}
       />
     );
 
@@ -264,7 +223,6 @@ describe("MarkdownPreview", () => {
         client={client}
         name="x.md"
         nodeId="n"
-        onBack={() => {}}
       />
     );
 

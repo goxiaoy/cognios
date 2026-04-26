@@ -16,7 +16,6 @@ const DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
   year: "numeric"
 });
-
 const RELATIVE_DAY = 24 * 60 * 60 * 1000;
 
 export function formatNodeKindLabel(node: ExplorerNode) {
@@ -54,6 +53,26 @@ export function formatNodeSize(sizeBytes: number) {
   if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
   if (sizeBytes < 1024 * 1024 * 1024) return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(sizeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+export function formatCompactNodeMeta(node: ExplorerNode) {
+  switch (node.kind) {
+    case "folder":
+    case "directory":
+    case "mount":
+      return "";
+    case "note":
+      return "";
+    case "url":
+      return "";
+    case "file":
+      return "";
+  }
+}
+
+export function formatTreeDisclosurePath(nodes: ExplorerNode[]) {
+  if (nodes.length === 0) return "";
+  return nodes.map((node) => node.name).join(" / ");
 }
 
 export function dateBucketLabel(value: string) {
