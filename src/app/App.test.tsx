@@ -6,6 +6,7 @@ const getExplorerSnapshot = vi.fn();
 const createFolder = vi.fn();
 const createMount = vi.fn();
 const createUrl = vi.fn();
+const readFileContent = vi.fn().mockResolvedValue("");
 
 vi.mock("../lib/tauri/ipc", () => ({
   getExplorerSnapshot: () => getExplorerSnapshot(),
@@ -19,7 +20,7 @@ vi.mock("../lib/tauri/ipc", () => ({
   retryUrl: vi.fn(),
   getNoteContent: vi.fn().mockResolvedValue(""),
   saveNoteContent: vi.fn(),
-  readFileContent: vi.fn().mockResolvedValue(""),
+  readFileContent: (nodeId: string) => readFileContent(nodeId),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -39,6 +40,8 @@ describe("App", () => {
     createFolder.mockReset();
     createMount.mockReset();
     createUrl.mockReset();
+    readFileContent.mockReset();
+    readFileContent.mockResolvedValue("");
   });
 
   afterEach(() => {
@@ -183,6 +186,56 @@ describe("App", () => {
     });
 
     expect((await screen.findAllByText("https://example.com")).length).toBeGreaterThan(0);
+  });
+
+  it("opens markdown preview when double-clicking a .md file in a mount", async () => {
+    getExplorerSnapshot.mockResolvedValue({
+      roots: [
+        {
+          id: "mount-1",
+          parentId: null,
+          name: "workspace",
+          kind: "mount",
+          state: "ready",
+          createdAt: "2026-04-26 00:00:00",
+          modifiedAt: "2026-04-26 00:00:00",
+          sizeBytes: 0,
+          children: [
+            {
+              id: "md-file",
+              parentId: "mount-1",
+              name: "README.md",
+              kind: "file",
+              state: "ready",
+              createdAt: "2026-04-26 00:00:00",
+              modifiedAt: "2026-04-26 00:00:00",
+              sizeBytes: 32,
+              children: []
+            }
+          ]
+        }
+      ]
+    });
+    readFileContent.mockResolvedValue("# Welcome to the workspace");
+
+    render(<App />);
+
+    // Navigate into the mount
+    const mountCards = await screen.findAllByText("workspace");
+    fireEvent.dblClick(mountCards[0].closest("button")!);
+
+    // Double-click the .md file to open preview
+    const fileCard = await screen.findByText("README.md");
+    fireEvent.dblClick(fileCard.closest("button")!);
+
+    await waitFor(() => {
+      expect(readFileContent).toHaveBeenCalledWith("md-file");
+    });
+    expect(await screen.findByText("Read-only preview")).toBeInTheDocument();
+
+    // Back button returns to grid
+    fireEvent.click(screen.getByRole("button", { name: /back to explorer/i }));
+    expect((await screen.findAllByText("README.md")).length).toBeGreaterThan(0);
   });
 
   it("keeps explorer state when switching to another shell section and back", async () => {
