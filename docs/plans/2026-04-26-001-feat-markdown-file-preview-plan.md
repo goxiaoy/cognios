@@ -1,7 +1,7 @@
 ---
 title: "feat: Read-only markdown preview for mounted .md files"
 type: feat
-status: active
+status: completed
 date: 2026-04-26
 deepened: 2026-04-26
 ---
