@@ -29,6 +29,7 @@ import uvicorn
 
 from .app import build_app
 from .auth import generate_token
+from .models import DEFAULTS, ModelManager
 from .runtime_file import (
     acquire_lock,
     remove_runtime_file,
@@ -66,7 +67,8 @@ def serve(storage_dir: Path) -> int:
         return 1
 
     token = generate_token()
-    app = build_app(token=token)
+    model_manager = ModelManager(storage_dir=storage_dir, manifest=DEFAULTS)
+    app = build_app(token=token, model_manager=model_manager)
     config = uvicorn.Config(
         app,
         host="127.0.0.1",
