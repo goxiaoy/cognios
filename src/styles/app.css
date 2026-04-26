@@ -264,8 +264,8 @@ button:disabled {
 
 .tree-row {
   display: grid;
-  grid-template-columns: 1.35rem minmax(0, 1fr);
-  gap: 0.28rem;
+  grid-template-columns: 0.95rem minmax(0, 1fr);
+  gap: 0;
   align-items: center;
   padding: 0.18rem 0.35rem;
   border-left: 2px solid transparent;
@@ -273,12 +273,16 @@ button:disabled {
 }
 
 .tree-row:hover {
-  background: color-mix(in srgb, var(--accent) 5%, white 95%);
+  background: color-mix(in srgb, var(--accent) 12%, white 88%);
 }
 
 .tree-row.is-selected {
-  background: color-mix(in srgb, var(--accent) 10%, white 90%);
+  background: color-mix(in srgb, var(--accent) 20%, white 80%);
   border-left-color: var(--accent);
+}
+
+.tree-row.is-selected:hover {
+  background: color-mix(in srgb, var(--accent) 24%, white 76%);
 }
 
 .tree-expander,
@@ -291,14 +295,14 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 1.1rem;
+  width: 0.95rem;
   height: 1.1rem;
   padding: 0;
   border: 1px solid transparent;
   background: transparent;
   color: color-mix(in srgb, var(--muted) 78%, transparent 22%);
-  border-radius: 999px;
-  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+  border-radius: 0;
+  transition: color 120ms ease;
 }
 
 .tree-expander:not(:disabled):hover {
@@ -306,6 +310,13 @@ button:disabled {
   border-color: transparent;
   color: var(--accent-ink);
   box-shadow: none;
+  transform: none;
+}
+
+.tree-expander-spacer {
+  display: inline-block;
+  width: 0.95rem;
+  height: 1.1rem;
 }
 
 .tree-row:hover .tree-expander:not(:disabled) {
@@ -346,6 +357,16 @@ button:disabled {
   background: transparent;
   color: inherit;
   text-align: left;
+  transition: none;
+}
+
+/* Suppress the global button hover effects — selection feedback is per-row */
+.tree-row-main:not(:disabled):hover,
+.tree-row-main:not(:disabled):active {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
 }
 
 .tree-row-main--editing {
@@ -1453,6 +1474,98 @@ body.is-resizing-pane {
   background: color-mix(in srgb, var(--line) 60%, white 40%);
   border-color: transparent;
   box-shadow: none;
+}
+
+.mount-suggestions {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.mount-suggestions-header {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.mount-suggestions-header .field-label {
+  margin: 0;
+}
+
+.mount-suggestions-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.mount-suggestion-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.mount-suggestion {
+  display: grid;
+  gap: 0.14rem;
+  width: 100%;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent 30%);
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, var(--panel) 96%, white 4%);
+  color: var(--ink);
+  text-align: left;
+  box-shadow: none;
+}
+
+.mount-suggestion:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 6%, white 94%);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line) 65%);
+  box-shadow: none;
+}
+
+.mount-suggestion-name {
+  font-weight: 600;
+}
+
+.mount-suggestion-path {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mount-setup-error,
+.mount-submit-error {
+  margin: 0;
+  color: #8a1e10;
+  font-size: 0.84rem;
+}
+
+.mount-duplicate-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line) 68%);
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, var(--accent) 5%, white 95%);
+}
+
+.mount-duplicate-title,
+.mount-duplicate-path {
+  margin: 0;
+}
+
+.mount-duplicate-title {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.mount-duplicate-path {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
 }
 
 /* ── Advanced section ── */

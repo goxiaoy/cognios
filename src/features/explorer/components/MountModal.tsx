@@ -1,7 +1,8 @@
-import { DragEvent, FormEvent, useEffect, useRef, useState } from "react";
+import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { open as openFilePicker } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FolderOpen } from "lucide-react";
+import type { DuplicateMountError, ExistingMount, MountSetupContext } from "../../../lib/contracts/vfs";
 import { DEFAULT_MOUNT_IGNORE_CONFIG } from "../../../lib/contracts/vfs";
 
 function basenameOf(path: string) {
@@ -10,13 +11,19 @@ function basenameOf(path: string) {
 }
 
 export function MountModal({
-  activeAction,
+  isSubmitting,
+  setupContext,
+  setupError,
   onClose,
-  onSubmit
+  onRevealMount,
+  onSubmit,
 }: {
-  activeAction: string | null;
+  isSubmitting: boolean;
+  setupContext: MountSetupContext | null;
+  setupError: string | null;
   onClose(): void;
-  onSubmit(args: { path: string; name: string; ignoreConfig: string }): void;
+  onRevealMount(nodeId: string): void;
+  onSubmit(args: { path: string; name: string; ignoreConfig: string }): Promise<void>;
 }) {
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
@@ -24,7 +31,15 @@ export function MountModal({
   const [useIgnore, setUseIgnore] = useState(true);
   const [ignoreConfig, setIgnoreConfig] = useState(DEFAULT_MOUNT_IGNORE_CONFIG);
   const [dragging, setDragging] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [serverDuplicateMount, setServerDuplicateMount] = useState<ExistingMount | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+  const existingMounts = setupContext?.existingMounts ?? [];
+  const suggestedFolders = setupContext?.suggestedFolders ?? [];
+  const duplicateMount = useMemo(
+    () => findDuplicateMount(path, existingMounts) ?? serverDuplicateMount,
+    [existingMounts, path, serverDuplicateMount]
+  );
 
   // Dismiss on Escape
   useEffect(() => {
@@ -67,6 +82,8 @@ export function MountModal({
   }, []);
 
   function applyPath(newPath: string) {
+    setSubmitError(null);
+    setServerDuplicateMount(null);
     setPath(newPath);
     setName((prev) => (prev === basenameOf(path) || prev === "") ? basenameOf(newPath) : prev);
   }
@@ -95,16 +112,37 @@ export function MountModal({
     if (file?.path) applyPath(file.path);
   }
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const trimmedPath = path.trim();
     if (!trimmedPath) return;
     const trimmedName = name.trim() || basenameOf(trimmedPath) || trimmedPath;
-    onSubmit({
-      path: trimmedPath,
-      name: trimmedName,
-      ignoreConfig: useIgnore ? ignoreConfig : ""
-    });
+    const localDuplicate = findDuplicateMount(trimmedPath, existingMounts);
+    if (localDuplicate) {
+      setServerDuplicateMount(localDuplicate);
+      setSubmitError("This folder is already mounted.");
+      return;
+    }
+
+    try {
+      await onSubmit({
+        path: trimmedPath,
+        name: trimmedName,
+        ignoreConfig: useIgnore ? ignoreConfig : ""
+      });
+    } catch (error) {
+      if (isDuplicateMountError(error)) {
+        setServerDuplicateMount({
+          nodeId: error.mountId,
+          name: error.mountName,
+          absolutePath: error.absolutePath,
+        });
+        setSubmitError(error.message);
+        return;
+      }
+
+      setSubmitError(error instanceof Error ? error.message : "Failed to mount folder.");
+    }
   }
 
   return (
@@ -132,6 +170,32 @@ export function MountModal({
         </header>
 
         <form className="modal-body" onSubmit={handleSubmit}>
+          {suggestedFolders.length > 0 ? (
+            <section className="mount-suggestions" aria-label="Suggested folders">
+              <div className="mount-suggestions-header">
+                <p className="field-label">Suggested folders</p>
+                <p className="mount-suggestions-hint">Detected from Obsidian vaults on this computer</p>
+              </div>
+              <div className="mount-suggestion-list">
+                {suggestedFolders.map((suggestion) => (
+                  <button
+                    className="mount-suggestion"
+                    key={suggestion.path}
+                    onClick={() => applyPath(suggestion.path)}
+                    type="button"
+                  >
+                    <span className="mount-suggestion-name">{suggestion.name}</span>
+                    <span className="mount-suggestion-path">{suggestion.path}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {setupError ? (
+            <p className="mount-setup-error">{setupError}</p>
+          ) : null}
+
           {/* Drop zone — also clickable to open native folder picker */}
           <button
             className={`drop-zone${dragging ? " is-dragging" : ""}${path ? " has-value" : ""}`}
@@ -188,6 +252,24 @@ export function MountModal({
             />
           </div>
 
+          {duplicateMount ? (
+            <div className="mount-duplicate-callout" role="status">
+              <div>
+                <p className="mount-duplicate-title">{submitError ?? "This folder is already mounted."}</p>
+                <p className="mount-duplicate-path">{duplicateMount.absolutePath}</p>
+              </div>
+              <button
+                className="ghost-button"
+                onClick={() => onRevealMount(duplicateMount.nodeId)}
+                type="button"
+              >
+                Reveal existing mount
+              </button>
+            </div>
+          ) : submitError ? (
+            <p className="mount-submit-error">{submitError}</p>
+          ) : null}
+
           {/* Advanced section */}
           <div className="advanced-section">
             <button
@@ -230,12 +312,39 @@ export function MountModal({
             <button className="ghost-button" onClick={onClose} type="button">
               Cancel
             </button>
-            <button disabled={activeAction !== null || !path.trim()} type="submit">
-              {activeAction === "mount" ? "Mounting…" : "Mount"}
+            <button disabled={isSubmitting || !path.trim()} type="submit">
+              {isSubmitting ? "Mounting…" : "Mount"}
             </button>
           </footer>
         </form>
       </div>
     </div>
+  );
+}
+
+function findDuplicateMount(path: string, existingMounts: ExistingMount[]) {
+  const normalizedCandidate = normalizePathForComparison(path);
+  if (!normalizedCandidate) return null;
+
+  return (
+    existingMounts.find(
+      (mount) => normalizePathForComparison(mount.absolutePath) === normalizedCandidate
+    ) ?? null
+  );
+}
+
+function normalizePathForComparison(path: string) {
+  const trimmed = path.trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function isDuplicateMountError(error: unknown): error is DuplicateMountError {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as Partial<DuplicateMountError>;
+  return (
+    candidate.kind === "duplicateMount" &&
+    typeof candidate.mountId === "string" &&
+    typeof candidate.absolutePath === "string"
   );
 }

@@ -3,14 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
 const getExplorerSnapshot = vi.fn();
+const getMountSetupContext = vi.fn();
 const createFolder = vi.fn();
 const createMount = vi.fn();
 const createUrl = vi.fn();
 const readFileContent = vi.fn().mockResolvedValue("");
 const openExternal = vi.fn().mockResolvedValue(undefined);
+const showNodeInFileManager = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../lib/tauri/ipc", () => ({
   getExplorerSnapshot: () => getExplorerSnapshot(),
+  getMountSetupContext: () => getMountSetupContext(),
   getNodeThumbnail: vi.fn().mockResolvedValue("data:image/png;base64,AA=="),
   createFolder: (input: unknown) => createFolder(input),
   createMount: (input: unknown) => createMount(input),
@@ -22,6 +25,7 @@ vi.mock("../lib/tauri/ipc", () => ({
   getNoteContent: vi.fn().mockResolvedValue(""),
   saveNoteContent: vi.fn(),
   readFileContent: (nodeId: string) => readFileContent(nodeId),
+  showNodeInFileManager: (nodeId: string) => showNodeInFileManager(nodeId),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -53,6 +57,8 @@ function clickTreeRow(name: string) {
 describe("App", () => {
   beforeEach(() => {
     getExplorerSnapshot.mockReset();
+    getMountSetupContext.mockReset();
+    getMountSetupContext.mockResolvedValue({ suggestedFolders: [], existingMounts: [] });
     createFolder.mockReset();
     createMount.mockReset();
     createUrl.mockReset();
@@ -60,6 +66,8 @@ describe("App", () => {
     readFileContent.mockResolvedValue("");
     openExternal.mockReset();
     openExternal.mockResolvedValue(undefined);
+    showNodeInFileManager.mockReset();
+    showNodeInFileManager.mockResolvedValue(undefined);
   });
 
   afterEach(() => {

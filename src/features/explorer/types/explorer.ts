@@ -4,8 +4,12 @@ import type {
   CreateNoteInput,
   CreateUrlInput,
   DeleteNodeInput,
+  DuplicateMountError,
+  ExistingMount,
   ExplorerNode,
   ExplorerSnapshot,
+  MountSetupContext,
+  MountSuggestion,
   RenameNodeInput,
   RetryUrlInput,
 } from "../../../lib/contracts/vfs";
@@ -16,14 +20,19 @@ export type {
   CreateNoteInput,
   CreateUrlInput,
   DeleteNodeInput,
+  DuplicateMountError,
+  ExistingMount,
   ExplorerNode,
   ExplorerSnapshot,
+  MountSetupContext,
+  MountSuggestion,
   RenameNodeInput,
   RetryUrlInput,
 };
 
 export interface ExplorerClient {
   getExplorerSnapshot(): Promise<ExplorerSnapshot>;
+  getMountSetupContext(): Promise<MountSetupContext>;
   createFolder(input: CreateFolderInput): Promise<ExplorerSnapshot>;
   createMount(input: CreateMountInput): Promise<ExplorerSnapshot>;
   createNote(input: CreateNoteInput): Promise<ExplorerSnapshot>;
@@ -35,5 +44,5 @@ export interface ExplorerClient {
   getNoteContent(noteId: string): Promise<string>;
   saveNoteContent(noteId: string, body: string): Promise<void>;
   readFileContent(nodeId: string): Promise<string>;
+  showNodeInFileManager(nodeId: string): Promise<void>;
 }
-

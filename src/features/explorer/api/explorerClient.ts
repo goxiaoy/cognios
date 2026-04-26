@@ -5,17 +5,20 @@ import {
   createUrl,
   deleteNode,
   getExplorerSnapshot,
+  getMountSetupContext,
   getNodeThumbnail,
   getNoteContent,
   readFileContent,
   renameNode,
   retryUrl,
   saveNoteContent,
+  showNodeInFileManager,
 } from "../../../lib/tauri/ipc";
 import type { ExplorerClient } from "../types/explorer";
 
 export const explorerClient: ExplorerClient = {
   getExplorerSnapshot,
+  getMountSetupContext,
   createFolder,
   createMount,
   createNote,
@@ -27,4 +30,5 @@ export const explorerClient: ExplorerClient = {
   getNoteContent,
   saveNoteContent,
   readFileContent,
+  showNodeInFileManager,
 };

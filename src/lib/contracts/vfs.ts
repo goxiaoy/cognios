@@ -24,6 +24,31 @@ export interface ExplorerSnapshot {
   roots: ExplorerNode[];
 }
 
+export interface ExistingMount {
+  nodeId: string;
+  name: string;
+  absolutePath: string;
+}
+
+export interface MountSuggestion {
+  name: string;
+  path: string;
+  source: "obsidian";
+}
+
+export interface MountSetupContext {
+  suggestedFolders: MountSuggestion[];
+  existingMounts: ExistingMount[];
+}
+
+export interface DuplicateMountError {
+  kind: "duplicateMount";
+  mountId: string;
+  mountName: string;
+  absolutePath: string;
+  message: string;
+}
+
 export interface CreateFolderInput {
   name: string;
   parentId?: string | null;

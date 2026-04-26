@@ -37,14 +37,22 @@ export function useExplorerStore(client: ExplorerClient) {
 
   const applySnapshot = useCallback((nextSnapshot: ExplorerSnapshot) => {
     const nextIndex = indexNodes(nextSnapshot.roots);
-    setSnapshot(nextSnapshot);
-    setExpandedIds((current) => {
-      const next = new Set(current);
-      // Roots auto-expand so the user always sees the top of the workspace.
-      for (const root of nextSnapshot.roots) {
-        next.add(root.id);
-      }
-      return [...next];
+    setSnapshot((prev) => {
+      // Auto-expand only newly-added roots (or all roots on first non-empty
+      // snapshot). Otherwise a user-collapsed root would re-open every time
+      // another mutation triggers applySnapshot.
+      const prevRootIds = new Set(prev.roots.map((root) => root.id));
+      const isFirstSnapshot = prev.roots.length === 0;
+      setExpandedIds((current) => {
+        const next = new Set(current);
+        for (const root of nextSnapshot.roots) {
+          if (isFirstSnapshot || !prevRootIds.has(root.id)) {
+            next.add(root.id);
+          }
+        }
+        return [...next];
+      });
+      return nextSnapshot;
     });
     // Drop any selected ids whose nodes no longer exist after the snapshot
     // (covers external delete / mount unmount). Keep all others regardless of parent.

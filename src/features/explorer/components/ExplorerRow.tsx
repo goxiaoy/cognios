@@ -1,10 +1,11 @@
-import { AlertTriangle, ChevronRight, File, Folder, FolderOpen, Globe, HardDrive, Loader } from "lucide-react";
+import { AlertTriangle, ChevronRight, Loader } from "lucide-react";
 import { KeyboardEvent as KE, MouseEvent, useEffect, useRef, useState } from "react";
-import type { NodeKind, NodeState } from "../../../lib/contracts/vfs";
+import type { NodeState } from "../../../lib/contracts/vfs";
 import type { ExplorerNode } from "../types/explorer";
 import {
   formatCompactNodeMeta,
   formatTreeDisclosurePath,
+  nodeIconComponent,
 } from "../utils/presentation";
 
 export interface SelectModifiers {
@@ -20,15 +21,9 @@ function NodeStateBadge({ state }: { state: NodeState }) {
   return <Loader className="node-state-icon state-pending" size={12} aria-label="loading" />;
 }
 
-function KindIcon({ kind }: { kind: NodeKind }) {
-  const props = { size: 13, "aria-hidden": true as const, className: "node-icon" };
-  switch (kind) {
-    case "folder":    return <Folder {...props} />;
-    case "mount":     return <HardDrive {...props} />;
-    case "directory": return <FolderOpen {...props} />;
-    case "url":       return <Globe {...props} />;
-    default:          return <File {...props} />;
-  }
+function NodeIcon({ node }: { node: ExplorerNode }) {
+  const Icon = nodeIconComponent(node);
+  return <Icon size={13} aria-hidden className="node-icon" />;
 }
 
 export function ExplorerRow({
@@ -38,6 +33,7 @@ export function ExplorerRow({
   isSelected,
   isInlineRenaming = false,
   onDelete,
+  onRevealInFileManager,
   onRetry,
   onSelect,
   onToggle,
@@ -51,6 +47,7 @@ export function ExplorerRow({
   isSelected: boolean;
   isInlineRenaming?: boolean;
   onDelete(nodeId: string, cascade: boolean): void;
+  onRevealInFileManager(nodeId: string): void;
   onRetry(nodeId: string): void;
   onSelect(nodeId: string, modifiers: SelectModifiers): void;
   onToggle(nodeId: string): void;
@@ -65,6 +62,8 @@ export function ExplorerRow({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const disclosureTitle = formatTreeDisclosurePath(pathNodes) || node.name;
   const compactMeta = formatCompactNodeMeta(node);
+  const canRevealInFileManager = node.kind === "mount" || node.kind === "directory" || node.kind === "file" || node.kind === "note";
+  const revealLabel = fileManagerRevealLabel();
 
   useEffect(() => {
     if (isInlineRenaming) {
@@ -112,33 +111,30 @@ export function ExplorerRow({
   return (
     <div
       className={`tree-row${isSelected ? " is-selected" : ""}`}
-      style={{ paddingLeft: `${0.5 + depth * 0.7}rem` }}
+      style={{ paddingLeft: `${0.4 + depth * 0.45}rem` }}
       onContextMenu={handleContextMenu}
     >
-      <button
-        aria-label={hasChildren ? (isExpanded ? "Collapse node" : "Expand node") : "Leaf node"}
-        className="tree-expander"
-        disabled={!hasChildren}
-        onClick={() => hasChildren && onToggle(node.id)}
-        type="button"
-      >
-        {hasChildren ? (
+      {hasChildren ? (
+        <button
+          aria-label={isExpanded ? "Collapse node" : "Expand node"}
+          className="tree-expander"
+          onClick={() => onToggle(node.id)}
+          type="button"
+        >
           <ChevronRight
             aria-hidden="true"
             className={`tree-expander-icon${isExpanded ? " is-expanded" : ""}`}
             size={11}
             strokeWidth={2.2}
           />
-        ) : (
-          <span aria-hidden="true" className="tree-expander-placeholder">
-            ·
-          </span>
-        )}
-      </button>
+        </button>
+      ) : (
+        <span aria-hidden="true" className="tree-expander-spacer" />
+      )}
 
       {isInlineRenaming ? (
         <div className="tree-row-main tree-row-main--editing">
-          <KindIcon kind={node.kind} />
+          <NodeIcon node={node} />
           <input
             ref={inputRef}
             className="tree-inline-input"
@@ -162,7 +158,7 @@ export function ExplorerRow({
           type="button"
         >
           <span className="tree-row-primary">
-            <KindIcon kind={node.kind} />
+            <NodeIcon node={node} />
             <span className="node-name">{node.name}</span>
           </span>
           <span className="tree-row-secondary">
@@ -178,6 +174,15 @@ export function ExplorerRow({
           style={{ top: menuPos.y, left: menuPos.x }}
           onMouseDown={(e) => e.stopPropagation()}
         >
+          {canRevealInFileManager ? (
+            <button
+              className="tree-context-item"
+              onClick={() => { onRevealInFileManager(node.id); setMenuPos(null); }}
+              type="button"
+            >
+              {revealLabel}
+            </button>
+          ) : null}
           <button
             className="tree-context-item"
             onClick={() => { onStartRename(node.id); setMenuPos(null); }}
@@ -228,7 +233,7 @@ export function ExplorerRow({
             <div className="modal-body">
               {node.kind === "mount" ? (
                 <p className="delete-confirm-warning">
-                  Deleting a mount will permanently remove the source files from disk. This cannot be undone.
+                  Removing a mount only unlinks it from CogniOS. The source folder and its files stay on disk.
                 </p>
               ) : (
                 <p className="muted-copy">
@@ -259,4 +264,14 @@ export function ExplorerRow({
       ) : null}
     </div>
   );
+}
+
+function fileManagerRevealLabel() {
+  if (typeof navigator !== "undefined") {
+    const platform = navigator.userAgent.toLowerCase();
+    if (platform.includes("mac")) return "Show in Finder";
+    if (platform.includes("win")) return "Show in Explorer";
+  }
+
+  return "Show in Folder";
 }

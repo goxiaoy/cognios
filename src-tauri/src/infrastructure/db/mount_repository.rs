@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use rusqlite::{params, Connection};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::domain::vfs::node::ExplorerSnapshotDto;
@@ -33,6 +33,14 @@ pub struct CreatedMount {
     pub mount_id: String,
     pub absolute_path: String,
     pub snapshot: ExplorerSnapshotDto,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExistingMount {
+    pub node_id: String,
+    pub name: String,
+    pub absolute_path: String,
 }
 
 #[derive(Clone, Debug)]
@@ -111,6 +119,52 @@ pub fn list_mount_watch_configs(conn: &Connection) -> rusqlite::Result<Vec<Mount
     })?;
 
     rows.collect::<rusqlite::Result<Vec<_>>>()
+}
+
+pub fn list_existing_mounts(conn: &Connection) -> rusqlite::Result<Vec<ExistingMount>> {
+    let mut stmt = conn.prepare(
+        "
+        SELECT mounts.node_id, nodes.name, mounts.absolute_path
+        FROM mounts
+        INNER JOIN nodes ON nodes.id = mounts.node_id
+        ORDER BY nodes.name, mounts.absolute_path
+        ",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(ExistingMount {
+            node_id: row.get(0)?,
+            name: row.get(1)?,
+            absolute_path: row.get(2)?,
+        })
+    })?;
+
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+}
+
+pub fn find_existing_mount_by_absolute_path(
+    conn: &Connection,
+    absolute_path: &str,
+) -> rusqlite::Result<Option<ExistingMount>> {
+    let mut stmt = conn.prepare(
+        "
+        SELECT mounts.node_id, nodes.name, mounts.absolute_path
+        FROM mounts
+        INNER JOIN nodes ON nodes.id = mounts.node_id
+        WHERE mounts.absolute_path = ?1
+        LIMIT 1
+        ",
+    )?;
+    let mut rows = stmt.query([absolute_path])?;
+
+    if let Some(row) = rows.next()? {
+        return Ok(Some(ExistingMount {
+            node_id: row.get(0)?,
+            name: row.get(1)?,
+            absolute_path: row.get(2)?,
+        }));
+    }
+
+    Ok(None)
 }
 
 pub fn reconcile_mount(

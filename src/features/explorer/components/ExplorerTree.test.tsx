@@ -35,6 +35,7 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
     pendingInlineRenameId: null,
     onDelete: vi.fn(),
     onInlineRename: vi.fn(),
+    onRevealInFileManager: vi.fn(),
     onRetry: vi.fn(),
     onSelect: vi.fn(),
     onStartRename: vi.fn(),
@@ -129,5 +130,15 @@ describe("ExplorerTree", () => {
   it("does not render a toolbar container when no toolbar is provided", () => {
     const { container } = render(<ExplorerTree {...defaultProps()} />);
     expect(container.querySelector(".explorer-tree-toolbar")).toBeNull();
+  });
+
+  it("shows a reveal action for nodes with real paths", () => {
+    const onRevealInFileManager = vi.fn();
+    render(<ExplorerTree {...defaultProps({ onRevealInFileManager })} />);
+
+    fireEvent.contextMenu(screen.getByText("Readme.md"));
+    fireEvent.click(screen.getByRole("button", { name: /show in folder|show in finder|show in explorer/i }));
+
+    expect(onRevealInFileManager).toHaveBeenCalledWith("child");
   });
 });

@@ -6,6 +6,7 @@ import type { ExplorerClient } from "../types/explorer";
 function makeClient(overrides: Partial<ExplorerClient> = {}): ExplorerClient {
   return {
     getExplorerSnapshot: vi.fn(),
+    getMountSetupContext: vi.fn(),
     createFolder: vi.fn(),
     createMount: vi.fn(),
     createNote: vi.fn(),
@@ -17,6 +18,7 @@ function makeClient(overrides: Partial<ExplorerClient> = {}): ExplorerClient {
     getNoteContent: vi.fn(),
     saveNoteContent: vi.fn(),
     readFileContent: vi.fn(),
+    showNodeInFileManager: vi.fn(),
     ...overrides,
   };
 }

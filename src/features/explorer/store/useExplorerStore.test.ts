@@ -5,6 +5,7 @@ import { useExplorerStore } from "./useExplorerStore";
 function makeClient(snapshot: { roots: unknown[] }) {
   return {
     getExplorerSnapshot: vi.fn().mockResolvedValue(snapshot),
+    getMountSetupContext: vi.fn(),
     createFolder: vi.fn(),
     createMount: vi.fn(),
     createNote: vi.fn(),
@@ -16,6 +17,7 @@ function makeClient(snapshot: { roots: unknown[] }) {
     getNoteContent: vi.fn(),
     saveNoteContent: vi.fn(),
     readFileContent: vi.fn(),
+    showNodeInFileManager: vi.fn(),
   };
 }
 

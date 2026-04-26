@@ -1,10 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   CreateFolderInput,
+  DuplicateMountError,
   CreateMountInput,
   CreateNoteInput,
   CreateUrlInput,
   DeleteNodeInput,
+  MountSetupContext,
   ExplorerSnapshot,
   RenameNodeInput,
   RetryUrlInput,
@@ -23,7 +25,18 @@ export async function createFolder(
 export async function createMount(
   input: CreateMountInput
 ): Promise<ExplorerSnapshot> {
-  return invoke<ExplorerSnapshot>("create_mount", { input });
+  try {
+    return await invoke<ExplorerSnapshot>("create_mount", { input });
+  } catch (error) {
+    if (isDuplicateMountError(error)) {
+      throw error;
+    }
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+export async function getMountSetupContext(): Promise<MountSetupContext> {
+  return invoke<MountSetupContext>("get_mount_setup_context");
 }
 
 export async function createUrl(
@@ -71,4 +84,18 @@ export async function getNodeThumbnail(nodeId: string): Promise<string> {
 
 export async function readFileContent(nodeId: string): Promise<string> {
   return invoke<string>("read_file_content", { input: { nodeId } });
+}
+
+export async function showNodeInFileManager(nodeId: string): Promise<void> {
+  return invoke<void>("show_node_in_file_manager", { input: { nodeId } });
+}
+
+function isDuplicateMountError(error: unknown): error is DuplicateMountError {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as Partial<DuplicateMountError>;
+  return (
+    candidate.kind === "duplicateMount" &&
+    typeof candidate.mountId === "string" &&
+    typeof candidate.absolutePath === "string"
+  );
 }

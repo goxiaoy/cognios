@@ -47,6 +47,10 @@ function makeClient(): ExplorerClient {
         },
       ],
     }),
+    getMountSetupContext: vi.fn().mockResolvedValue({
+      suggestedFolders: [],
+      existingMounts: [],
+    }),
     createFolder: vi.fn(),
     createMount: vi.fn(),
     createNote: vi.fn(),
@@ -58,6 +62,7 @@ function makeClient(): ExplorerClient {
     getNoteContent: vi.fn(),
     saveNoteContent: vi.fn(),
     readFileContent: vi.fn(),
+    showNodeInFileManager: vi.fn(),
   };
 }
 

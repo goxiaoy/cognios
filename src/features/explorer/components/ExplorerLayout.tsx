@@ -1,7 +1,7 @@
 import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
-import type { ExplorerClient, ExplorerNode } from "../types/explorer";
+import type { ExistingMount, ExplorerClient, ExplorerNode, MountSetupContext } from "../types/explorer";
 import type { CreateAction } from "./CreateMenu";
 import type { SelectModifiers } from "./ExplorerRow";
 import { useExplorerEvents } from "../hooks/useExplorerEvents";
@@ -34,6 +34,9 @@ export function ExplorerLayout({
   // mid-modal without shifting the new node's parent.
   const [modalParentId, setModalParentId] = useState<string | null>(null);
   const [noteFlushError, setNoteFlushError] = useState<string | null>(null);
+  const [mountSetupContext, setMountSetupContext] = useState<MountSetupContext | null>(null);
+  const [mountSetupError, setMountSetupError] = useState<string | null>(null);
+  const [mountSubmitting, setMountSubmitting] = useState(false);
   const [treeWidth, setTreeWidth] = useState(DEFAULT_TREE_WIDTH);
   const noteEditorRef = useRef<NoteEditorHandle>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -60,6 +63,30 @@ export function ExplorerLayout({
       resizeCleanupRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (openModal !== "mount") return;
+    let cancelled = false;
+    setMountSetupError(null);
+    setMountSetupContext(null);
+
+    void client
+      .getMountSetupContext()
+      .then((context) => {
+        if (!cancelled) setMountSetupContext(context);
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setMountSetupError(
+            cause instanceof Error ? cause.message : "Failed to load suggested folders."
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, openModal]);
 
   useExplorerEvents(store.refresh);
 
@@ -298,18 +325,33 @@ export function ExplorerLayout({
     });
   }
 
+  async function handleRevealInFileManager(nodeId: string) {
+    try {
+      await client.showNodeInFileManager(nodeId);
+      store.setError(null);
+    } catch (cause) {
+      store.setError(cause instanceof Error ? cause.message : "Failed to open file manager");
+    }
+  }
+
   async function handleMountSubmit(args: { path: string; name: string; ignoreConfig: string }) {
-    const snapshot = await store.runAction("mount", () =>
-      client.createMount({
+    setMountSubmitting(true);
+    store.setError(null);
+    try {
+      const snapshot = await client.createMount({
         path: args.path,
         parentId: modalParentId ?? undefined,
         ignoreConfig: args.ignoreConfig || undefined
-      })
-    );
-    if (snapshot) {
+      });
       store.applySnapshot(snapshot);
       setOpenModal(null);
       setModalParentId(null);
+      setMountSetupContext(null);
+      return;
+    } catch (cause) {
+      throw cause;
+    } finally {
+      setMountSubmitting(false);
     }
   }
 
@@ -327,6 +369,28 @@ export function ExplorerLayout({
   function handleModalClose() {
     setOpenModal(null);
     setModalParentId(null);
+    setMountSetupContext(null);
+    setMountSetupError(null);
+  }
+
+  async function handleRevealExistingMount(nodeId: string) {
+    setNoteFlushError(null);
+    if (store.activeNoteId && noteEditorRef.current) {
+      try {
+        await noteEditorRef.current.flush();
+        store.setActiveNoteId(null);
+      } catch (cause) {
+        setNoteFlushError(cause instanceof Error ? cause.message : "Failed to save note");
+        return;
+      }
+    }
+
+    selectionAnchorRef.current = nodeId;
+    store.selectArtifact(nodeId, false);
+    if (!store.expandedIds.includes(nodeId)) {
+      store.toggleNode(nodeId);
+    }
+    handleModalClose();
   }
 
   // Center surface decision. Note takes render priority if both fields are set.
@@ -397,6 +461,9 @@ export function ExplorerLayout({
             nodes={store.snapshot.roots}
             onDelete={handleDeleteById}
             onInlineRename={handleInlineRename}
+            onRevealInFileManager={(nodeId) => {
+              void handleRevealInFileManager(nodeId);
+            }}
             onRetry={handleRetry}
             onSelect={(id, modifiers) => void handleActivate(id, modifiers)}
             onStartRename={store.setPendingInlineRenameId}
@@ -479,9 +546,14 @@ export function ExplorerLayout({
 
       {openModal === "mount" ? (
         <MountModal
-          activeAction={store.activeAction}
+          isSubmitting={mountSubmitting}
           onClose={handleModalClose}
+          onRevealMount={(nodeId) => {
+            void handleRevealExistingMount(nodeId);
+          }}
           onSubmit={handleMountSubmit}
+          setupContext={mountSetupContext}
+          setupError={mountSetupError}
         />
       ) : null}
 
