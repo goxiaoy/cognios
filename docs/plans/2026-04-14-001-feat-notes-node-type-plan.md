@@ -1,7 +1,7 @@
 ---
 title: "feat: Add notes node type"
 type: feat
-status: active
+status: completed
 date: 2026-04-14
 origin: docs/brainstorms/notes-node-type-requirements.md
 ---
