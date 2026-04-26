@@ -42,7 +42,13 @@ export function ExplorerInspector({
     );
   }
 
-  if (!node) return null;
+  if (!node) {
+    return (
+      <div className="inspector-pane inspector-pane--empty">
+        <p className="inspector-empty-hint">No selection</p>
+      </div>
+    );
+  }
 
   return (
     <div className="inspector-pane">

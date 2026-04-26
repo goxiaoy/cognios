@@ -85,4 +85,11 @@ describe("ExplorerInspector", () => {
     expect(screen.getByText("2 items")).toBeInTheDocument();
     expect(screen.getByText("96 B")).toBeInTheDocument();
   });
+
+  it("shows empty placeholder when no node and selectionCount is 0", () => {
+    render(
+      <ExplorerInspector node={null} selectedArtifacts={[]} selectionCount={0} />
+    );
+    expect(screen.getByText("No selection")).toBeInTheDocument();
+  });
 });
