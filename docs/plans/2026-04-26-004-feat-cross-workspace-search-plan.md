@@ -362,8 +362,8 @@ When `embedding.state != "ready"`, the embed step is skipped, the lancedb call u
   **Dependencies:** None — pure infrastructure.
 
   **Files:**
-  - Modify: `src-tauri/tauri.conf.json` (add `bundle.externalBin` for both `search-sidecar` and `llama-server`)
-  - Modify: `src-tauri/capabilities/default.json` (add scoped `shell:allow-execute` and `shell:allow-spawn` entries for both binaries)
+  - Modify: `src-tauri/capabilities/default.json` (add scoped `shell:allow-execute` and `shell:allow-spawn` entries for both binaries) — lands in Unit 2.
+  - Modify: `src-tauri/tauri.conf.json` (add `bundle.externalBin` for both `search-sidecar` and `llama-server`) — **deferred to Unit 12**. `tauri-build` enforces externalBin paths exist at compile time even with `bundle.active = false`; declaring it before the platform binary actually exists in `binaries/` breaks every `cargo check`. Capability ACL stays in Unit 2 because it does not trigger a file check.
   - Create: `src-tauri/src/services/search/mod.rs`
   - Create: `src-tauri/src/services/search/supervisor.rs` (generic supervisor; spawns and supervises both children)
   - Create: `src-tauri/src/services/search/runtime_file.rs`
@@ -392,7 +392,7 @@ When `embedding.state != "ready"`, the embed step is skipped, the lancedb call u
       ] }
     ```
     Add a parallel `shell:allow-spawn` block with the same two entries.
-  - `bundle.externalBin: ["binaries/search-sidecar", "binaries/llama-server"]` (no platform suffix on either; Tauri appends `-<host-tuple>` when resolving siblings).
+  - `bundle.externalBin: ["binaries/search-sidecar", "binaries/llama-server"]` (no platform suffix on either; Tauri appends `-<host-tuple>` when resolving siblings). Declaration is deferred to Unit 12 — see the Files note above.
   - **Supervisor** is generic over child type. It tracks two `CommandChild` handles in `Arc<Mutex<...>>`. Spawn order: `search-sidecar` first; once Rust reads its runtime file and confirms `/healthz`, the supervisor spawns `llama-server` and writes its `(port, api-key)` to a second runtime file (`~/.cogios/search/llama-server.runtime`, mode 0600). The Python sidecar reads the llama-server runtime file when it needs to make caption calls.
   - **Restart budget per child.** Each child has its own exponential-backoff (1 s → 2 s → 4 s) up to 3 attempts. `search-sidecar` failure → "search unavailable"; `llama-server` failure → captioning disabled, OCR continues, search remains available.
   - Runtime file: 256-bit token via `rand::random::<[u8; 32]>()` (or `tauri::utils::random`), serialised JSON `{ "port": u16, "token": "<hex>" }`, written by the *sidecar* (Unit 3) to `~/.cogios/search/sidecar.runtime` with mode 0600. Rust polls for the file (1 s ticks, 30 s timeout); the path of "Rust starts the sidecar, sidecar writes the file, Rust reads it" is the sequencing.

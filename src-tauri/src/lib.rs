@@ -12,6 +12,7 @@ use tauri::{Emitter, Manager};
 use crate::infrastructure::db::connection::open_database;
 use crate::services::mounts::reconcile::reconcile_all_mounts;
 use crate::services::mounts::watcher::{MountWatcherRegistry, VfsChangeEvent};
+use crate::services::search::SearchSidecarSupervisor;
 use crate::services::url_indexing::cache::ensure_cache_dir;
 use crate::services::url_indexing::queue::UrlJobRunner;
 
@@ -25,6 +26,7 @@ pub struct AppState {
     pub mount_watchers: Arc<MountWatcherRegistry>,
     pub url_jobs: Arc<UrlJobRunner>,
     pub emitter: VfsEventEmitter,
+    pub search_sidecar: Arc<SearchSidecarSupervisor>,
 }
 
 fn storage_dir_from_home(home_dir: PathBuf) -> PathBuf {
@@ -87,12 +89,25 @@ pub fn run() {
             };
             url_jobs.resume_pending_jobs()?;
 
+            // Search sidecar (Phase 1 / Unit 2). The binary is bundled
+            // by the packaging step in Unit 12; in dev or before that
+            // ships, the supervisor records `Failed { retryable: false }`
+            // and the rest of the app continues to run.
+            let search_dir = app_data_dir.join("search");
+            fs::create_dir_all(&search_dir).map_err(|error| error.to_string())?;
+            let search_sidecar = Arc::new(SearchSidecarSupervisor::new(
+                search_dir.join("sidecar.runtime"),
+                app_data_dir.clone(),
+            ));
+            search_sidecar.start(app.handle());
+
             app.manage(AppState {
                 db_path,
                 storage_dir: app_data_dir,
                 mount_watchers,
                 url_jobs,
                 emitter,
+                search_sidecar,
             });
 
             Ok(())
