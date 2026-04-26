@@ -1,0 +1,13 @@
+# PyInstaller + uv outputs
+.venv/
+build/
+dist/
+*.spec
+build.log
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Spike-only — the v1 sidecar will own a real uv.lock at Phase 5 / Unit 12.
+uv.lock

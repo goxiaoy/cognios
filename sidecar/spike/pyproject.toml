@@ -1,0 +1,36 @@
+[project]
+name = "search-sidecar-spike"
+version = "0.0.0"
+description = "PyInstaller packaging spike for the cross-workspace search sidecar"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "fastapi==0.115.6",
+  "uvicorn[standard]==0.32.1",
+  # Storage
+  "lancedb==0.30.2",
+  "pyarrow==18.1.0",
+  # PDF text extraction
+  "pymupdf==1.26.0",
+  # Embedding + reranker inference path
+  "onnxruntime==1.20.1",
+  # Spike v1 scope: validate the lancedb (Rust extension) + pyarrow +
+  # onnxruntime + pymupdf bundle on macOS arm64. transformers/optimum/
+  # paddleocr/llama-cpp-python are deferred to spike v2 — see README.
+  # "optimum[onnxruntime]==1.23.3",
+  # "transformers==4.46.3",
+  # "tokenizers==0.20.3",
+  # Captioning (Gemma 3n via GGUF) — DEFERRED: llama-cpp-python ships
+  # sdist-only on PyPI; requires cmake + xcode-select to build from
+  # source. See README finding F-1.
+  # "llama-cpp-python==0.3.4",
+  # OCR — DEFERRED: heavy install (paddlepaddle native), validate as
+  # spike v2 once the lancedb+onnxruntime core is proven.
+  # "paddleocr==2.10.0",
+  # Bundler
+  "pyinstaller==6.11.1",
+]
+
+[tool.uv]
+# Spike only — no lockfile commitment yet. The v1 sidecar will own a real
+# uv.lock generated under sidecar/search_sidecar/ at Phase 5 / Unit 12.
+package = false
