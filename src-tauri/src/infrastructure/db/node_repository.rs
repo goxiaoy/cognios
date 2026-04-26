@@ -41,10 +41,15 @@ pub fn list_snapshot(conn: &Connection) -> rusqlite::Result<ExplorerSnapshotDto>
     Ok(build_snapshot(records))
 }
 
+pub struct CreatedFolder {
+    pub node_id: String,
+    pub snapshot: ExplorerSnapshotDto,
+}
+
 pub fn create_folder(
     conn: &Connection,
     input: &CreateFolderInput,
-) -> rusqlite::Result<ExplorerSnapshotDto> {
+) -> rusqlite::Result<CreatedFolder> {
     let trimmed_name = input.name.trim();
     if trimmed_name.is_empty() {
         return Err(rusqlite::Error::InvalidParameterName(
@@ -62,13 +67,14 @@ pub fn create_folder(
         }
     }
 
+    let node_id = Uuid::new_v4().to_string();
     conn.execute(
         "
         INSERT INTO nodes (id, parent_id, kind, name, state, size_bytes)
         VALUES (?1, ?2, ?3, ?4, ?5, 0)
         ",
         params![
-            Uuid::new_v4().to_string(),
+            node_id,
             input.parent_id,
             NodeKind::Folder.as_str(),
             trimmed_name,
@@ -78,7 +84,8 @@ pub fn create_folder(
 
     touch_node_modified_at(conn, input.parent_id.as_deref())?;
 
-    list_snapshot(conn)
+    let snapshot = list_snapshot(conn)?;
+    Ok(CreatedFolder { node_id, snapshot })
 }
 
 fn build_snapshot(records: Vec<NodeRecord>) -> ExplorerSnapshotDto {

@@ -12,7 +12,7 @@ fn persists_root_and_nested_folders_across_connections() {
 
     {
         let conn = open_database(&db_path).expect("database opens");
-        let root_snapshot = create_folder(
+        let root_created = create_folder(
             &conn,
             &CreateFolderInput {
                 name: "Inbox".into(),
@@ -20,7 +20,7 @@ fn persists_root_and_nested_folders_across_connections() {
             },
         )
         .expect("root folder is created");
-        let root_id = root_snapshot.roots[0].id.clone();
+        let root_id = root_created.snapshot.roots[0].id.clone();
 
         create_folder(
             &conn,

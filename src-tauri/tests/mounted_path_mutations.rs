@@ -6,8 +6,11 @@ use cognios_lib::infrastructure::db::connection::open_database;
 use cognios_lib::infrastructure::db::mount_repository::{
     create_mount, reconcile_mount, CreateMountInput,
 };
+use cognios_lib::services::mounts::watcher::VfsChangeEvent;
 use cognios_lib::services::mutations::delete_node::{delete_node, DeleteNodeInput};
 use cognios_lib::services::mutations::rename_node::{rename_node, RenameNodeInput};
+
+fn noop_emitter(_event: VfsChangeEvent) {}
 
 #[test]
 fn renames_and_deletes_mounted_paths_and_rejects_unavailable_mounts() {
@@ -42,6 +45,7 @@ fn renames_and_deletes_mounted_paths_and_rejects_unavailable_mounts() {
                 node_id: file_node_id.clone(),
                 new_name: "beta.txt".into(),
             },
+            &noop_emitter,
         )
         .expect("rename mounted file");
         assert!(snapshot.roots[0]
@@ -71,6 +75,7 @@ fn renames_and_deletes_mounted_paths_and_rejects_unavailable_mounts() {
                 cascade: None,
             },
             &notes_dir,
+            &noop_emitter,
         )
         .expect("delete mounted file");
         assert!(!snapshot.roots[0]
@@ -106,6 +111,7 @@ fn renames_and_deletes_mounted_paths_and_rejects_unavailable_mounts() {
                 node_id: unavailable_file_id,
                 new_name: "delta.txt".into(),
             },
+            &noop_emitter,
         )
         .expect_err("unavailable mounted file should reject rename");
         assert!(error.contains("unavailable"));

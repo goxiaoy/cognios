@@ -16,7 +16,9 @@ pub fn create_note(
     let mut conn =
         open_database(&state.db_path).map_err(|error: rusqlite::Error| error.to_string())?;
     let notes_dir = state.storage_dir.join("notes");
-    create_note_record(&mut conn, &input, &notes_dir)
+    let emitter = state.emitter.as_ref();
+    let created = create_note_record(&mut conn, &input, &notes_dir, &emitter)?;
+    Ok(created.snapshot)
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,5 +51,6 @@ pub fn save_note_content(
     let conn =
         open_database(&state.db_path).map_err(|error: rusqlite::Error| error.to_string())?;
     let notes_dir = state.storage_dir.join("notes");
-    save_note_content_record(&conn, &input.note_id, &input.body, &notes_dir)
+    let emitter = state.emitter.as_ref();
+    save_note_content_record(&conn, &input.note_id, &input.body, &notes_dir, &emitter)
 }

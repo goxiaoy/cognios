@@ -22,7 +22,7 @@ fn snapshot_includes_metadata_for_virtual_and_url_nodes() {
     fs::write(&cache_path, cache_body).expect("cache file");
 
     let mut conn = open_database(&db_path).expect("database");
-    let folder_snapshot = create_folder(
+    let folder_created = create_folder(
         &conn,
         &CreateFolderInput {
             name: "Inbox".into(),
@@ -30,7 +30,7 @@ fn snapshot_includes_metadata_for_virtual_and_url_nodes() {
         },
     )
     .expect("folder");
-    let folder_id = folder_snapshot.roots[0].id.clone();
+    let folder_id = folder_created.snapshot.roots[0].id.clone();
     let CreatedUrl { node_id, .. } = create_url(
         &mut conn,
         &CreateUrlInput {

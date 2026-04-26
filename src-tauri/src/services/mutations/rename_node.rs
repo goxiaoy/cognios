@@ -8,6 +8,7 @@ use crate::domain::vfs::node::{ExplorerSnapshotDto, NodeKind};
 use crate::domain::vfs::state::NodeState;
 use crate::infrastructure::db::mount_repository::reconcile_mount;
 use crate::infrastructure::db::node_repository::list_snapshot;
+use crate::services::mounts::watcher::VfsChangeEvent;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +20,7 @@ pub struct RenameNodeInput {
 pub fn rename_node(
     conn: &mut Connection,
     input: &RenameNodeInput,
+    emitter: &dyn Fn(VfsChangeEvent),
 ) -> Result<ExplorerSnapshotDto, String> {
     let trimmed_name = input.new_name.trim();
     if trimmed_name.is_empty() {
@@ -64,7 +66,12 @@ pub fn rename_node(
         }
     }
 
-    list_snapshot(conn).map_err(|error| error.to_string())
+    let snapshot = list_snapshot(conn).map_err(|error| error.to_string())?;
+    emitter(VfsChangeEvent {
+        mount_id: input.node_id.clone(),
+        reason: "node-renamed".to_string(),
+    });
+    Ok(snapshot)
 }
 
 #[derive(Debug)]

@@ -7,8 +7,11 @@ use cognios_lib::infrastructure::db::mount_repository::{create_mount, CreateMoun
 use cognios_lib::infrastructure::db::node_repository::create_folder;
 use cognios_lib::infrastructure::db::node_repository::CreateFolderInput;
 use cognios_lib::infrastructure::db::url_repository::{create_url, CreateUrlInput};
+use cognios_lib::services::mounts::watcher::VfsChangeEvent;
 use cognios_lib::services::mutations::delete_node::{delete_node, DeleteNodeInput};
 use cognios_lib::services::mutations::rename_node::{rename_node, RenameNodeInput};
+
+fn noop_emitter(_event: VfsChangeEvent) {}
 
 #[test]
 fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
@@ -21,7 +24,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
 
     let (root_folder_id, child_folder_id, url_node_id, mount_node_id) = {
         let mut conn = open_database(&db_path).expect("database");
-        let root_snapshot = create_folder(
+        let root_created = create_folder(
             &conn,
             &CreateFolderInput {
                 name: "Root".into(),
@@ -29,9 +32,9 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
             },
         )
         .expect("root folder");
-        let root_folder_id = root_snapshot.roots[0].id.clone();
+        let root_folder_id = root_created.snapshot.roots[0].id.clone();
 
-        let child_snapshot = create_folder(
+        let child_created = create_folder(
             &conn,
             &CreateFolderInput {
                 name: "Child".into(),
@@ -39,7 +42,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
             },
         )
         .expect("child folder");
-        let child_folder_id = child_snapshot.roots[0].children[0].id.clone();
+        let child_folder_id = child_created.snapshot.roots[0].children[0].id.clone();
 
         let created_url = create_url(
             &mut conn,
@@ -86,6 +89,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
                 node_id: root_folder_id.clone(),
                 new_name: "Renamed Root".into(),
             },
+            &noop_emitter,
         )
         .expect("rename root");
         let renamed_root = renamed
@@ -105,6 +109,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
                 cascade: None,
             },
             &notes_dir,
+            &noop_emitter,
         )
         .expect_err("non-empty folder should require cascade");
         assert!(error.contains("folder not empty"));
@@ -119,6 +124,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
                 cascade: None,
             },
             &notes_dir,
+            &noop_emitter,
         )
         .expect("delete url");
         assert!(!snapshot.roots.iter().any(|node| node.id == url_node_id));
@@ -141,6 +147,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
                 cascade: None,
             },
             &notes_dir,
+            &noop_emitter,
         )
         .expect("delete mount");
         assert!(!snapshot.roots.iter().any(|node| node.id == mount_node_id));
@@ -159,6 +166,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
                 cascade: Some(true),
             },
             &notes_dir,
+            &noop_emitter,
         )
         .expect("delete folder cascade");
         assert!(!snapshot.roots.iter().any(|node| node.id == child_folder_id));

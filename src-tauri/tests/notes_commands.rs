@@ -5,10 +5,13 @@ use tempfile::tempdir;
 use cognios_lib::infrastructure::db::connection::open_database;
 use cognios_lib::infrastructure::db::node_repository::create_folder;
 use cognios_lib::infrastructure::db::node_repository::CreateFolderInput;
+use cognios_lib::services::mounts::watcher::VfsChangeEvent;
 use cognios_lib::services::mutations::delete_node::{delete_node, DeleteNodeInput};
 use cognios_lib::services::notes::create_note::{create_note, CreateNoteInput};
 use cognios_lib::services::notes::get_note_content::get_note_content;
 use cognios_lib::services::notes::save_note_content::save_note_content;
+
+fn noop_emitter(_event: VfsChangeEvent) {}
 
 fn setup() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
     let app_dir = tempdir().expect("app tempdir");
@@ -23,17 +26,19 @@ fn create_note_inserts_node_and_creates_empty_md_file() {
     let (_app_dir, db_path, notes_dir) = setup();
     let mut conn = open_database(&db_path).expect("database");
 
-    let snapshot = create_note(
+    let created = create_note(
         &mut conn,
         &CreateNoteInput { parent_id: None },
         &notes_dir,
+        &noop_emitter,
     )
     .expect("create note");
 
-    assert_eq!(snapshot.roots.len(), 1);
-    let note = &snapshot.roots[0];
+    assert_eq!(created.snapshot.roots.len(), 1);
+    let note = &created.snapshot.roots[0];
     assert_eq!(note.kind, "note");
     assert_eq!(note.name, "Untitled");
+    assert_eq!(note.id, created.node_id);
 
     let note_path = notes_dir.join(format!("{}.md", note.id));
     assert!(note_path.exists(), ".md file should be created on disk");
@@ -49,7 +54,7 @@ fn create_note_appears_as_child_of_folder() {
     let (_app_dir, db_path, notes_dir) = setup();
     let mut conn = open_database(&db_path).expect("database");
 
-    let folder_snapshot = create_folder(
+    let folder_created = create_folder(
         &conn,
         &CreateFolderInput {
             name: "Notes Folder".into(),
@@ -57,18 +62,20 @@ fn create_note_appears_as_child_of_folder() {
         },
     )
     .expect("folder");
-    let folder_id = folder_snapshot.roots[0].id.clone();
+    let folder_id = folder_created.snapshot.roots[0].id.clone();
 
-    let snapshot = create_note(
+    let created = create_note(
         &mut conn,
         &CreateNoteInput {
             parent_id: Some(folder_id.clone()),
         },
         &notes_dir,
+        &noop_emitter,
     )
     .expect("create note in folder");
 
-    let folder = snapshot
+    let folder = created
+        .snapshot
         .roots
         .iter()
         .find(|n| n.id == folder_id)
@@ -90,16 +97,17 @@ fn save_and_retrieve_note_content() {
     let (_app_dir, db_path, notes_dir) = setup();
     let mut conn = open_database(&db_path).expect("database");
 
-    let snapshot = create_note(
+    let created = create_note(
         &mut conn,
         &CreateNoteInput { parent_id: None },
         &notes_dir,
+        &noop_emitter,
     )
     .expect("create note");
-    let note_id = snapshot.roots[0].id.clone();
+    let note_id = created.node_id;
 
     let body = "# Hello\n\nThis is a note.";
-    save_note_content(&conn, &note_id, body, &notes_dir).expect("save content");
+    save_note_content(&conn, &note_id, body, &notes_dir, &noop_emitter).expect("save content");
 
     let retrieved = get_note_content(&note_id, &notes_dir).expect("get content");
     assert_eq!(retrieved, body);
@@ -110,16 +118,17 @@ fn save_note_content_updates_size_bytes_in_db() {
     let (_app_dir, db_path, notes_dir) = setup();
     let mut conn = open_database(&db_path).expect("database");
 
-    let snapshot = create_note(
+    let created = create_note(
         &mut conn,
         &CreateNoteInput { parent_id: None },
         &notes_dir,
+        &noop_emitter,
     )
     .expect("create note");
-    let note_id = snapshot.roots[0].id.clone();
+    let note_id = created.node_id;
 
     let body = "Hello, notes!";
-    save_note_content(&conn, &note_id, body, &notes_dir).expect("save");
+    save_note_content(&conn, &note_id, body, &notes_dir, &noop_emitter).expect("save");
 
     let size_bytes: i64 = conn
         .query_row(
@@ -136,15 +145,16 @@ fn delete_note_removes_md_file_and_db_record() {
     let (_app_dir, db_path, notes_dir) = setup();
     let mut conn = open_database(&db_path).expect("database");
 
-    let snapshot = create_note(
+    let created = create_note(
         &mut conn,
         &CreateNoteInput { parent_id: None },
         &notes_dir,
+        &noop_emitter,
     )
     .expect("create note");
-    let note_id = snapshot.roots[0].id.clone();
+    let note_id = created.node_id;
 
-    save_note_content(&conn, &note_id, "some content", &notes_dir).expect("save");
+    save_note_content(&conn, &note_id, "some content", &notes_dir, &noop_emitter).expect("save");
 
     let note_path = notes_dir.join(format!("{note_id}.md"));
     assert!(note_path.exists(), "file exists before delete");
@@ -156,6 +166,7 @@ fn delete_note_removes_md_file_and_db_record() {
             cascade: None,
         },
         &notes_dir,
+        &noop_emitter,
     )
     .expect("delete note");
 
@@ -171,13 +182,14 @@ fn delete_note_succeeds_when_md_file_already_missing() {
     let (_app_dir, db_path, notes_dir) = setup();
     let mut conn = open_database(&db_path).expect("database");
 
-    let snapshot = create_note(
+    let created = create_note(
         &mut conn,
         &CreateNoteInput { parent_id: None },
         &notes_dir,
+        &noop_emitter,
     )
     .expect("create note");
-    let note_id = snapshot.roots[0].id.clone();
+    let note_id = created.node_id;
 
     // Remove the file manually before deletion.
     let note_path = notes_dir.join(format!("{note_id}.md"));
@@ -190,6 +202,7 @@ fn delete_note_succeeds_when_md_file_already_missing() {
             cascade: None,
         },
         &notes_dir,
+        &noop_emitter,
     )
     .expect("delete note with missing file");
 

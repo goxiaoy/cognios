@@ -9,6 +9,7 @@ use crate::domain::vfs::state::NodeState;
 use crate::infrastructure::db::mount_repository::reconcile_mount;
 use crate::infrastructure::db::node_repository::{list_snapshot, touch_node_modified_at};
 use crate::infrastructure::db::url_repository::delete_url_artifacts;
+use crate::services::mounts::watcher::VfsChangeEvent;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +22,7 @@ pub fn delete_node(
     conn: &mut Connection,
     input: &DeleteNodeInput,
     notes_dir: &std::path::Path,
+    emitter: &dyn Fn(VfsChangeEvent),
 ) -> Result<ExplorerSnapshotDto, String> {
     let node = load_node(conn, &input.node_id)?.ok_or_else(|| "node not found".to_string())?;
 
@@ -78,7 +80,12 @@ pub fn delete_node(
         }
     }
 
-    list_snapshot(conn).map_err(|error| error.to_string())
+    let snapshot = list_snapshot(conn).map_err(|error| error.to_string())?;
+    emitter(VfsChangeEvent {
+        mount_id: input.node_id.clone(),
+        reason: "node-deleted".to_string(),
+    });
+    Ok(snapshot)
 }
 
 #[derive(Debug)]

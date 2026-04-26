@@ -17,11 +17,14 @@ use crate::services::url_indexing::queue::UrlJobRunner;
 
 const VFS_EVENT_NAME: &str = "vfs://changed";
 
+pub type VfsEventEmitter = Arc<dyn Fn(VfsChangeEvent) + Send + Sync>;
+
 pub struct AppState {
     pub db_path: PathBuf,
     pub storage_dir: PathBuf,
     pub mount_watchers: Arc<MountWatcherRegistry>,
     pub url_jobs: Arc<UrlJobRunner>,
+    pub emitter: VfsEventEmitter,
 }
 
 fn storage_dir_from_home(home_dir: PathBuf) -> PathBuf {
@@ -56,20 +59,32 @@ pub fn run() {
             reconcile_all_mounts(&mut conn)?;
             ensure_cache_dir(&cache_dir)?;
 
-            let app_handle = app.handle().clone();
-            let mount_watchers =
+            // Single emitter shared by every emit site (mount watchers,
+            // URL jobs, and the new mutation paths added for search). All
+            // callers route through `app_handle.emit(VFS_EVENT_NAME, ...)`.
+            let emit_app_handle = app.handle().clone();
+            let emitter: VfsEventEmitter = Arc::new(move |event: VfsChangeEvent| {
+                let _ = emit_app_handle.emit(VFS_EVENT_NAME, event);
+            });
+
+            let mount_watchers = {
+                let emitter = Arc::clone(&emitter);
                 Arc::new(MountWatcherRegistry::new(move |event: VfsChangeEvent| {
-                    let _ = app_handle.emit(VFS_EVENT_NAME, event);
-                }));
+                    emitter(event);
+                }))
+            };
             mount_watchers.start_all(&db_path)?;
-            let app_handle = app.handle().clone();
-            let url_jobs = Arc::new(UrlJobRunner::new(
-                db_path.clone(),
-                cache_dir,
-                move |event: VfsChangeEvent| {
-                    let _ = app_handle.emit(VFS_EVENT_NAME, event);
-                },
-            ));
+
+            let url_jobs = {
+                let emitter = Arc::clone(&emitter);
+                Arc::new(UrlJobRunner::new(
+                    db_path.clone(),
+                    cache_dir,
+                    move |event: VfsChangeEvent| {
+                        emitter(event);
+                    },
+                ))
+            };
             url_jobs.resume_pending_jobs()?;
 
             app.manage(AppState {
@@ -77,6 +92,7 @@ pub fn run() {
                 storage_dir: app_data_dir,
                 mount_watchers,
                 url_jobs,
+                emitter,
             });
 
             Ok(())

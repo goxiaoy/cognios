@@ -14,7 +14,8 @@ pub fn rename_node(
 ) -> Result<ExplorerSnapshotDto, String> {
     let mut conn =
         open_database(&state.db_path).map_err(|error: rusqlite::Error| error.to_string())?;
-    rename_node_record(&mut conn, &input)
+    let emitter = state.emitter.as_ref();
+    rename_node_record(&mut conn, &input, &emitter)
 }
 
 #[tauri::command]
@@ -26,7 +27,8 @@ pub fn delete_node(
         open_database(&state.db_path).map_err(|error: rusqlite::Error| error.to_string())?;
     let mount_id = resolve_mount_id(&conn, &input.node_id)?;
     let notes_dir = state.storage_dir.join("notes");
-    let snapshot = delete_node_record(&mut conn, &input, &notes_dir)?;
+    let emitter = state.emitter.as_ref();
+    let snapshot = delete_node_record(&mut conn, &input, &notes_dir, &emitter)?;
     if let Some(mount_id) = mount_id {
         state.mount_watchers.stop_mount(&mount_id);
     }
