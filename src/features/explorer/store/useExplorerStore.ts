@@ -3,20 +3,16 @@ import { error as logError } from "../../../lib/logger";
 import type {
   ExplorerClient,
   ExplorerNode,
-  ExplorerSnapshot,
-  ExplorerViewMode
+  ExplorerSnapshot
 } from "../types/explorer";
-import { isMarkdownFile } from "../utils/presentation";
+import { isImageNode, isMarkdownFile } from "../utils/presentation";
 
 const EMPTY_SNAPSHOT: ExplorerSnapshot = { roots: [] };
 
 export function useExplorerStore(client: ExplorerClient) {
   const [snapshot, setSnapshot] = useState<ExplorerSnapshot>(EMPTY_SNAPSHOT);
-  const [displayedFolderId, setDisplayedFolderId] = useState<string | null>(null);
   const [selectedArtifactIds, setSelectedArtifactIds] = useState<string[]>([]);
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
-  const [viewMode, setViewMode] = useState<ExplorerViewMode>("grid");
-  const [isHierarchyCollapsed, setIsHierarchyCollapsed] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeAction, setActiveAction] = useState<
@@ -25,57 +21,35 @@ export function useExplorerStore(client: ExplorerClient) {
   const [pendingInlineRenameId, setPendingInlineRenameId] = useState<string | null>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [activePreviewId, setActivePreviewId] = useState<string | null>(null);
+  const [activeImagePreviewId, setActiveImagePreviewId] = useState<string | null>(null);
 
   const nodeIndex = useMemo(() => indexNodes(snapshot.roots), [snapshot]);
   const activeNote = activeNoteId ? (nodeIndex.get(activeNoteId) ?? null) : null;
   const activePreview = activePreviewId ? (nodeIndex.get(activePreviewId) ?? null) : null;
-  const displayedFolder = displayedFolderId
-    ? asDisplayFolder(nodeIndex.get(displayedFolderId) ?? null)
+  const activeImagePreview = activeImagePreviewId
+    ? (nodeIndex.get(activeImagePreviewId) ?? null)
     : null;
-  const visibleArtifacts = displayedFolder ? displayedFolder.children : snapshot.roots;
-  const breadcrumbs = displayedFolderId
-    ? buildBreadcrumbs(displayedFolderId, nodeIndex)
-    : [];
   const selectedArtifacts = selectedArtifactIds
     .map((id) => nodeIndex.get(id) ?? null)
     .filter((node): node is ExplorerNode => node !== null);
   const selectionCount = selectedArtifacts.length;
   const inspectorNode = selectionCount === 1 ? selectedArtifacts[0] : null;
-  const mutationTarget = selectionCount <= 1 ? inspectorNode : null;
 
-  const applySnapshot = useCallback(
-    (nextSnapshot: ExplorerSnapshot) => {
-      const nextIndex = indexNodes(nextSnapshot.roots);
-      const nextDisplayedFolderId =
-        displayedFolderId && isDisplayFolder(nextIndex.get(displayedFolderId) ?? null)
-          ? displayedFolderId
-          : null;
-
-      setSnapshot(nextSnapshot);
-      setExpandedIds((current) => {
-        const next = new Set(current);
-        for (const root of nextSnapshot.roots) {
-          next.add(root.id);
-        }
-        if (nextDisplayedFolderId) {
-          for (const ancestorId of collectAncestorIds(nextDisplayedFolderId, nextIndex)) {
-            next.add(ancestorId);
-          }
-        }
-        return [...next];
-      });
-      setDisplayedFolderId(nextDisplayedFolderId);
-      setSelectedArtifactIds((current) =>
-        current.filter((id) => {
-          const node = nextIndex.get(id);
-          if (!node) return false;
-          const parentId = node.parentId ?? null;
-          return parentId === nextDisplayedFolderId;
-        })
-      );
-    },
-    [displayedFolderId]
-  );
+  const applySnapshot = useCallback((nextSnapshot: ExplorerSnapshot) => {
+    const nextIndex = indexNodes(nextSnapshot.roots);
+    setSnapshot(nextSnapshot);
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      // Roots auto-expand so the user always sees the top of the workspace.
+      for (const root of nextSnapshot.roots) {
+        next.add(root.id);
+      }
+      return [...next];
+    });
+    // Drop any selected ids whose nodes no longer exist after the snapshot
+    // (covers external delete / mount unmount). Keep all others regardless of parent.
+    setSelectedArtifactIds((current) => current.filter((id) => nextIndex.has(id)));
+  }, []);
 
   const refresh = useCallback(async () => {
     const nextSnapshot = await client.getExplorerSnapshot();
@@ -94,84 +68,62 @@ export function useExplorerStore(client: ExplorerClient) {
     });
   }, []);
 
-  const selectDisplayedFolder = useCallback(
-    (nodeId: string | null) => {
-      setDisplayedFolderId(nodeId);
-      setSelectedArtifactIds([]);
-      if (!nodeId) return;
-      setExpandedIds((current) => {
-        const next = new Set(current);
-        for (const ancestorId of collectAncestorIds(nodeId, nodeIndex)) {
-          next.add(ancestorId);
-        }
-        return [...next];
-      });
-    },
-    [nodeIndex]
-  );
-
-  const selectTreeNode = useCallback(
-    (nodeId: string) => {
-      const node = nodeIndex.get(nodeId) ?? null;
-      if (!node) return;
-
-      if (isDisplayFolder(node)) {
-        selectDisplayedFolder(node.id);
-        return;
+  const selectArtifact = useCallback((nodeId: string, additive = false) => {
+    if (!additive) {
+      setSelectedArtifactIds([nodeId]);
+      return;
+    }
+    setSelectedArtifactIds((current) => {
+      if (current.includes(nodeId)) {
+        return current.filter((id) => id !== nodeId);
       }
+      return [...current, nodeId];
+    });
+  }, []);
 
-      setDisplayedFolderId(node.parentId);
-      setSelectedArtifactIds([node.id]);
-      setExpandedIds((current) => {
-        const next = new Set(current);
-        for (const ancestorId of collectAncestorIds(node.id, nodeIndex)) {
-          next.add(ancestorId);
-        }
-        return [...next];
-      });
-    },
-    [nodeIndex, selectDisplayedFolder]
-  );
+  // Atomic batch setter for Shift-click range selection. Single dispatch.
+  const replaceSelection = useCallback((ids: string[]) => {
+    setSelectedArtifactIds(ids);
+  }, []);
 
-  const selectArtifact = useCallback(
-    (nodeId: string, additive = false) => {
-      if (!additive) {
-        setSelectedArtifactIds([nodeId]);
-        return;
-      }
-
-      setSelectedArtifactIds((current) => {
-        if (current.includes(nodeId)) {
-          return current.filter((id) => id !== nodeId);
-        }
-        return [...current, nodeId];
-      });
-    },
-    []
-  );
-
+  // Single store entry point for "user activated a tree row".
+  // Does not handle URL open-in-browser — that's a side effect for the layout
+  // since it requires the shell plugin (out of scope for the store).
   const activateArtifact = useCallback(
     (nodeId: string) => {
       const node = nodeIndex.get(nodeId) ?? null;
       if (!node) return;
+
       if (isDisplayFolder(node)) {
-        selectDisplayedFolder(node.id);
+        // Container: toggle expansion. Selection update is the layout's
+        // responsibility (handles modifiers); the store does not touch
+        // selection here.
+        toggleNode(node.id);
         return;
       }
+
+      // Activate the appropriate center-pane surface based on node kind.
+      // Selection is already handled by the layout before this call.
       if (node.kind === "note") {
         setActiveNoteId(node.id);
         return;
       }
-      if (node.kind === "file" && isMarkdownFile(node)) {
-        setActivePreviewId(node.id);
+      if (node.kind === "file") {
+        if (isMarkdownFile(node)) {
+          setActivePreviewId(node.id);
+          return;
+        }
+        if (isImageNode(node)) {
+          setActiveImagePreviewId(node.id);
+          return;
+        }
+        // Other file kinds: no surface change; the layout shows the
+        // "Cannot preview" placeholder via its own derivation.
       }
+      // url, directory, mount were already handled or have no surface.
     },
-    [nodeIndex, selectDisplayedFolder]
+    [nodeIndex, toggleNode]
   );
-
-  const toggleHierarchyCollapsed = useCallback(() => {
-    setIsHierarchyCollapsed((current) => !current);
-  }, []);
 
   const runAction = useCallback(
     async <T,>(
@@ -195,32 +147,22 @@ export function useExplorerStore(client: ExplorerClient) {
 
   return {
     snapshot,
-    displayedFolderId,
-    displayedFolder,
-    visibleArtifacts,
     selectedArtifactIds,
     selectedArtifacts,
     selectionCount,
     expandedIds,
-    breadcrumbs,
     inspectorNode,
-    mutationTarget,
-    isHierarchyCollapsed,
-    viewMode,
     isLoading,
     error,
     activeAction,
     setIsLoading,
     setError,
-    setViewMode,
     applySnapshot,
     refresh,
     toggleNode,
-    selectTreeNode,
-    selectDisplayedFolder,
     selectArtifact,
+    replaceSelection,
     activateArtifact,
-    toggleHierarchyCollapsed,
     runAction,
     pendingInlineRenameId,
     setPendingInlineRenameId,
@@ -230,40 +172,24 @@ export function useExplorerStore(client: ExplorerClient) {
     activePreviewId,
     setActivePreviewId,
     activePreview,
+    activeImagePreviewId,
+    setActiveImagePreviewId,
+    activeImagePreview,
   };
 }
 
 function indexNodes(roots: ExplorerNode[]): Map<string, ExplorerNode> {
   const index = new Map<string, ExplorerNode>();
-
   function visit(node: ExplorerNode) {
     index.set(node.id, node);
     for (const child of node.children) {
       visit(child);
     }
   }
-
   for (const root of roots) {
     visit(root);
   }
-
   return index;
-}
-
-function buildBreadcrumbs(nodeId: string, nodeIndex: Map<string, ExplorerNode>) {
-  const path: ExplorerNode[] = [];
-  let cursor = nodeIndex.get(nodeId) ?? null;
-
-  while (cursor) {
-    path.unshift(cursor);
-    cursor = cursor.parentId ? nodeIndex.get(cursor.parentId) ?? null : null;
-  }
-
-  return path;
-}
-
-function collectAncestorIds(nodeId: string, nodeIndex: Map<string, ExplorerNode>) {
-  return buildBreadcrumbs(nodeId, nodeIndex).map((node) => node.id);
 }
 
 export function isDisplayFolder(node: ExplorerNode | null) {
@@ -271,10 +197,6 @@ export function isDisplayFolder(node: ExplorerNode | null) {
     node !== null &&
     (node.kind === "folder" || node.kind === "mount" || node.kind === "directory")
   );
-}
-
-function asDisplayFolder(node: ExplorerNode | null) {
-  return isDisplayFolder(node) ? node : null;
 }
 
 function formatError(cause: unknown): string {

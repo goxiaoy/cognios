@@ -2,186 +2,303 @@ import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useExplorerStore } from "./useExplorerStore";
 
-describe("useExplorerStore", () => {
-  it("hydrates snapshot state and separates displayed folder from artifact selection", async () => {
-    const snapshot = {
-      roots: [
-        {
-          id: "root",
-          parentId: null,
-          name: "Root",
-          kind: "folder",
-          state: "ready",
-          createdAt: "2026-04-13 00:00:00",
-          modifiedAt: "2026-04-13 00:00:00",
-          sizeBytes: 128,
-          children: [
-            {
-              id: "child",
-              parentId: "root",
-              name: "Child",
-              kind: "folder",
-              state: "ready",
-              createdAt: "2026-04-13 00:00:00",
-              modifiedAt: "2026-04-13 00:00:00",
-              sizeBytes: 64,
-              children: [
-                {
-                  id: "leaf",
-                  parentId: "child",
-                  name: "notes.md",
-                  kind: "file",
-                  state: "ready",
-                  createdAt: "2026-04-13 00:00:00",
-                  modifiedAt: "2026-04-13 00:00:00",
-                  sizeBytes: 64,
-                  children: []
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    };
-    const client = {
-      getExplorerSnapshot: vi.fn().mockResolvedValue(snapshot),
-      createFolder: vi.fn(),
-      createMount: vi.fn(),
-      createNote: vi.fn(),
-      createUrl: vi.fn(),
-      renameNode: vi.fn(),
-      deleteNode: vi.fn(),
-      retryUrl: vi.fn(),
-      getNodeThumbnail: vi.fn(),
-      getNoteContent: vi.fn(),
-      saveNoteContent: vi.fn(),
-      readFileContent: vi.fn(),
-    };
+function makeClient(snapshot: { roots: unknown[] }) {
+  return {
+    getExplorerSnapshot: vi.fn().mockResolvedValue(snapshot),
+    createFolder: vi.fn(),
+    createMount: vi.fn(),
+    createNote: vi.fn(),
+    createUrl: vi.fn(),
+    renameNode: vi.fn(),
+    deleteNode: vi.fn(),
+    retryUrl: vi.fn(),
+    getNodeThumbnail: vi.fn(),
+    getNoteContent: vi.fn(),
+    saveNoteContent: vi.fn(),
+    readFileContent: vi.fn(),
+  };
+}
 
+describe("useExplorerStore", () => {
+  const baseSnapshot = {
+    roots: [
+      {
+        id: "mount-1",
+        parentId: null,
+        name: "workspace",
+        kind: "mount",
+        state: "ready",
+        createdAt: "2026-04-26 00:00:00",
+        modifiedAt: "2026-04-26 00:00:00",
+        sizeBytes: 0,
+        children: [
+          {
+            id: "folder-1",
+            parentId: "mount-1",
+            name: "docs",
+            kind: "folder",
+            state: "ready",
+            createdAt: "2026-04-26 00:00:00",
+            modifiedAt: "2026-04-26 00:00:00",
+            sizeBytes: 0,
+            children: [],
+          },
+          {
+            id: "note-1",
+            parentId: "mount-1",
+            name: "My Note",
+            kind: "note",
+            state: "ready",
+            createdAt: "2026-04-26 00:00:00",
+            modifiedAt: "2026-04-26 00:00:00",
+            sizeBytes: 0,
+            children: [],
+          },
+          {
+            id: "md-1",
+            parentId: "mount-1",
+            name: "README.md",
+            kind: "file",
+            state: "ready",
+            createdAt: "2026-04-26 00:00:00",
+            modifiedAt: "2026-04-26 00:00:00",
+            sizeBytes: 32,
+            children: [],
+          },
+          {
+            id: "img-1",
+            parentId: "mount-1",
+            name: "logo.png",
+            kind: "file",
+            state: "ready",
+            createdAt: "2026-04-26 00:00:00",
+            modifiedAt: "2026-04-26 00:00:00",
+            sizeBytes: 1024,
+            children: [],
+          },
+          {
+            id: "txt-1",
+            parentId: "mount-1",
+            name: "data.json",
+            kind: "file",
+            state: "ready",
+            createdAt: "2026-04-26 00:00:00",
+            modifiedAt: "2026-04-26 00:00:00",
+            sizeBytes: 8,
+            children: [],
+          },
+          {
+            id: "url-1",
+            parentId: "mount-1",
+            name: "https://example.com",
+            kind: "url",
+            state: "indexed",
+            createdAt: "2026-04-26 00:00:00",
+            modifiedAt: "2026-04-26 00:00:00",
+            sizeBytes: 0,
+            children: [],
+          },
+        ],
+      },
+    ],
+  };
+
+  it("hydrates the snapshot and exposes nodes via inspectorNode on single selection", async () => {
+    const client = makeClient(baseSnapshot);
     const { result } = renderHook(() => useExplorerStore(client));
 
     await act(async () => {
       await result.current.refresh();
-    });
-
-    act(() => {
-      result.current.selectTreeNode("child");
-      result.current.selectArtifact("leaf");
     });
 
     expect(result.current.snapshot.roots).toHaveLength(1);
-    expect(result.current.displayedFolder?.name).toBe("Child");
-    expect(result.current.inspectorNode?.name).toBe("notes.md");
-    expect(result.current.breadcrumbs.map((node) => node.name)).toEqual([
-      "Root",
-      "Child"
-    ]);
+    expect(result.current.expandedIds).toContain("mount-1");
+
+    act(() => {
+      result.current.selectArtifact("note-1");
+    });
+    expect(result.current.selectionCount).toBe(1);
+    expect(result.current.inspectorNode?.name).toBe("My Note");
   });
 
-  it("activates a markdown file as a preview and leaves activeNoteId untouched", async () => {
-    const snapshot = {
-      roots: [
-        {
-          id: "mount",
-          parentId: null,
-          name: "workspace",
-          kind: "mount",
-          state: "ready",
-          createdAt: "2026-04-26 00:00:00",
-          modifiedAt: "2026-04-26 00:00:00",
-          sizeBytes: 0,
-          children: [
-            {
-              id: "md-file",
-              parentId: "mount",
-              name: "README.md",
-              kind: "file",
-              state: "ready",
-              createdAt: "2026-04-26 00:00:00",
-              modifiedAt: "2026-04-26 00:00:00",
-              sizeBytes: 32,
-              children: []
-            },
-            {
-              id: "mdx-file",
-              parentId: "mount",
-              name: "doc.mdx",
-              kind: "file",
-              state: "ready",
-              createdAt: "2026-04-26 00:00:00",
-              modifiedAt: "2026-04-26 00:00:00",
-              sizeBytes: 16,
-              children: []
-            },
-            {
-              id: "txt-file",
-              parentId: "mount",
-              name: "notes.txt",
-              kind: "file",
-              state: "ready",
-              createdAt: "2026-04-26 00:00:00",
-              modifiedAt: "2026-04-26 00:00:00",
-              sizeBytes: 8,
-              children: []
-            }
-          ]
-        }
-      ]
-    };
-    const client = {
-      getExplorerSnapshot: vi.fn().mockResolvedValue(snapshot),
-      createFolder: vi.fn(),
-      createMount: vi.fn(),
-      createNote: vi.fn(),
-      createUrl: vi.fn(),
-      renameNode: vi.fn(),
-      deleteNode: vi.fn(),
-      retryUrl: vi.fn(),
-      getNodeThumbnail: vi.fn(),
-      getNoteContent: vi.fn(),
-      saveNoteContent: vi.fn(),
-      readFileContent: vi.fn(),
-    };
-
+  it("activateArtifact on a folder toggles expansion and does not change active surfaces", async () => {
+    const client = makeClient(baseSnapshot);
     const { result } = renderHook(() => useExplorerStore(client));
     await act(async () => {
       await result.current.refresh();
     });
 
-    // .md activates preview
+    expect(result.current.expandedIds).not.toContain("folder-1");
+
     act(() => {
-      result.current.activateArtifact("md-file");
+      result.current.activateArtifact("folder-1");
     });
-    expect(result.current.activePreviewId).toBe("md-file");
-    expect(result.current.activePreview?.name).toBe("README.md");
+    expect(result.current.expandedIds).toContain("folder-1");
     expect(result.current.activeNoteId).toBeNull();
-
-    // .mdx also activates preview
-    act(() => {
-      result.current.activateArtifact("mdx-file");
-    });
-    expect(result.current.activePreviewId).toBe("mdx-file");
-
-    // .txt does not activate preview
-    act(() => {
-      result.current.setActivePreviewId(null);
-      result.current.activateArtifact("txt-file");
-    });
     expect(result.current.activePreviewId).toBeNull();
+    expect(result.current.activeImagePreviewId).toBeNull();
 
-    // explicit clear works
+    // Toggling the same folder collapses it.
     act(() => {
-      result.current.activateArtifact("md-file");
-      result.current.setActivePreviewId(null);
+      result.current.activateArtifact("folder-1");
     });
+    expect(result.current.expandedIds).not.toContain("folder-1");
+  });
+
+  it("activateArtifact on a note sets activeNoteId", async () => {
+    const client = makeClient(baseSnapshot);
+    const { result } = renderHook(() => useExplorerStore(client));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    act(() => {
+      result.current.activateArtifact("note-1");
+    });
+    expect(result.current.activeNoteId).toBe("note-1");
+    expect(result.current.activeNote?.name).toBe("My Note");
+  });
+
+  it("activateArtifact on a markdown file sets activePreviewId", async () => {
+    const client = makeClient(baseSnapshot);
+    const { result } = renderHook(() => useExplorerStore(client));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    act(() => {
+      result.current.activateArtifact("md-1");
+    });
+    expect(result.current.activePreviewId).toBe("md-1");
+  });
+
+  it("activateArtifact on an image file sets activeImagePreviewId", async () => {
+    const client = makeClient(baseSnapshot);
+    const { result } = renderHook(() => useExplorerStore(client));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    act(() => {
+      result.current.activateArtifact("img-1");
+    });
+    expect(result.current.activeImagePreviewId).toBe("img-1");
+    expect(result.current.activeImagePreview?.name).toBe("logo.png");
+  });
+
+  it("activateArtifact on an unsupported file kind does not set any surface", async () => {
+    const client = makeClient(baseSnapshot);
+    const { result } = renderHook(() => useExplorerStore(client));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    act(() => {
+      result.current.activateArtifact("txt-1");
+    });
+    expect(result.current.activeNoteId).toBeNull();
     expect(result.current.activePreviewId).toBeNull();
-    expect(result.current.activePreview).toBeNull();
+    expect(result.current.activeImagePreviewId).toBeNull();
+  });
 
-    // idempotent re-activation
-    act(() => {
-      result.current.activateArtifact("md-file");
-      result.current.activateArtifact("md-file");
+  it("activateArtifact on a URL does not set any surface (layout opens browser)", async () => {
+    const client = makeClient(baseSnapshot);
+    const { result } = renderHook(() => useExplorerStore(client));
+    await act(async () => {
+      await result.current.refresh();
     });
-    expect(result.current.activePreviewId).toBe("md-file");
+
+    act(() => {
+      result.current.activateArtifact("url-1");
+    });
+    expect(result.current.activeNoteId).toBeNull();
+    expect(result.current.activePreviewId).toBeNull();
+    expect(result.current.activeImagePreviewId).toBeNull();
+  });
+
+  it("replaceSelection sets the entire selection in one dispatch", async () => {
+    const client = makeClient(baseSnapshot);
+    const { result } = renderHook(() => useExplorerStore(client));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    act(() => {
+      result.current.replaceSelection(["note-1", "md-1", "img-1"]);
+    });
+    expect(result.current.selectedArtifactIds).toEqual(["note-1", "md-1", "img-1"]);
+    expect(result.current.selectionCount).toBe(3);
+
+    // Replacing with empty clears
+    act(() => {
+      result.current.replaceSelection([]);
+    });
+    expect(result.current.selectionCount).toBe(0);
+  });
+
+  it("selectArtifact additive=true toggles individual ids without affecting others", async () => {
+    const client = makeClient(baseSnapshot);
+    const { result } = renderHook(() => useExplorerStore(client));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    act(() => {
+      result.current.selectArtifact("note-1");
+      result.current.selectArtifact("md-1", true);
+    });
+    expect(result.current.selectedArtifactIds).toEqual(["note-1", "md-1"]);
+
+    act(() => {
+      result.current.selectArtifact("note-1", true);
+    });
+    expect(result.current.selectedArtifactIds).toEqual(["md-1"]);
+  });
+
+  it("applySnapshot drops selection ids whose nodes were removed", async () => {
+    const client = makeClient(baseSnapshot);
+    const { result } = renderHook(() => useExplorerStore(client));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    act(() => {
+      result.current.replaceSelection(["note-1", "md-1"]);
+    });
+    expect(result.current.selectionCount).toBe(2);
+
+    // Re-apply a snapshot where md-1 has been removed
+    const trimmed = {
+      roots: [
+        {
+          ...baseSnapshot.roots[0],
+          children: baseSnapshot.roots[0].children.filter(
+            (child: { id: string }) => child.id !== "md-1"
+          ),
+        },
+      ],
+    };
+    act(() => {
+      result.current.applySnapshot(trimmed);
+    });
+    expect(result.current.selectedArtifactIds).toEqual(["note-1"]);
+  });
+
+  it("toggleNode flips expansion state", async () => {
+    const client = makeClient(baseSnapshot);
+    const { result } = renderHook(() => useExplorerStore(client));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.expandedIds).toContain("mount-1");
+    act(() => {
+      result.current.toggleNode("mount-1");
+    });
+    expect(result.current.expandedIds).not.toContain("mount-1");
+    act(() => {
+      result.current.toggleNode("mount-1");
+    });
+    expect(result.current.expandedIds).toContain("mount-1");
   });
 });
