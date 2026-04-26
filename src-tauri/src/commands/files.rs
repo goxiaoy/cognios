@@ -16,7 +16,6 @@ pub fn read_file_content(
     state: State<'_, AppState>,
     input: ReadFileContentInput,
 ) -> Result<String, String> {
-    let conn =
-        open_database(&state.db_path).map_err(|error: rusqlite::Error| error.to_string())?;
+    let conn = open_database(&state.db_path).map_err(|_| "file unavailable".to_string())?;
     read_file_content_record(&conn, &input.node_id)
 }

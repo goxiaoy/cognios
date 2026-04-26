@@ -153,6 +153,7 @@ fn returns_file_unavailable_when_underlying_file_is_missing() {
     assert_eq!(error, "file unavailable");
 }
 
+#[cfg(unix)]
 #[test]
 fn rejects_symlink_target_that_escapes_mount_root() {
     use std::os::unix::fs::symlink;

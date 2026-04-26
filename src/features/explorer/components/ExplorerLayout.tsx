@@ -137,6 +137,7 @@ export function ExplorerLayout({
   async function handleDeleteById(nodeId: string, cascade: boolean) {
     if (store.activeNoteId === nodeId) {
       store.setActiveNoteId(null);
+      setNoteFlushError(null);
     }
     if (store.activePreviewId === nodeId) {
       store.setActivePreviewId(null);
@@ -149,13 +150,14 @@ export function ExplorerLayout({
 
   // Wrapper that flushes any open note before delegating to the store's
   // activation. Required because store.activateArtifact has no ref to call
-  // flush() — flush has to live at the layout level.
+  // flush() — flush has to live at the layout level. Also resets any stale
+  // noteFlushError so a previously failed flush doesn't bleed into the next session.
   async function handleActivate(nodeId: string) {
+    setNoteFlushError(null);
     if (store.activeNoteId && noteEditorRef.current) {
       try {
         await noteEditorRef.current.flush();
         store.setActiveNoteId(null);
-        setNoteFlushError(null);
       } catch (cause) {
         setNoteFlushError(
           cause instanceof Error ? cause.message : "Failed to save note"
