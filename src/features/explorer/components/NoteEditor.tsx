@@ -5,10 +5,9 @@ import {
   useRef,
   useState,
 } from "react";
-import ReactCodeMirror from "@uiw/react-codemirror";
-import { markdown } from "@codemirror/lang-markdown";
 import { ArrowLeft } from "lucide-react";
 import type { ExplorerClient } from "../types/explorer";
+import { MarkdownView } from "./MarkdownView";
 
 export interface NoteEditorHandle {
   flush(): Promise<void>;
@@ -129,13 +128,11 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
           <p className="note-editor-storage-hint">Stored locally on your device</p>
 
           {!isLoadingBody ? (
-            <ReactCodeMirror
-              basicSetup={{ lineNumbers: false, foldGutter: false }}
+            <MarkdownView
               className="note-editor-codemirror"
-              extensions={[markdown()]}
-              height="100%"
               onChange={handleBodyChange}
               placeholder="Start writing…"
+              readOnly={false}
               value={body}
             />
           ) : null}
