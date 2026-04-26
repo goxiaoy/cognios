@@ -94,6 +94,10 @@ export function isImageNode(node: ExplorerNode) {
   return node.kind === "file" && IMAGE_EXTENSIONS.has(extensionOf(node.name));
 }
 
+export function isMarkdownFile(node: ExplorerNode) {
+  return node.kind === "file" && MARKDOWN_EXTENSIONS.has(extensionOf(node.name));
+}
+
 export function nodeIconComponent(node: ExplorerNode): React.ComponentType<{ size?: number; className?: string; "aria-hidden"?: boolean }> {
   switch (node.kind) {
     case "folder":    return Folder;

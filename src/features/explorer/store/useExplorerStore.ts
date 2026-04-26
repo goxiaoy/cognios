@@ -6,6 +6,7 @@ import type {
   ExplorerSnapshot,
   ExplorerViewMode
 } from "../types/explorer";
+import { isMarkdownFile } from "../utils/presentation";
 
 const EMPTY_SNAPSHOT: ExplorerSnapshot = { roots: [] };
 
@@ -23,9 +24,11 @@ export function useExplorerStore(client: ExplorerClient) {
   >(null);
   const [pendingInlineRenameId, setPendingInlineRenameId] = useState<string | null>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  const [activePreviewId, setActivePreviewId] = useState<string | null>(null);
 
   const nodeIndex = useMemo(() => indexNodes(snapshot.roots), [snapshot]);
   const activeNote = activeNoteId ? (nodeIndex.get(activeNoteId) ?? null) : null;
+  const activePreview = activePreviewId ? (nodeIndex.get(activePreviewId) ?? null) : null;
   const displayedFolder = displayedFolderId
     ? asDisplayFolder(nodeIndex.get(displayedFolderId) ?? null)
     : null;
@@ -157,6 +160,10 @@ export function useExplorerStore(client: ExplorerClient) {
       }
       if (node.kind === "note") {
         setActiveNoteId(node.id);
+        return;
+      }
+      if (node.kind === "file" && isMarkdownFile(node)) {
+        setActivePreviewId(node.id);
       }
     },
     [nodeIndex, selectDisplayedFolder]
@@ -220,6 +227,9 @@ export function useExplorerStore(client: ExplorerClient) {
     activeNoteId,
     setActiveNoteId,
     activeNote,
+    activePreviewId,
+    setActivePreviewId,
+    activePreview,
   };
 }
 
