@@ -35,6 +35,7 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
     pendingInlineRenameId: null,
     onDelete: vi.fn(),
     onInlineRename: vi.fn(),
+    onOpenUrl: vi.fn(),
     onRevealInFileManager: vi.fn(),
     onRetry: vi.fn(),
     onSelect: vi.fn(),

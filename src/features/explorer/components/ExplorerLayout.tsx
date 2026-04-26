@@ -217,7 +217,13 @@ export function ExplorerLayout({
       }
     }
 
-    // Look up the activated node to handle URL-open externally.
+    // URL nodes don't auto-open on click — they're opened via the right-click
+    // "Open link" context menu item (handleOpenUrl). All other kinds delegate
+    // to the store for surface activation.
+    store.activateArtifact(nodeId);
+  }
+
+  async function handleOpenUrl(nodeId: string) {
     const indexed = (function findInTree(roots: ExplorerNode[]): ExplorerNode | null {
       for (const root of roots) {
         if (root.id === nodeId) return root;
@@ -226,21 +232,14 @@ export function ExplorerLayout({
       }
       return null;
     })(store.snapshot.roots);
-
-    if (indexed?.kind === "url") {
-      // Open the URL in the system default browser. Treat failures as
-      // selection-only fallback.
-      try {
-        await openExternal(indexed.name);
-      } catch (cause) {
-        void logError(
-          `[ExplorerLayout] failed to open URL: ${cause instanceof Error ? cause.message : String(cause)}`
-        );
-      }
-      return;
+    if (indexed?.kind !== "url") return;
+    try {
+      await openExternal(indexed.name);
+    } catch (cause) {
+      void logError(
+        `[ExplorerLayout] failed to open URL: ${cause instanceof Error ? cause.message : String(cause)}`
+      );
     }
-
-    store.activateArtifact(nodeId);
   }
 
   function handleCreateSelect(action: CreateAction) {
@@ -461,6 +460,9 @@ export function ExplorerLayout({
             nodes={store.snapshot.roots}
             onDelete={handleDeleteById}
             onInlineRename={handleInlineRename}
+            onOpenUrl={(nodeId) => {
+              void handleOpenUrl(nodeId);
+            }}
             onRevealInFileManager={(nodeId) => {
               void handleRevealInFileManager(nodeId);
             }}

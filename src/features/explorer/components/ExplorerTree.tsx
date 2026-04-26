@@ -7,6 +7,7 @@ interface ExplorerTreeProps {
   nodes: ExplorerNode[];
   pendingInlineRenameId: string | null;
   onDelete(nodeId: string, cascade: boolean): void;
+  onOpenUrl(nodeId: string): void;
   onRevealInFileManager(nodeId: string): void;
   onRetry(nodeId: string): void;
   onSelect(nodeId: string, modifiers: SelectModifiers): void;
@@ -22,6 +23,7 @@ export function ExplorerTree({
   nodes,
   pendingInlineRenameId,
   onDelete,
+  onOpenUrl,
   onRevealInFileManager,
   onRetry,
   onSelect,
@@ -46,6 +48,7 @@ export function ExplorerTree({
             node={node}
             pendingInlineRenameId={pendingInlineRenameId}
             onDelete={onDelete}
+            onOpenUrl={onOpenUrl}
             onRevealInFileManager={onRevealInFileManager}
             onRetry={onRetry}
             onSelect={onSelect}
@@ -66,6 +69,7 @@ function TreeBranch({
   node,
   pendingInlineRenameId,
   onDelete,
+  onOpenUrl,
   onRevealInFileManager,
   onRetry,
   onSelect,
@@ -80,6 +84,7 @@ function TreeBranch({
   node: ExplorerNode;
   pendingInlineRenameId: string | null;
   onDelete(nodeId: string, cascade: boolean): void;
+  onOpenUrl(nodeId: string): void;
   onRevealInFileManager(nodeId: string): void;
   onRetry(nodeId: string): void;
   onSelect(nodeId: string, modifiers: SelectModifiers): void;
@@ -101,6 +106,7 @@ function TreeBranch({
         isSelected={selectedSet.has(node.id)}
         node={node}
         onDelete={onDelete}
+        onOpenUrl={onOpenUrl}
         onRevealInFileManager={onRevealInFileManager}
         onInlineRename={onInlineRename}
         onRetry={onRetry}
@@ -120,6 +126,7 @@ function TreeBranch({
               node={child}
               pendingInlineRenameId={pendingInlineRenameId}
               onDelete={onDelete}
+              onOpenUrl={onOpenUrl}
               onRevealInFileManager={onRevealInFileManager}
               onRetry={onRetry}
               onSelect={onSelect}

@@ -252,7 +252,7 @@ describe("App", () => {
     expect(await screen.findByText("Read-only preview")).toBeInTheDocument();
   });
 
-  it("opens the system browser when a URL row is clicked", async () => {
+  it("does not open the browser on a URL row click — open is via the right-click 'Open link' menu", async () => {
     getExplorerSnapshot.mockResolvedValue({
       roots: [
         {
@@ -271,14 +271,20 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByText("https://example.com");
+    const urlText = await screen.findByText("https://example.com");
     clickTreeRow("https://example.com");
+
+    // Single-click selects but does NOT open the browser
+    expect(openExternal).not.toHaveBeenCalled();
+    expect(screen.getByText(/select an item to preview/i)).toBeInTheDocument();
+
+    // Right-click → "Open link" opens the browser
+    fireEvent.contextMenu(urlText);
+    fireEvent.click(screen.getByRole("button", { name: /^open link$/i }));
 
     await waitFor(() => {
       expect(openExternal).toHaveBeenCalledWith("https://example.com");
     });
-    // Center stays on welcome (no surface for URL kind)
-    expect(screen.getByText(/select an item to preview/i)).toBeInTheDocument();
   });
 
   it("shows 'cannot preview' placeholder for unsupported file kinds", async () => {

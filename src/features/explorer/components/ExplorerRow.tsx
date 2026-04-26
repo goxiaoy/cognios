@@ -33,6 +33,7 @@ export function ExplorerRow({
   isSelected,
   isInlineRenaming = false,
   onDelete,
+  onOpenUrl,
   onRevealInFileManager,
   onRetry,
   onSelect,
@@ -47,6 +48,7 @@ export function ExplorerRow({
   isSelected: boolean;
   isInlineRenaming?: boolean;
   onDelete(nodeId: string, cascade: boolean): void;
+  onOpenUrl(nodeId: string): void;
   onRevealInFileManager(nodeId: string): void;
   onRetry(nodeId: string): void;
   onSelect(nodeId: string, modifiers: SelectModifiers): void;
@@ -174,6 +176,15 @@ export function ExplorerRow({
           style={{ top: menuPos.y, left: menuPos.x }}
           onMouseDown={(e) => e.stopPropagation()}
         >
+          {node.kind === "url" ? (
+            <button
+              className="tree-context-item"
+              onClick={() => { onOpenUrl(node.id); setMenuPos(null); }}
+              type="button"
+            >
+              Open link
+            </button>
+          ) : null}
           {canRevealInFileManager ? (
             <button
               className="tree-context-item"
