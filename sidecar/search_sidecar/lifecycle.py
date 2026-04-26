@@ -29,12 +29,16 @@ import uvicorn
 
 from .app import build_app
 from .auth import generate_token
+from .index import IndexingRunner, StubEmbedder
+from .index.dispatch import Dispatcher
+from .index.queue import open_queue
 from .models import DEFAULTS, ModelManager
 from .runtime_file import (
     acquire_lock,
     remove_runtime_file,
     write_runtime_file,
 )
+from .storage import open_store
 
 LOG = logging.getLogger("search_sidecar.lifecycle")
 
@@ -68,7 +72,19 @@ def serve(storage_dir: Path) -> int:
 
     token = generate_token()
     model_manager = ModelManager(storage_dir=storage_dir, manifest=DEFAULTS)
-    app = build_app(token=token, model_manager=model_manager)
+    lancedb_store = open_store(search_dir / "index.lance")
+    indexing_queue = open_queue(search_dir / "queue.db")
+    embedder = StubEmbedder()
+    dispatcher = Dispatcher(store=lancedb_store, embedder=embedder)
+    indexing_runner = IndexingRunner(queue=indexing_queue, dispatcher=dispatcher)
+    indexing_runner.start()
+
+    app = build_app(
+        token=token,
+        model_manager=model_manager,
+        indexing_queue=indexing_queue,
+        lancedb_store=lancedb_store,
+    )
     config = uvicorn.Config(
         app,
         host="127.0.0.1",
@@ -127,6 +143,8 @@ def serve(storage_dir: Path) -> int:
     try:
         server_thread.join()
     finally:
+        indexing_runner.stop()
+        indexing_queue.close()
         remove_runtime_file(runtime_path)
         lock_handle.close()
 

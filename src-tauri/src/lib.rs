@@ -40,7 +40,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_log::Builder::default()
-                .level(log::LevelFilter::Debug)
+                .level(log::LevelFilter::Info)
+                .level_for("cognios_lib", log::LevelFilter::Debug)
                 .build(),
         )
         .setup(|app| {
