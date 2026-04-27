@@ -2,6 +2,7 @@ pub mod files;
 pub mod mounts;
 pub mod nodes;
 pub mod notes;
+pub mod search;
 pub mod thumbnails;
 pub mod urls;
 

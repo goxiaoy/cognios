@@ -1,0 +1,370 @@
+//! HTTP client for the Python search sidecar.
+//!
+//! Reads `(port, token)` from the supervisor's `Running` state and
+//! issues bearer-authenticated requests to the sidecar's loopback
+//! port. Network-level failures and pre-`Running` supervisor states
+//! are surfaced as typed [`SidecarEnvelope`] variants rather than as
+//! `Err(String)` so the UI can distinguish "still warming up" from
+//! "search is broken" without parsing error message text.
+//!
+//! Phase 2 / Unit 7 part 1 wraps:
+//!
+//! - `POST /search`
+//! - `GET  /index/status`
+//! - `GET  /index/status/{node_id}`
+//! - `GET  /models/status`
+//! - `POST /models/accept-license/{role}`
+//!
+//! `POST /events/node` (mutation forwarding) and `POST /models/download`
+//! (SSE) are deferred — the former needs a synchronous DB query to
+//! materialise the absolute_content_path, the latter needs a Tauri-event
+//! bridge for streaming progress.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use super::supervisor::{SearchSidecarSupervisor, SupervisorState};
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// All Tauri-facing sidecar commands return one of these envelopes.
+///
+/// `state` is the discriminator the UI consumer reads first:
+/// - `"ready"` — `data` is populated; the call succeeded
+/// - `"initialising"` — sidecar exists but isn't yet `Running`. Caller
+///   should poll again shortly.
+/// - `"unavailable"` — sidecar process is missing or has failed in a
+///   way that needs intervention. `error` carries a short reason.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarEnvelope<T> {
+    pub state: SidecarEnvelopeState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<T>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SidecarEnvelopeState {
+    Ready,
+    Initialising,
+    Unavailable,
+}
+
+impl<T> SidecarEnvelope<T> {
+    pub fn ready(data: T) -> Self {
+        Self {
+            state: SidecarEnvelopeState::Ready,
+            data: Some(data),
+            error: None,
+        }
+    }
+
+    pub fn initialising() -> Self {
+        Self {
+            state: SidecarEnvelopeState::Initialising,
+            data: None,
+            error: None,
+        }
+    }
+
+    pub fn unavailable(reason: impl Into<String>) -> Self {
+        Self {
+            state: SidecarEnvelopeState::Unavailable,
+            data: None,
+            error: Some(reason.into()),
+        }
+    }
+}
+
+// ----- DTOs (mirror the sidecar's JSON shapes) ----------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchInput {
+    pub query: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResultDto {
+    pub node_id: String,
+    pub kind: String,
+    pub name: String,
+    pub score: f64,
+    pub snippet: String,
+    pub matched_in: String,
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResponseDto {
+    pub results: Vec<SearchResultDto>,
+    pub degraded: bool,
+    #[serde(default)]
+    pub partial: Option<Value>,
+    #[serde(default)]
+    pub state: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexStatusDto {
+    pub queue_depth: u64,
+    pub in_flight: Vec<String>,
+    pub indexed_chunks: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeIndexStatusDto {
+    pub node_id: String,
+    pub state: String,
+    #[serde(default)]
+    pub indexed_at: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub attempts: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelsStatusDto {
+    pub roles: HashMap<String, ModelRoleStatusDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelRoleStatusDto {
+    pub role: String,
+    pub state: String,
+    #[serde(default)]
+    pub commit: Option<String>,
+    pub license_accepted: bool,
+    pub requires_acceptance: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LicenseAcceptResponseDto {
+    pub accepted: bool,
+    pub role: String,
+}
+
+// ----- client ------------------------------------------------------------
+
+/// Async HTTP wrapper. One instance is shared across all Tauri commands
+/// and lives on `AppState`. The supervisor reference lets every call
+/// re-read `(port, token)` from the latest `Running` state — important
+/// because a supervisor restart rotates both.
+#[derive(Clone)]
+pub struct SearchSidecarClient {
+    supervisor: Arc<SearchSidecarSupervisor>,
+    http: Client,
+}
+
+impl SearchSidecarClient {
+    pub fn new(supervisor: Arc<SearchSidecarSupervisor>) -> Self {
+        let http = Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .unwrap_or_else(|_| Client::new());
+        Self { supervisor, http }
+    }
+
+    #[cfg(test)]
+    pub fn with_http_client(
+        supervisor: Arc<SearchSidecarSupervisor>,
+        http: Client,
+    ) -> Self {
+        Self { supervisor, http }
+    }
+
+    fn rendezvous(&self) -> Result<(String, String), SidecarEnvelopeState> {
+        match self.supervisor.state() {
+            SupervisorState::Running { runtime } => {
+                let url = format!("http://127.0.0.1:{}", runtime.port);
+                Ok((url, runtime.token))
+            }
+            SupervisorState::NotStarted | SupervisorState::Spawning => {
+                Err(SidecarEnvelopeState::Initialising)
+            }
+            SupervisorState::Failed { .. } | SupervisorState::Stopped => {
+                Err(SidecarEnvelopeState::Unavailable)
+            }
+        }
+    }
+
+    async fn get_envelope<T: for<'de> Deserialize<'de>>(
+        &self,
+        path: &str,
+    ) -> SidecarEnvelope<T> {
+        let (base, token) = match self.rendezvous() {
+            Ok(v) => v,
+            Err(SidecarEnvelopeState::Initialising) => return SidecarEnvelope::initialising(),
+            Err(_) => {
+                let reason = self.supervisor_failure_reason();
+                return SidecarEnvelope::unavailable(reason);
+            }
+        };
+        let url = format!("{base}{path}");
+        match self.http.get(&url).bearer_auth(&token).send().await {
+            Ok(resp) => parse_response(resp).await,
+            Err(err) => SidecarEnvelope::unavailable(format!("network: {err}")),
+        }
+    }
+
+    async fn post_envelope<B, T>(&self, path: &str, body: &B) -> SidecarEnvelope<T>
+    where
+        B: Serialize + ?Sized,
+        T: for<'de> Deserialize<'de>,
+    {
+        let (base, token) = match self.rendezvous() {
+            Ok(v) => v,
+            Err(SidecarEnvelopeState::Initialising) => return SidecarEnvelope::initialising(),
+            Err(_) => {
+                let reason = self.supervisor_failure_reason();
+                return SidecarEnvelope::unavailable(reason);
+            }
+        };
+        let url = format!("{base}{path}");
+        match self
+            .http
+            .post(&url)
+            .bearer_auth(&token)
+            .json(body)
+            .send()
+            .await
+        {
+            Ok(resp) => parse_response(resp).await,
+            Err(err) => SidecarEnvelope::unavailable(format!("network: {err}")),
+        }
+    }
+
+    fn supervisor_failure_reason(&self) -> String {
+        match self.supervisor.state() {
+            SupervisorState::Failed { reason, .. } => reason,
+            SupervisorState::Stopped => "sidecar stopped".to_string(),
+            other => format!("sidecar in unexpected state: {other:?}"),
+        }
+    }
+
+    // ----- public API ---------------------------------------------------
+
+    pub async fn search(&self, body: &SearchInput) -> SidecarEnvelope<SearchResponseDto> {
+        self.post_envelope("/search", body).await
+    }
+
+    pub async fn index_status(&self) -> SidecarEnvelope<IndexStatusDto> {
+        self.get_envelope("/index/status").await
+    }
+
+    pub async fn node_index_status(
+        &self,
+        node_id: &str,
+    ) -> SidecarEnvelope<NodeIndexStatusDto> {
+        let path = format!("/index/status/{}", urlencoded(node_id));
+        self.get_envelope(&path).await
+    }
+
+    pub async fn models_status(&self) -> SidecarEnvelope<ModelsStatusDto> {
+        self.get_envelope("/models/status").await
+    }
+
+    pub async fn accept_model_license(
+        &self,
+        role: &str,
+    ) -> SidecarEnvelope<LicenseAcceptResponseDto> {
+        let path = format!("/models/accept-license/{}", urlencoded(role));
+        // The endpoint takes no body; an empty JSON object satisfies
+        // the route's body-required contract.
+        self.post_envelope(&path, &serde_json::json!({})).await
+    }
+}
+
+async fn parse_response<T: for<'de> Deserialize<'de>>(
+    resp: reqwest::Response,
+) -> SidecarEnvelope<T> {
+    let status = resp.status();
+    if status.is_success() {
+        match resp.json::<T>().await {
+            Ok(data) => SidecarEnvelope::ready(data),
+            Err(err) => SidecarEnvelope::unavailable(format!("decode: {err}")),
+        }
+    } else if status.as_u16() == 503 {
+        SidecarEnvelope::initialising()
+    } else if status.as_u16() == 401 {
+        SidecarEnvelope::unavailable("authentication failed (token rotated?)")
+    } else {
+        let body = resp.text().await.unwrap_or_default();
+        let trimmed = body.chars().take(200).collect::<String>();
+        SidecarEnvelope::unavailable(format!("HTTP {status}: {trimmed}"))
+    }
+}
+
+/// Tiny URL encoder for the path-segment positions we use (UUIDs and
+/// short role names). We don't need the full RFC 3986 surface — just
+/// escape the characters the sidecar's path validators would reject.
+fn urlencoded(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => out.push_str(&format!("%{:02X}", byte)),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn envelope_serialises_ready_state() {
+        let env: SidecarEnvelope<u32> = SidecarEnvelope::ready(42);
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["state"], "ready");
+        assert_eq!(json["data"], 42);
+        assert!(json.get("error").is_none());
+    }
+
+    #[test]
+    fn envelope_serialises_initialising() {
+        let env: SidecarEnvelope<u32> = SidecarEnvelope::initialising();
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["state"], "initialising");
+        assert!(json.get("data").is_none());
+    }
+
+    #[test]
+    fn envelope_serialises_unavailable_with_reason() {
+        let env: SidecarEnvelope<u32> = SidecarEnvelope::unavailable("network");
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["state"], "unavailable");
+        assert_eq!(json["error"], "network");
+    }
+
+    #[test]
+    fn url_encoder_escapes_dangerous_characters() {
+        assert_eq!(urlencoded("abc-123"), "abc-123");
+        assert_eq!(urlencoded("a/b"), "a%2Fb");
+        assert_eq!(urlencoded("a b"), "a%20b");
+    }
+}

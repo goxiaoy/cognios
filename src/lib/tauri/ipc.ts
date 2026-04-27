@@ -1,5 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  IndexStatus,
+  LicenseAcceptResponse,
+  ModelsStatus,
+  NodeIndexStatus,
+  SearchQueryInput,
+  SearchResponse,
+  SidecarEnvelope,
+} from "../contracts/search";
+import type {
   CreateFolderInput,
   DuplicateMountError,
   CreateMountInput,
@@ -88,6 +97,38 @@ export async function readFileContent(nodeId: string): Promise<string> {
 
 export async function showNodeInFileManager(nodeId: string): Promise<void> {
   return invoke<void>("show_node_in_file_manager", { input: { nodeId } });
+}
+
+// ---- search-sidecar bridge ------------------------------------------------
+
+export async function searchQuery(
+  input: SearchQueryInput
+): Promise<SidecarEnvelope<SearchResponse>> {
+  return invoke<SidecarEnvelope<SearchResponse>>("search_query", { input });
+}
+
+export async function getIndexingStatus(): Promise<SidecarEnvelope<IndexStatus>> {
+  return invoke<SidecarEnvelope<IndexStatus>>("get_indexing_status");
+}
+
+export async function getNodeIndexingStatus(
+  nodeId: string
+): Promise<SidecarEnvelope<NodeIndexStatus>> {
+  return invoke<SidecarEnvelope<NodeIndexStatus>>("get_node_indexing_status", {
+    input: { nodeId },
+  });
+}
+
+export async function getModelsStatus(): Promise<SidecarEnvelope<ModelsStatus>> {
+  return invoke<SidecarEnvelope<ModelsStatus>>("get_models_status");
+}
+
+export async function acceptModelLicense(
+  role: string
+): Promise<SidecarEnvelope<LicenseAcceptResponse>> {
+  return invoke<SidecarEnvelope<LicenseAcceptResponse>>("accept_model_license", {
+    input: { role },
+  });
 }
 
 function isDuplicateMountError(error: unknown): error is DuplicateMountError {

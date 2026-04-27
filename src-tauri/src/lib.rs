@@ -12,7 +12,7 @@ use tauri::{Emitter, Manager};
 use crate::infrastructure::db::connection::Database;
 use crate::services::mounts::reconcile::reconcile_all_mounts;
 use crate::services::mounts::watcher::{MountWatcherRegistry, VfsChangeEvent};
-use crate::services::search::SearchSidecarSupervisor;
+use crate::services::search::{SearchSidecarClient, SearchSidecarSupervisor};
 use crate::services::url_indexing::cache::ensure_cache_dir;
 use crate::services::url_indexing::queue::UrlJobRunner;
 
@@ -27,6 +27,7 @@ pub struct AppState {
     pub url_jobs: Arc<UrlJobRunner>,
     pub emitter: VfsEventEmitter,
     pub search_sidecar: Arc<SearchSidecarSupervisor>,
+    pub search_client: Arc<SearchSidecarClient>,
 }
 
 fn storage_dir_from_home(home_dir: PathBuf) -> PathBuf {
@@ -115,6 +116,7 @@ pub fn run() {
                 app_data_dir.clone(),
             ));
             search_sidecar.start(app.handle());
+            let search_client = Arc::new(SearchSidecarClient::new(Arc::clone(&search_sidecar)));
 
             app.manage(AppState {
                 db,
@@ -123,6 +125,7 @@ pub fn run() {
                 url_jobs,
                 emitter,
                 search_sidecar,
+                search_client,
             });
 
             Ok(())
@@ -141,7 +144,12 @@ pub fn run() {
             commands::files::show_node_in_file_manager,
             commands::thumbnails::get_node_thumbnail,
             commands::urls::create_url,
-            commands::urls::retry_url
+            commands::urls::retry_url,
+            commands::search::search_query,
+            commands::search::get_indexing_status,
+            commands::search::get_node_indexing_status,
+            commands::search::get_models_status,
+            commands::search::accept_model_license
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri application");
