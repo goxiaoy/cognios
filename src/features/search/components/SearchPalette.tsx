@@ -29,10 +29,19 @@ export function SearchPalette({
   client,
   onClose,
   onActivate,
+  onShowAll,
 }: {
   client: SearchClient;
   onClose(): void;
   onActivate(): void;
+  /**
+   * Invoked when the user follows the "More results" affordance.
+   * Carries the in-flight palette query forward so the dedicated
+   * search view can seed its input field. Optional — when omitted,
+   * the affordance still renders but does nothing on click (used by
+   * tests that don't exercise navigation).
+   */
+  onShowAll?(query: string): void;
 }) {
   const store = useExplorerStoreContext();
   const recentNodes = useRecentNodes();
@@ -177,6 +186,9 @@ export function SearchPalette({
           recentNodes={recentNodes}
           results={state.results}
           hasMore={state.hasMore}
+          onShowAll={
+            onShowAll ? () => onShowAll(state.query) : undefined
+          }
         />
 
         <span className="visually-hidden" aria-live="polite">
@@ -200,6 +212,7 @@ function PaletteBody({
   recentNodes,
   results,
   hasMore,
+  onShowAll,
 }: {
   state: "idle" | "loading" | "ready" | "initialising" | "unavailable";
   error: string | null;
@@ -209,6 +222,7 @@ function PaletteBody({
   recentNodes: ReturnType<typeof useRecentNodes>;
   results: SearchResult[];
   hasMore: boolean;
+  onShowAll?: () => void;
 }) {
   if (state === "idle") {
     if (recentNodes.length === 0) {
@@ -301,9 +315,19 @@ function PaletteBody({
         ))}
       </ul>
       {hasMore ? (
-        <div className="search-palette-more muted-copy">
-          More results in dedicated view (⇧⌘F).
-        </div>
+        onShowAll ? (
+          <button
+            type="button"
+            className="search-palette-more search-palette-more-button"
+            onClick={onShowAll}
+          >
+            More results in dedicated view (⇧⌘F)
+          </button>
+        ) : (
+          <div className="search-palette-more muted-copy">
+            More results in dedicated view (⇧⌘F).
+          </div>
+        )
       ) : null}
     </>
   );

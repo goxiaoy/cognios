@@ -107,3 +107,37 @@ def test_post_search_respects_limit(client: TestClient):
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["results"]) <= 1
+
+
+def test_post_search_envelope_includes_next_cursor_field(client: TestClient):
+    """Even when no further pages exist, the response must always
+    include ``next_cursor`` (Rust deserialises with snake-case)."""
+    resp = client.post("/search", json={"query": "PKCE"}, headers=_auth())
+    body = resp.json()
+    assert "next_cursor" in body
+    # Single-result fixture → no pagination → null cursor.
+    assert body["next_cursor"] is None
+
+
+def test_post_search_accepts_sort_modified(client: TestClient):
+    resp = client.post(
+        "/search",
+        json={"query": "OAuth", "sort": "modified"},
+        headers=_auth(),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "ready"
+    # All result rows carry a modified_at timestamp now.
+    for r in body["results"]:
+        assert r.get("modified_at"), f"missing modified_at on {r}"
+
+
+def test_post_search_unknown_sort_falls_back_to_relevance(client: TestClient):
+    resp = client.post(
+        "/search",
+        json={"query": "OAuth", "sort": "by-mood"},
+        headers=_auth(),
+    )
+    # Unknown sort coerces to relevance rather than 422.
+    assert resp.status_code == 200

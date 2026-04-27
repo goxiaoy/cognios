@@ -22,6 +22,13 @@ export function useExplorerStore(client: ExplorerClient) {
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [activePreviewId, setActivePreviewId] = useState<string | null>(null);
   const [activeImagePreviewId, setActiveImagePreviewId] = useState<string | null>(null);
+  // Dedicated search view (Cmd+Shift+F). Holds the seed query the
+  // palette carried in via "More results", or "" when opened directly
+  // by the shortcut. ``null`` means the view is closed and the center
+  // pane shows file/note/image surfaces as usual.
+  const [activeSearchView, setActiveSearchViewState] = useState<
+    { initialQuery: string } | null
+  >(null);
 
   const nodeIndex = useMemo(() => indexNodes(snapshot.roots), [snapshot]);
   const activeNote = activeNoteId ? (nodeIndex.get(activeNoteId) ?? null) : null;
@@ -102,6 +109,14 @@ export function useExplorerStore(client: ExplorerClient) {
       const node = nodeIndex.get(nodeId) ?? null;
       if (!node) return;
 
+      // Activating any artifact takes the user back to the file
+      // detail surface; close the dedicated search view if it was
+      // open. Matches VS Code: opening a file from the tree leaves
+      // search visible in the sidebar but returns the editor to
+      // file content. Our center pane is single-purpose so closing
+      // is the only option.
+      setActiveSearchViewState(null);
+
       if (isDisplayFolder(node)) {
         // Container: toggle expansion. Selection update is the layout's
         // responsibility (handles modifiers); the store does not touch
@@ -132,6 +147,14 @@ export function useExplorerStore(client: ExplorerClient) {
     },
     [nodeIndex, toggleNode]
   );
+
+  const openSearchView = useCallback((initialQuery: string = "") => {
+    setActiveSearchViewState({ initialQuery });
+  }, []);
+
+  const closeSearchView = useCallback(() => {
+    setActiveSearchViewState(null);
+  }, []);
 
   const runAction = useCallback(
     async <T,>(
@@ -183,6 +206,9 @@ export function useExplorerStore(client: ExplorerClient) {
     activeImagePreviewId,
     setActiveImagePreviewId,
     activeImagePreview,
+    activeSearchView,
+    openSearchView,
+    closeSearchView,
   };
 }
 

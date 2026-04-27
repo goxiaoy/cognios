@@ -17,9 +17,13 @@ export interface SidecarEnvelope<T> {
   error?: string;
 }
 
+export type SearchSort = "relevance" | "modified";
+
 export interface SearchQueryInput {
   query: string;
   limit?: number;
+  sort?: SearchSort;
+  cursor?: string;
 }
 
 export interface SearchResult {
@@ -30,6 +34,7 @@ export interface SearchResult {
   snippet: string;
   matchedIn: "name" | "content" | "both";
   path?: string | null;
+  modifiedAt?: string | null;
 }
 
 export interface SearchResponse {
@@ -37,6 +42,7 @@ export interface SearchResponse {
   degraded: boolean;
   partial?: { indexed: number; total: number } | null;
   state?: string | null;
+  nextCursor?: string | null;
 }
 
 export interface IndexStatus {

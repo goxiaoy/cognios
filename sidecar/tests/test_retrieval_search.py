@@ -169,6 +169,68 @@ def test_search_handles_empty_index(tmp_path: Path):
     assert resp.degraded is True
 
 
+def test_search_returns_next_cursor_when_more_results_remain(setup):
+    """With ``limit=2`` and 3 matching nodes, the response carries a
+    ``next_cursor`` so the dedicated view can ask for the next page."""
+    _, orch = setup
+    # Query terms hit all three setup notes (oauth / pkce / rotate / ipsum).
+    resp = orch.search(
+        SearchRequest(query="oauth pkce rotate ipsum", limit=2)
+    )
+    assert len(resp.results) == 2
+    assert resp.next_cursor == "offset:2"
+
+
+def test_search_with_offset_cursor_returns_following_page(setup):
+    _, orch = setup
+    page1 = orch.search(
+        SearchRequest(query="oauth pkce rotate ipsum", limit=2)
+    )
+    assert page1.next_cursor == "offset:2"
+    page2 = orch.search(
+        SearchRequest(
+            query="oauth pkce rotate ipsum", limit=2, cursor=page1.next_cursor
+        )
+    )
+    # Three rows total; page2 has the third row and no more.
+    assert len(page2.results) == 1
+    assert page2.next_cursor is None
+    # The two pages do not repeat any node.
+    page1_ids = {r.node_id for r in page1.results}
+    page2_ids = {r.node_id for r in page2.results}
+    assert page1_ids.isdisjoint(page2_ids)
+
+
+def test_search_sort_modified_orders_by_modified_at_desc(setup, tmp_path: Path):
+    """``sort=modified`` orders results by ``modified_at`` desc rather
+    than relevance."""
+    _, orch = setup
+    resp = orch.search(
+        SearchRequest(query="oauth pkce rotate ipsum", sort="modified")
+    )
+    assert resp.results
+    # All notes were processed inside the same fixture; the most
+    # recent (last-processed) appears first. The exact ordering
+    # depends on row insertion timing, but every result should carry
+    # a non-empty modified_at to allow the sort to work.
+    for r in resp.results:
+        assert r.modified_at is not None and r.modified_at != ""
+    # And the values are in descending order.
+    sorted_desc = sorted(
+        [r.modified_at for r in resp.results], reverse=True
+    )
+    assert [r.modified_at for r in resp.results] == sorted_desc
+
+
+def test_invalid_cursor_resets_to_first_page(setup):
+    _, orch = setup
+    resp = orch.search(
+        SearchRequest(query="oauth", cursor="garbage:not-a-cursor")
+    )
+    # We get the first page rather than an error.
+    assert resp.results
+
+
 def test_snippet_is_bounded(setup, tmp_path: Path):
     store, orch = setup
     long_note = tmp_path / "long.md"

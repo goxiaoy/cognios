@@ -42,10 +42,17 @@ DEFAULT_TOP_NODES = 15
 SNIPPET_MAX_CHARS = 150
 
 
+SortMode = str  # "relevance" | "modified"
+CURSOR_PREFIX = "offset:"
+DEFAULT_DEDICATED_LIMIT = 50
+
+
 @dataclass(frozen=True)
 class SearchRequest:
     query: str
     limit: int | None = None  # caller cap on returned nodes; defaults to 15
+    sort: SortMode = "relevance"  # "relevance" or "modified"
+    cursor: str | None = None  # opaque token; v1 form is ``offset:N``
 
 
 @dataclass(frozen=True)
@@ -57,6 +64,7 @@ class SearchResult:
     snippet: str
     matched_in: str  # "name" | "content" | "both"
     path: str | None = None  # breadcrumb; populated Rust-side post-filter
+    modified_at: str | None = None  # ISO 8601, used for sort=modified
 
 
 @dataclass(frozen=True)
@@ -65,6 +73,7 @@ class SearchResponse:
     degraded: bool
     partial: dict | None = None
     state: str | None = None  # "ready" | "initialising" | "unavailable"
+    next_cursor: str | None = None  # only set when more results remain
 
     def to_dict(self) -> dict:
         return {
@@ -72,6 +81,7 @@ class SearchResponse:
             "degraded": self.degraded,
             "partial": self.partial,
             "state": self.state,
+            "next_cursor": self.next_cursor,
         }
 
 
@@ -100,23 +110,35 @@ class SearchOrchestrator:
     def search(self, request: SearchRequest) -> SearchResponse:
         parsed = parse_query(request.query or "")
         limit = request.limit or self._top_nodes
+        offset = _decode_cursor(request.cursor)
+        # Over-fetch from FTS proportionally so paginating into deeper
+        # offsets still has chunks to aggregate from. Capped to keep the
+        # FTS round-trip bounded.
+        over_fetch = max(self._over_fetch, (offset + limit + 1) * 4)
 
         # FTS-only path. Hybrid path lands when a non-stub embedder is
         # wired (Unit 6 part 2).
         rows = self._store.fts_search(
             parsed.text,
             filter_sql=parsed.filter_sql(),
-            limit=self._over_fetch,
+            limit=over_fetch,
         )
 
-        results = self._aggregate_per_node(rows, parsed, limit)
+        # Aggregate to one row per node, then sort + slice the page.
+        aggregated = self._aggregate_per_node(rows, parsed)
+        ordered = self._sort_results(aggregated, request.sort)
+        page = ordered[offset : offset + limit]
+        next_cursor: str | None = None
+        if offset + limit < len(ordered):
+            next_cursor = f"{CURSOR_PREFIX}{offset + limit}"
         degraded = self._is_degraded()
 
         return SearchResponse(
-            results=tuple(results),
+            results=tuple(page),
             degraded=degraded,
             partial=None,
             state="ready",
+            next_cursor=next_cursor,
         )
 
     # ----- internals ---------------------------------------------------
@@ -132,10 +154,10 @@ class SearchOrchestrator:
         self,
         rows: list[dict],
         parsed: ParsedQuery,
-        limit: int,
     ) -> list[SearchResult]:
         """Group chunk rows by ``node_id``, keep MAX score, build the
-        snippet from the highest-scoring chunk's text."""
+        snippet from the highest-scoring chunk's text. The caller
+        applies sort + offset + limit on top."""
         if not rows:
             return []
         best: dict[str, dict] = {}
@@ -148,14 +170,8 @@ class SearchOrchestrator:
             if existing is None or score > existing["_agg_score"]:
                 best[node_id] = {**row, "_agg_score": score}
 
-        ranked = sorted(
-            best.values(),
-            key=lambda r: r["_agg_score"],
-            reverse=True,
-        )[:limit]
-
         out: list[SearchResult] = []
-        for r in ranked:
+        for r in best.values():
             text = r.get("text") or ""
             snippet = _make_snippet(text, parsed.text)
             matched_in = _matched_in(parsed.text, r.get("name") or "", text)
@@ -167,9 +183,68 @@ class SearchOrchestrator:
                     score=float(r["_agg_score"]),
                     snippet=snippet,
                     matched_in=matched_in,
+                    modified_at=_iso_or_none(r.get("modified_at")),
                 )
             )
         return out
+
+    def _sort_results(
+        self,
+        results: list[SearchResult],
+        sort: SortMode,
+    ) -> list[SearchResult]:
+        """Apply the user-selected sort. Falls back to relevance for
+        any unrecognised mode (defensive — the Rust command validates
+        the value, but the sidecar treats unknown modes as relevance
+        rather than 400ing)."""
+        if sort == "modified":
+            # ``modified_at`` may be ``None`` when an older-version row
+            # has no timestamp — sort those last by treating None as
+            # the empty string (lexicographically before any ISO date).
+            return sorted(
+                results,
+                key=lambda r: r.modified_at or "",
+                reverse=True,
+            )
+        # default: relevance (descending score)
+        return sorted(results, key=lambda r: r.score, reverse=True)
+
+
+def _decode_cursor(cursor: str | None) -> int:
+    """Decode the v1 cursor token. Unknown / malformed values fall
+    back to ``offset=0`` so an old client passing a stale cursor
+    still gets a usable first page rather than an error."""
+    if not cursor or not cursor.startswith(CURSOR_PREFIX):
+        return 0
+    try:
+        offset = int(cursor[len(CURSOR_PREFIX) :])
+    except ValueError:
+        return 0
+    if offset < 0:
+        return 0
+    # Cap absurd offsets so a malicious client can't force a 1M-row
+    # FTS over-fetch.
+    return min(offset, 5000)
+
+
+def _iso_or_none(value) -> str | None:
+    """Convert a lancedb timestamp value to ISO 8601 or ``None``.
+
+    lancedb returns ``timestamp[ms]`` columns as ``datetime`` (or
+    sometimes ``pandas.Timestamp``); both expose ``.isoformat()``.
+    Strings pass through unchanged. Anything else becomes ``None``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value or None
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        try:
+            return isoformat()
+        except Exception:
+            return None
+    return None
 
 
 def _row_score(row: dict) -> float:

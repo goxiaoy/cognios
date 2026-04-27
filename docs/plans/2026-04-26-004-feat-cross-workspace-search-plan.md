@@ -801,7 +801,7 @@ When `embedding.state != "ready"`, the embed step is skipped, the lancedb call u
   - The query syntax popover is reachable via the `?` icon and lists `kind:`, `mount:`, `created:`, `modified:` with one example each.
   - Accessibility audit (`axe-core` via `@axe-core/react` if added; otherwise manual spot-check) reports no critical issues.
 
-- [ ] **Unit 9: Dedicated search view (center pane)**
+- [x] **Unit 9: Dedicated search view (center pane)**
 
   **Goal:** A new center-pane surface (sibling of `ExplorerLayout`'s detail surface) for full-power search: filter pickers (kind multi-select, date pickers, mount picker), a longer scrollable result list, sort dropdown (relevance / modified), and a preview pane that selects-on-click.
 

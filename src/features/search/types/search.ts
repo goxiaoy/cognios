@@ -6,6 +6,7 @@ import type {
   SearchQueryInput,
   SearchResponse,
   SearchResult,
+  SearchSort,
   SidecarEnvelope,
 } from "../../../lib/contracts/search";
 
@@ -17,6 +18,7 @@ export type {
   SearchQueryInput,
   SearchResponse,
   SearchResult,
+  SearchSort,
   SidecarEnvelope,
 };
 

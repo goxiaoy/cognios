@@ -126,6 +126,16 @@ pub struct SearchInput {
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// Result ordering. Sidecar accepts ``"relevance"`` (default) or
+    /// ``"modified"``. Unknown values are coerced to ``"relevance"``
+    /// sidecar-side, but Rust passes the raw string through so the UI
+    /// can be the source of truth on naming.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort: Option<String>,
+    /// Opaque pagination cursor returned in ``nextCursor`` from a
+    /// previous page. v1 form is ``offset:N``; treat as opaque.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 
 // Wire convention for sidecar-bound DTOs:
@@ -148,6 +158,8 @@ pub struct SearchResultDto {
     pub matched_in: String,
     #[serde(default)]
     pub path: Option<String>,
+    #[serde(default)]
+    pub modified_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +171,8 @@ pub struct SearchResponseDto {
     pub partial: Option<Value>,
     #[serde(default)]
     pub state: Option<String>,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -471,24 +485,35 @@ mod tests {
                 "score": 1.5,
                 "snippet": "hello",
                 "matched_in": "content",
-                "path": null
+                "path": null,
+                "modified_at": "2026-04-27T10:00:00Z"
             }],
             "degraded": true,
             "partial": null,
-            "state": "ready"
+            "state": "ready",
+            "next_cursor": "offset:50"
         }"#;
         let parsed: SearchResponseDto =
             serde_json::from_str(from_python).expect("snake_case deserialize");
         assert_eq!(parsed.results.len(), 1);
         assert_eq!(parsed.results[0].node_id, "abc-123");
         assert_eq!(parsed.results[0].matched_in, "content");
+        assert_eq!(
+            parsed.results[0].modified_at.as_deref(),
+            Some("2026-04-27T10:00:00Z")
+        );
+        assert_eq!(parsed.next_cursor.as_deref(), Some("offset:50"));
 
         let to_ts = serde_json::to_value(&parsed).expect("serialize");
         assert_eq!(to_ts["results"][0]["nodeId"], "abc-123");
         assert_eq!(to_ts["results"][0]["matchedIn"], "content");
+        assert_eq!(to_ts["results"][0]["modifiedAt"], "2026-04-27T10:00:00Z");
+        assert_eq!(to_ts["nextCursor"], "offset:50");
         // Rust idiom keys must NOT leak through to the TS payload.
         assert!(to_ts["results"][0].get("node_id").is_none());
         assert!(to_ts["results"][0].get("matched_in").is_none());
+        assert!(to_ts["results"][0].get("modified_at").is_none());
+        assert!(to_ts.get("next_cursor").is_none());
     }
 
     #[test]

@@ -22,6 +22,10 @@ pub struct SearchQueryInput {
     pub query: String,
     #[serde(default)]
     pub limit: Option<u32>,
+    #[serde(default)]
+    pub sort: Option<String>,
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +54,8 @@ pub async fn search_query(
     let body = SearchInput {
         query: input.query,
         limit: input.limit,
+        sort: input.sort,
+        cursor: input.cursor,
     };
     Ok(state.search_client.search(&body).await)
 }
