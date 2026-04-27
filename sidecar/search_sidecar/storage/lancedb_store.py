@@ -100,6 +100,7 @@ class LanceDBStore:
     def __init__(self, db, table) -> None:  # type: ignore[no-untyped-def]
         self._db = db
         self._table = table
+        self._fts_index_built = False
 
     @property
     def table(self):  # type: ignore[no-untyped-def]
@@ -169,6 +170,57 @@ class LanceDBStore:
             .where(f"node_id = '{_quote(node_id)}'")
             .to_list()
         )
+
+    def ensure_fts_index(self, *, force: bool = False) -> None:
+        """Build the FTS index on the ``text`` column if not already
+        built in this process's lifetime.
+
+        lancedb's ``create_fts_index`` is idempotent with ``replace=True``
+        — it rebuilds in place. We cache a per-process flag so a series
+        of search calls doesn't trigger repeated index rebuilds; new
+        upserts after the index is built are picked up by lancedb's
+        own incremental indexing on subsequent search calls.
+
+        ``force=True`` skips the cache and rebuilds — useful after a
+        bulk re-index.
+        """
+        if self._fts_index_built and not force:
+            return
+        if self._table.count_rows() == 0:
+            # ``create_fts_index`` on an empty table is a no-op but
+            # some lancedb versions error; skip until we have rows.
+            return
+        try:
+            self._table.create_fts_index(
+                "text", use_tantivy=False, replace=True
+            )
+        except TypeError:
+            # Older lancedb signatures don't accept use_tantivy
+            self._table.create_fts_index("text", replace=True)
+        self._fts_index_built = True
+
+    def fts_search(
+        self,
+        query: str,
+        *,
+        filter_sql: str | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Run an FTS-only query and return raw chunk rows.
+
+        Returns dicts with the schema's columns plus a ``_score`` key
+        added by lancedb's FTS path. The retrieval orchestrator
+        aggregates these per-node before returning to callers.
+        """
+        if not query.strip():
+            return []
+        self.ensure_fts_index()
+        if self._table.count_rows() == 0:
+            return []
+        builder = self._table.search(query, query_type="fts")
+        if filter_sql:
+            builder = builder.where(filter_sql)
+        return builder.limit(limit).to_list()
 
 
 def open_store(path: Path) -> LanceDBStore:

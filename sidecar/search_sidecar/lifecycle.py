@@ -33,6 +33,7 @@ from .index import IndexingRunner, StubEmbedder
 from .index.dispatch import Dispatcher
 from .index.queue import open_queue
 from .models import DEFAULTS, ModelManager
+from .retrieval import SearchOrchestrator
 from .runtime_file import (
     acquire_lock,
     remove_runtime_file,
@@ -78,12 +79,16 @@ def serve(storage_dir: Path) -> int:
     dispatcher = Dispatcher(store=lancedb_store, embedder=embedder)
     indexing_runner = IndexingRunner(queue=indexing_queue, dispatcher=dispatcher)
     indexing_runner.start()
+    search_orchestrator = SearchOrchestrator(
+        store=lancedb_store, embedder=embedder
+    )
 
     app = build_app(
         token=token,
         model_manager=model_manager,
         indexing_queue=indexing_queue,
         lancedb_store=lancedb_store,
+        search_orchestrator=search_orchestrator,
     )
     config = uvicorn.Config(
         app,

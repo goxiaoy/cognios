@@ -16,10 +16,12 @@ from .auth import BearerAuthMiddleware
 from .routes import events as events_routes
 from .routes import index as index_routes
 from .routes import models as models_routes
+from .routes import search as search_routes
 
 if TYPE_CHECKING:
     from .index.queue import IndexingQueue
     from .models.manager import ModelManager
+    from .retrieval import SearchOrchestrator
     from .storage import LanceDBStore
 
 
@@ -29,6 +31,7 @@ def build_app(
     model_manager: "ModelManager | None" = None,
     indexing_queue: "IndexingQueue | None" = None,
     lancedb_store: "LanceDBStore | None" = None,
+    search_orchestrator: "SearchOrchestrator | None" = None,
 ) -> FastAPI:
     """Construct a FastAPI app with bearer-auth + the Phase-2 routers.
 
@@ -59,6 +62,7 @@ def build_app(
     app.include_router(models_routes.router)
     app.include_router(events_routes.router)
     app.include_router(index_routes.router)
+    app.include_router(search_routes.router)
 
     if model_manager is not None:
         app.state.model_manager = model_manager
@@ -66,5 +70,7 @@ def build_app(
         app.state.indexing_queue = indexing_queue
     if lancedb_store is not None:
         app.state.lancedb_store = lancedb_store
+    if search_orchestrator is not None:
+        app.state.search_orchestrator = search_orchestrator
 
     return app
