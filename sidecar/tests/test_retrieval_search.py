@@ -283,6 +283,102 @@ def test_orchestrator_falls_back_to_fts_when_embedder_raises(tmp_path):
     assert resp.results == ()
 
 
+def test_orchestrator_reorders_top_window_via_reranker(setup):
+    """When a reranker is wired, the cross-encoder reorders the head
+    of the candidate list. The reranker double here returns scores
+    that put the *last* matching node first."""
+    from unittest import mock
+    from search_sidecar.retrieval import SearchOrchestrator, SearchRequest
+
+    _, baseline = setup
+    # Pull baseline results so we know what order the FTS path produces.
+    baseline_resp = baseline.search(SearchRequest(query="oauth pkce rotate"))
+    assert len(baseline_resp.results) >= 2
+    first_baseline = baseline_resp.results[0].node_id
+
+    # Reranker-augmented orchestrator: same store + embedder, plus a
+    # mock reranker that inverts the order (last → first). Scoring
+    # ``[1, 2, 3, ...]`` then descending-sorting puts position N at
+    # index 0.
+    fake_reranker = mock.Mock()
+    fake_reranker.rerank.side_effect = lambda query, docs: list(
+        range(1, len(docs) + 1)
+    )
+    from search_sidecar.index.embedder import StubEmbedder
+    reranked_orch = SearchOrchestrator(
+        store=baseline._store,
+        embedder=StubEmbedder(),
+        reranker=fake_reranker,
+    )
+    reranked_resp = reranked_orch.search(
+        SearchRequest(query="oauth pkce rotate")
+    )
+    fake_reranker.rerank.assert_called_once()
+    # The reranker turned a descending score list into "last-first";
+    # the new top result should be the previous *last* candidate.
+    assert reranked_resp.results[0].node_id != first_baseline
+
+
+def test_orchestrator_skips_reranker_when_sort_is_modified(setup):
+    """``sort=modified`` is an explicit user choice; the reranker
+    must not silently overrule it."""
+    from unittest import mock
+    from search_sidecar.retrieval import SearchOrchestrator, SearchRequest
+    from search_sidecar.index.embedder import StubEmbedder
+
+    _, base = setup
+    fake_reranker = mock.Mock()
+    orch = SearchOrchestrator(
+        store=base._store,
+        embedder=StubEmbedder(),
+        reranker=fake_reranker,
+    )
+    orch.search(SearchRequest(query="oauth", sort="modified"))
+    fake_reranker.rerank.assert_not_called()
+
+
+def test_orchestrator_falls_back_to_initial_order_when_reranker_raises(setup):
+    """A flaky reranker must not produce worse results than no
+    reranker at all — log + return original ordering."""
+    from unittest import mock
+    from search_sidecar.retrieval import SearchOrchestrator, SearchRequest
+    from search_sidecar.index.embedder import StubEmbedder
+
+    _, base = setup
+    baseline_resp = base.search(SearchRequest(query="oauth pkce rotate"))
+    fake_reranker = mock.Mock()
+    fake_reranker.rerank.side_effect = RuntimeError("onnx crashed")
+    orch = SearchOrchestrator(
+        store=base._store,
+        embedder=StubEmbedder(),
+        reranker=fake_reranker,
+    )
+    resp = orch.search(SearchRequest(query="oauth pkce rotate"))
+    fake_reranker.rerank.assert_called_once()
+    # Ordering is identical to the no-reranker baseline.
+    assert [r.node_id for r in resp.results] == [
+        r.node_id for r in baseline_resp.results
+    ]
+
+
+def test_orchestrator_skips_reranker_when_query_is_empty(setup):
+    """Empty queries already short-circuit FTS to no results; the
+    reranker must not be called on an empty doc list."""
+    from unittest import mock
+    from search_sidecar.retrieval import SearchOrchestrator, SearchRequest
+    from search_sidecar.index.embedder import StubEmbedder
+
+    _, base = setup
+    fake_reranker = mock.Mock()
+    orch = SearchOrchestrator(
+        store=base._store,
+        embedder=StubEmbedder(),
+        reranker=fake_reranker,
+    )
+    orch.search(SearchRequest(query=""))
+    fake_reranker.rerank.assert_not_called()
+
+
 def test_orchestrator_skips_hybrid_when_embedder_returns_empty(tmp_path):
     """An empty ``embed()`` result (degenerate input) should also
     fall through to FTS rather than passing an empty vector list to

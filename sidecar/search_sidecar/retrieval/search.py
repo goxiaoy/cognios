@@ -29,17 +29,26 @@ Pipeline (Phase 2 / Unit 6 part 2 — when embedder is ready):
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+from typing import TYPE_CHECKING
 
 from ..index.embedder import Embedder
 from ..storage import LanceDBStore
 from .filters import ParsedQuery, parse_query
+
+if TYPE_CHECKING:
+    from ..rerank import Reranker
 
 LOG = logging.getLogger("search_sidecar.retrieval.search")
 
 DEFAULT_OVER_FETCH = 200
 DEFAULT_TOP_NODES = 15
 SNIPPET_MAX_CHARS = 150
+# Reranking is expensive (a cross-encoder forward pass per candidate
+# pair) so we only rerank the head of the result list. Items beyond
+# this window keep their pre-rerank order. 50 covers the dedicated
+# view's first page; deep pagination falls through unchanged.
+DEFAULT_RERANK_WINDOW = 50
 
 
 SortMode = str  # "relevance" | "modified"
@@ -99,13 +108,17 @@ class SearchOrchestrator:
         *,
         store: LanceDBStore,
         embedder: Embedder,
+        reranker: "Reranker | None" = None,
         over_fetch: int = DEFAULT_OVER_FETCH,
         top_nodes: int = DEFAULT_TOP_NODES,
+        rerank_window: int = DEFAULT_RERANK_WINDOW,
     ) -> None:
         self._store = store
         self._embedder = embedder
+        self._reranker = reranker
         self._over_fetch = over_fetch
         self._top_nodes = top_nodes
+        self._rerank_window = rerank_window
 
     def search(self, request: SearchRequest) -> SearchResponse:
         parsed = parse_query(request.query or "")
@@ -132,6 +145,11 @@ class SearchOrchestrator:
         # Aggregate to one row per node, then sort + slice the page.
         aggregated = self._aggregate_per_node(rows, parsed)
         ordered = self._sort_results(aggregated, request.sort)
+        # Cross-encoder rerank: only meaningful when the user asked
+        # for relevance order (sort=modified means "respect the
+        # date", not "let the cross-encoder rerank by date").
+        if request.sort == "relevance":
+            ordered = self._apply_reranker(parsed.text, ordered)
         page = ordered[offset : offset + limit]
         next_cursor: str | None = None
         if offset + limit < len(ordered):
@@ -234,6 +252,52 @@ class SearchOrchestrator:
             )
         return out
 
+    def _apply_reranker(
+        self,
+        query: str,
+        results: list[SearchResult],
+    ) -> list[SearchResult]:
+        """Cross-encoder rerank the top-N window in-place.
+
+        ``rerank_window`` is the number of head results passed to the
+        cross-encoder; entries beyond it keep their original order.
+        Failures (model fault, shape mismatch) log + return the
+        original ordering unchanged so a flaky reranker can never
+        produce worse results than no reranker at all.
+        """
+        if self._reranker is None:
+            return results
+        if not query.strip() or not results:
+            return results
+        window = min(len(results), self._rerank_window)
+        head = results[:window]
+        tail = results[window:]
+        # The reranker scores pairs of ``(query, document)``. Use
+        # ``name + snippet`` so the cross-encoder sees both the title
+        # signal and the matched-context signal.
+        documents = [_doc_for_rerank(r) for r in head]
+        try:
+            scores = self._reranker.rerank(query, documents)
+        except Exception as err:
+            LOG.warning(
+                "reranker failed: %s. Skipping rerank for this query.",
+                err,
+            )
+            return results
+        if len(scores) != len(head):
+            LOG.warning(
+                "reranker returned %d scores for %d candidates; skipping rerank",
+                len(scores),
+                len(head),
+            )
+            return results
+        rescored = [
+            replace(result, score=float(score))
+            for result, score in zip(head, scores)
+        ]
+        rescored.sort(key=lambda r: r.score, reverse=True)
+        return rescored + tail
+
     def _sort_results(
         self,
         results: list[SearchResult],
@@ -254,6 +318,20 @@ class SearchOrchestrator:
             )
         # default: relevance (descending score)
         return sorted(results, key=lambda r: r.score, reverse=True)
+
+
+def _doc_for_rerank(result: SearchResult) -> str:
+    """Build the document text the cross-encoder pairs with the query.
+
+    ``name + snippet`` lets the model weigh both the title signal and
+    the matched-context signal. Missing snippet falls back to name
+    alone; the cross-encoder still produces a sensible score.
+    """
+    name = result.name or ""
+    snippet = result.snippet or ""
+    if name and snippet:
+        return f"{name}: {snippet}"
+    return name or snippet
 
 
 def _decode_cursor(cursor: str | None) -> int:
