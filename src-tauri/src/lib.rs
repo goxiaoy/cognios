@@ -77,12 +77,42 @@ pub fn run() {
             reconcile_all_mounts(&mut conn)?;
             ensure_cache_dir(&cache_dir)?;
 
+            // Search sidecar (Phase 1 / Unit 2). Construct before the
+            // emitter so the wrapped emitter can capture the client and
+            // forward node mutations to the sidecar's `/events/node`.
+            let search_dir = app_data_dir.join("search");
+            fs::create_dir_all(&search_dir).map_err(|error| error.to_string())?;
+            let search_sidecar = Arc::new(SearchSidecarSupervisor::new(
+                search_dir.join("sidecar.runtime"),
+                app_data_dir.clone(),
+            ));
+            search_sidecar.start(app.handle());
+            let search_client = Arc::new(SearchSidecarClient::new(Arc::clone(&search_sidecar)));
+
             // Single emitter shared by every emit site (mount watchers,
-            // URL jobs, and the new mutation paths added for search). All
-            // callers route through `app_handle.emit(VFS_EVENT_NAME, ...)`.
+            // URL jobs, and the note/folder mutation paths). It does
+            // two things: (1) emits the existing Tauri webview event
+            // for the React explorer to refresh; (2) translates
+            // node-* and url-indexed reasons into a `/events/node`
+            // payload and fire-and-forget posts it to the search
+            // sidecar so the indexer picks the change up.
             let emit_app_handle = app.handle().clone();
+            let forwarder_client = Arc::clone(&search_client);
+            let forwarder_db = db.clone();
+            let forwarder_storage_dir = app_data_dir.clone();
             let emitter: VfsEventEmitter = Arc::new(move |event: VfsChangeEvent| {
-                let _ = emit_app_handle.emit(VFS_EVENT_NAME, event);
+                let _ = emit_app_handle.emit(VFS_EVENT_NAME, event.clone());
+
+                let client = Arc::clone(&forwarder_client);
+                let db = forwarder_db.clone();
+                let storage_dir = forwarder_storage_dir.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(payload) =
+                        services::search::forwarder::build_payload(&event, &db, &storage_dir)
+                    {
+                        client.forward_node_event(&payload).await;
+                    }
+                });
             });
 
             let mount_watchers = {
@@ -104,19 +134,6 @@ pub fn run() {
                 ))
             };
             url_jobs.resume_pending_jobs()?;
-
-            // Search sidecar (Phase 1 / Unit 2). The binary is bundled
-            // by the packaging step in Unit 12; in dev or before that
-            // ships, the supervisor records `Failed { retryable: false }`
-            // and the rest of the app continues to run.
-            let search_dir = app_data_dir.join("search");
-            fs::create_dir_all(&search_dir).map_err(|error| error.to_string())?;
-            let search_sidecar = Arc::new(SearchSidecarSupervisor::new(
-                search_dir.join("sidecar.runtime"),
-                app_data_dir.clone(),
-            ));
-            search_sidecar.start(app.handle());
-            let search_client = Arc::new(SearchSidecarClient::new(Arc::clone(&search_sidecar)));
 
             app.manage(AppState {
                 db,

@@ -84,6 +84,40 @@ impl<T> SidecarEnvelope<T> {
     }
 }
 
+// ----- mutation forwarding payload (Rust → sidecar /events/node) ----------
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeEventKind {
+    NodeChanged,
+    NodeDeleted,
+}
+
+/// Payload Rust posts to ``POST /events/node`` after a node mutation.
+/// Mirrors the sidecar's :class:`NodeEvent` Pydantic model.
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeEvent {
+    pub event: NodeEventKind,
+    pub node_id: String,
+    pub kind: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub absolute_content_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mount_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeEventAck {
+    pub accepted: bool,
+    pub action: String,
+}
+
 // ----- DTOs (mirror the sidecar's JSON shapes) ----------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,6 +301,34 @@ impl SearchSidecarClient {
 
     pub async fn search(&self, body: &SearchInput) -> SidecarEnvelope<SearchResponseDto> {
         self.post_envelope("/search", body).await
+    }
+
+    /// Fire-and-forget forward of a node mutation to the sidecar's
+    /// ``POST /events/node`` route. Errors are logged but never bubble
+    /// up — the resync ping is the safety net for missed events.
+    pub async fn forward_node_event(&self, event: &NodeEvent) {
+        if matches!(self.supervisor.state(), SupervisorState::NotStarted | SupervisorState::Spawning) {
+            log::debug!("dropping node event for {} (sidecar not yet running)", event.node_id);
+            return;
+        }
+        let envelope: SidecarEnvelope<NodeEventAck> =
+            self.post_envelope("/events/node", event).await;
+        match envelope.state {
+            SidecarEnvelopeState::Ready => {}
+            SidecarEnvelopeState::Initialising => {
+                log::debug!(
+                    "sidecar still initialising; node event for {} will be picked up by next resync",
+                    event.node_id
+                );
+            }
+            SidecarEnvelopeState::Unavailable => {
+                log::warn!(
+                    "sidecar unavailable while forwarding event for {}: {}",
+                    event.node_id,
+                    envelope.error.as_deref().unwrap_or("(no detail)")
+                );
+            }
+        }
     }
 
     pub async fn index_status(&self) -> SidecarEnvelope<IndexStatusDto> {
