@@ -181,12 +181,13 @@ def open_store(path: Path) -> LanceDBStore:
     """
     path.mkdir(parents=True, exist_ok=True)
     db = lancedb.connect(str(path))
-    # ``list_tables`` replaces the deprecated ``table_names`` in lancedb 0.30.
-    existing = db.list_tables() if hasattr(db, "list_tables") else db.table_names()
-    if TABLE_NAME in existing:
+    # ``list_tables()`` is unreliable in lancedb 0.30 — sometimes returns
+    # an empty list even with tables present on disk. The robust path is
+    # try-open, fall through to create-with-schema on failure.
+    try:
         table = db.open_table(TABLE_NAME)
-    else:
-        table = db.create_table(TABLE_NAME, schema=_schema())
+    except Exception:
+        table = db.create_table(TABLE_NAME, schema=_schema(), exist_ok=True)
     return LanceDBStore(db, table)
 
 

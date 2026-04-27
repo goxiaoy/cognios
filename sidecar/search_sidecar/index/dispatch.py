@@ -11,6 +11,7 @@ from typing import Protocol
 from ..storage import LanceDBStore
 from .embedder import Embedder
 from .processors.text import TextProcessor
+from .processors.url_cache import URLCacheProcessor
 from .queue import IndexingJob
 
 
@@ -29,6 +30,7 @@ class Dispatcher:
     def __init__(self, *, store: LanceDBStore, embedder: Embedder) -> None:
         self._processors: list[Processor] = [
             TextProcessor(store, embedder),
+            URLCacheProcessor(store, embedder),
         ]
 
     def find(self, job: IndexingJob) -> Processor | None:
