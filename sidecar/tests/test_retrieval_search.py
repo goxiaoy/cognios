@@ -231,6 +231,78 @@ def test_invalid_cursor_resets_to_first_page(setup):
     assert resp.results
 
 
+def test_orchestrator_uses_hybrid_search_when_embedder_is_semantic(
+    tmp_path,
+):
+    """When the embedder advertises ``is_semantic=True`` the
+    orchestrator must call ``hybrid_search`` and pass through the
+    embedder's vector. The ``degraded`` flag flips to False."""
+    from unittest import mock
+    from search_sidecar.retrieval import SearchOrchestrator, SearchRequest
+    from search_sidecar.storage import EMBEDDING_DIMENSION
+
+    fake_embedder = mock.Mock()
+    fake_embedder.is_semantic = True
+    fake_embedder.embed.return_value = [[0.1] * EMBEDDING_DIMENSION]
+
+    fake_store = mock.Mock()
+    fake_store.hybrid_search.return_value = []
+    fake_store.fts_search.return_value = []
+
+    orch = SearchOrchestrator(store=fake_store, embedder=fake_embedder)
+    resp = orch.search(SearchRequest(query="oauth"))
+
+    fake_store.hybrid_search.assert_called_once()
+    fake_store.fts_search.assert_not_called()
+    fake_embedder.embed.assert_called_once_with(["oauth"])
+    assert resp.degraded is False
+
+
+def test_orchestrator_falls_back_to_fts_when_embedder_raises(tmp_path):
+    """A transient embedder failure must not kill the search request;
+    the orchestrator logs and runs FTS-only with the same query."""
+    from unittest import mock
+    from search_sidecar.retrieval import SearchOrchestrator, SearchRequest
+
+    fake_embedder = mock.Mock()
+    fake_embedder.is_semantic = True
+    fake_embedder.embed.side_effect = RuntimeError("onnxruntime crashed")
+
+    fake_store = mock.Mock()
+    fake_store.fts_search.return_value = []
+
+    orch = SearchOrchestrator(store=fake_store, embedder=fake_embedder)
+    resp = orch.search(SearchRequest(query="oauth"))
+    fake_store.hybrid_search.assert_not_called()
+    fake_store.fts_search.assert_called_once()
+    # ``degraded`` is still False because the embedder advertises
+    # is_semantic=True; the fallback is a transient anomaly, not a
+    # state change. The UI banner is driven by is_semantic, not by
+    # this single-request fallback.
+    assert resp.degraded is False
+    assert resp.results == ()
+
+
+def test_orchestrator_skips_hybrid_when_embedder_returns_empty(tmp_path):
+    """An empty ``embed()`` result (degenerate input) should also
+    fall through to FTS rather than passing an empty vector list to
+    lancedb."""
+    from unittest import mock
+    from search_sidecar.retrieval import SearchOrchestrator, SearchRequest
+
+    fake_embedder = mock.Mock()
+    fake_embedder.is_semantic = True
+    fake_embedder.embed.return_value = []
+
+    fake_store = mock.Mock()
+    fake_store.fts_search.return_value = []
+
+    orch = SearchOrchestrator(store=fake_store, embedder=fake_embedder)
+    orch.search(SearchRequest(query="oauth"))
+    fake_store.hybrid_search.assert_not_called()
+    fake_store.fts_search.assert_called_once()
+
+
 def test_snippet_is_bounded(setup, tmp_path: Path):
     store, orch = setup
     long_note = tmp_path / "long.md"

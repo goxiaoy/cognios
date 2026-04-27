@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict, dataclass, field
 
-from ..index.embedder import Embedder, StubEmbedder
+from ..index.embedder import Embedder
 from ..storage import LanceDBStore
 from .filters import ParsedQuery, parse_query
 
@@ -89,9 +89,9 @@ class SearchOrchestrator:
     """Stateless orchestrator. Construct once with the lancedb store
     and the embedder; call :meth:`search` per request.
 
-    The embedder is held but not yet used — its readiness controls
+    The embedder's :attr:`Embedder.is_semantic` property controls
     whether we serve the FTS-only or hybrid path. With
-    :class:`StubEmbedder` we always degrade to FTS.
+    ``StubEmbedder`` (``is_semantic=False``) we always degrade to FTS.
     """
 
     def __init__(
@@ -111,16 +111,21 @@ class SearchOrchestrator:
         parsed = parse_query(request.query or "")
         limit = request.limit or self._top_nodes
         offset = _decode_cursor(request.cursor)
-        # Over-fetch from FTS proportionally so paginating into deeper
-        # offsets still has chunks to aggregate from. Capped to keep the
-        # FTS round-trip bounded.
+        # Over-fetch from the underlying retrieval call proportionally
+        # so paginating into deeper offsets still has chunks to
+        # aggregate from. Capped to keep the round-trip bounded.
         over_fetch = max(self._over_fetch, (offset + limit + 1) * 4)
+        filter_sql = parsed.filter_sql()
 
-        # FTS-only path. Hybrid path lands when a non-stub embedder is
-        # wired (Unit 6 part 2).
-        rows = self._store.fts_search(
+        # Route by embedder readiness:
+        # - is_semantic=True → hybrid (vector + FTS) for richer recall
+        # - is_semantic=False (StubEmbedder) → FTS-only fallback
+        # The ``degraded`` flag in the envelope mirrors this choice so
+        # the UI can surface a "warming up" banner during the
+        # transition window.
+        rows = self._fetch_chunks(
             parsed.text,
-            filter_sql=parsed.filter_sql(),
+            filter_sql=filter_sql,
             limit=over_fetch,
         )
 
@@ -141,14 +146,55 @@ class SearchOrchestrator:
             next_cursor=next_cursor,
         )
 
+    def _fetch_chunks(
+        self,
+        text: str,
+        *,
+        filter_sql: str | None,
+        limit: int,
+    ) -> list[dict]:
+        """Pick the lancedb retrieval path that matches the embedder.
+
+        Hybrid is preferred when the embedder is semantic; on any
+        embed-time failure we fall back to FTS-only with the same
+        query. This keeps a transient model fault from killing search.
+        """
+        if not self._embedder.is_semantic:
+            return self._store.fts_search(
+                text, filter_sql=filter_sql, limit=limit
+            )
+        try:
+            query_vecs = self._embedder.embed([text])
+        except Exception as err:
+            LOG.warning(
+                "embedder failed for query %r: %s. Falling back to FTS.",
+                text,
+                err,
+            )
+            return self._store.fts_search(
+                text, filter_sql=filter_sql, limit=limit
+            )
+        if not query_vecs:
+            return self._store.fts_search(
+                text, filter_sql=filter_sql, limit=limit
+            )
+        return self._store.hybrid_search(
+            text,
+            query_vecs[0],
+            filter_sql=filter_sql,
+            limit=limit,
+        )
+
     # ----- internals ---------------------------------------------------
 
     def _is_degraded(self) -> bool:
-        """``True`` while the embedder is a stub. Once the real ONNX
-        embedder is loaded and reports ``ready``, this returns
-        ``False`` and the search() path will route to hybrid + rerank.
+        """``True`` while the embedder cannot produce semantic vectors.
+
+        Reads the embedder's ``is_semantic`` property rather than an
+        ``isinstance`` check so test doubles + future embedder
+        implementations participate without modifying this module.
         """
-        return isinstance(self._embedder, StubEmbedder)
+        return not self._embedder.is_semantic
 
     def _aggregate_per_node(
         self,

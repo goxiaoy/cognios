@@ -222,6 +222,62 @@ class LanceDBStore:
             builder = builder.where(filter_sql)
         return builder.limit(limit).to_list()
 
+    def hybrid_search(
+        self,
+        query: str,
+        query_vec: list[float],
+        *,
+        filter_sql: str | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Run a hybrid (FTS + vector) query and return raw chunk rows.
+
+        Hybrid path requires both an FTS index on ``text`` and a
+        vector index on ``vector``. lancedb 0.30 supports this via
+        ``query_type="hybrid"`` plus the optional ``vector_query=...``
+        argument; some versions take the vector positionally as
+        ``search(text, query_type="hybrid").vector(vec)`` instead. We
+        try the modern path first and fall back if the API surface
+        differs on the installed version.
+
+        See plan note on lancedb #1656: prefer post-filter
+        (``prefilter=False``) when both an FTS index and a scalar
+        index are present and a filter is applied. The over-fetch +
+        in-memory aggregation step in the orchestrator covers the
+        residual gap.
+        """
+        if not query.strip():
+            return []
+        if len(query_vec) != EMBEDDING_DIMENSION:
+            raise ValueError(
+                f"query_vec length {len(query_vec)} != {EMBEDDING_DIMENSION}"
+            )
+        self.ensure_fts_index()
+        if self._table.count_rows() == 0:
+            return []
+        builder = self._call_hybrid(query, query_vec)
+        if filter_sql:
+            try:
+                builder = builder.where(filter_sql, prefilter=False)
+            except TypeError:
+                builder = builder.where(filter_sql)
+        return builder.limit(limit).to_list()
+
+    def _call_hybrid(self, query: str, query_vec: list[float]):
+        """Call lancedb's hybrid API across version differences.
+
+        Returns a search builder; the caller adds ``where`` + ``limit``.
+        """
+        try:
+            return self._table.search(
+                query, query_type="hybrid", vector_query=query_vec
+            )
+        except TypeError:
+            # Older API: chain .vector() after the text/query call.
+            return self._table.search(query, query_type="hybrid").vector(
+                query_vec
+            )
+
 
 def open_store(path: Path) -> LanceDBStore:
     """Open or create the lancedb store at ``path``.

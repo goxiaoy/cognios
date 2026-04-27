@@ -104,6 +104,32 @@ def test_node_chunk_with_single_quote_in_id_does_not_break_delete(tmp_path: Path
     assert store.count() == 0
 
 
+def test_hybrid_search_rejects_wrong_dim_query_vec(tmp_path: Path):
+    """``hybrid_search`` validates the query vector at the boundary
+    so a downstream lancedb shape-mismatch error never reaches the
+    user."""
+    store = open_store(tmp_path / "index.lance")
+    with pytest.raises(ValueError, match="!= 768"):
+        store.hybrid_search("oauth", [0.0] * 100)
+
+
+def test_hybrid_search_returns_empty_for_blank_query(tmp_path: Path):
+    """Mirrors ``fts_search``'s blank-query short-circuit so the
+    orchestrator's ``parsed.text == ""`` case skips the round trip
+    cleanly."""
+    store = open_store(tmp_path / "index.lance")
+    assert (
+        store.hybrid_search("   ", [0.0] * EMBEDDING_DIMENSION) == []
+    )
+
+
+def test_hybrid_search_returns_empty_for_empty_table(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    assert (
+        store.hybrid_search("oauth", [0.0] * EMBEDDING_DIMENSION) == []
+    )
+
+
 def test_open_store_is_idempotent(tmp_path: Path):
     path = tmp_path / "index.lance"
     open_store(path).upsert([_make_chunk("node-a")])

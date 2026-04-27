@@ -29,7 +29,8 @@ import uvicorn
 
 from .app import build_app
 from .auth import generate_token
-from .index import IndexingRunner, StubEmbedder
+from .embeddings import select_embedder
+from .index import IndexingRunner
 from .index.dispatch import Dispatcher
 from .index.queue import open_queue
 from .models import DEFAULTS, ModelManager
@@ -75,7 +76,12 @@ def serve(storage_dir: Path) -> int:
     model_manager = ModelManager(storage_dir=storage_dir, manifest=DEFAULTS)
     lancedb_store = open_store(search_dir / "index.lance")
     indexing_queue = open_queue(search_dir / "queue.db")
-    embedder = StubEmbedder()
+    embedder = select_embedder(model_manager=model_manager)
+    LOG.info(
+        "embedder selected: %s (is_semantic=%s)",
+        type(embedder).__name__,
+        embedder.is_semantic,
+    )
     dispatcher = Dispatcher(store=lancedb_store, embedder=embedder)
     indexing_runner = IndexingRunner(queue=indexing_queue, dispatcher=dispatcher)
     indexing_runner.start()

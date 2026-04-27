@@ -12,6 +12,18 @@ dependencies = [
   "selectolax==0.3.27",
 ]
 
+# The semantic-search ONNX path is opt-in: dev installs default to the
+# StubEmbedder (zero-vector) so test runs stay snappy. Release builds
+# (Unit 12 PyInstaller) install ``--extra embedding`` to pull the
+# transformers tokenizer + optimum.onnxruntime runtime that
+# ``GteEmbedder`` needs. The orchestrator factory falls back to
+# ``StubEmbedder`` automatically when these aren't importable.
+[project.optional-dependencies]
+embedding = [
+  "optimum[onnxruntime]>=1.24,<2.0",
+  "transformers>=4.45,<5.0",
+]
+
 [project.scripts]
 search-sidecar = "search_sidecar.__main__:main"
 
