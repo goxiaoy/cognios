@@ -21,7 +21,9 @@
 #[cfg(debug_assertions)]
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command as StdCommand;
 use std::sync::{Arc, Mutex};
+use std::thread::sleep;
 use std::time::Duration;
 
 use tauri::AppHandle;
@@ -33,6 +35,9 @@ use super::runtime_file::{read_runtime_file, RuntimeFile, RuntimeFileError};
 const RUNTIME_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const RUNTIME_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const SIDECAR_BINARY_NAME: &str = "search-sidecar";
+
+const ORPHAN_SIGTERM_GRACE: Duration = Duration::from_secs(3);
+const ORPHAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 struct SidecarCommandCandidate {
     label: &'static str,
@@ -66,6 +71,7 @@ impl SupervisorState {
 pub struct SearchSidecarSupervisor {
     inner: Arc<Mutex<Inner>>,
     runtime_path: PathBuf,
+    lock_path: PathBuf,
     storage_dir: PathBuf,
 }
 
@@ -77,13 +83,23 @@ struct Inner {
 impl SearchSidecarSupervisor {
     /// `runtime_path` = `~/.cogios/search/sidecar.runtime`
     /// `storage_dir` = `~/.cogios` (the sidecar's `--storage-dir` arg)
+    ///
+    /// `sidecar.lock` is derived from `runtime_path`'s parent directory.
+    /// It carries the holder's PID so this supervisor can SIGTERM an
+    /// orphaned sidecar (e.g. from a crashed `tauri dev` session) on
+    /// next start.
     pub fn new(runtime_path: PathBuf, storage_dir: PathBuf) -> Self {
+        let lock_path = runtime_path
+            .parent()
+            .map(|dir| dir.join("sidecar.lock"))
+            .unwrap_or_else(|| PathBuf::from("sidecar.lock"));
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 state: SupervisorState::NotStarted,
                 child: None,
             })),
             runtime_path,
+            lock_path,
             storage_dir,
         }
     }
@@ -121,6 +137,13 @@ impl SearchSidecarSupervisor {
     /// app must keep running.
     pub fn start(self: &Arc<Self>, app: &AppHandle) {
         self.set_state(SupervisorState::Spawning);
+
+        // Pre-spawn orphan cleanup: if a previous sidecar is still
+        // alive (e.g. survived a `tauri dev` Ctrl-C that didn't reach
+        // the child), SIGTERM it so the new spawn can acquire the
+        // flock. Safe in production too — if no orphan exists this is
+        // a no-op.
+        terminate_orphan_if_alive(&self.lock_path);
 
         let storage_dir_str = self.storage_dir.to_string_lossy().into_owned();
         let (mut rx, child) = match spawn_first_available_sidecar(app, &storage_dir_str) {
@@ -221,6 +244,69 @@ impl SearchSidecarSupervisor {
         }
         self.set_state(SupervisorState::Stopped);
     }
+}
+
+// ----- orphan-process cleanup ----------------------------------------------
+
+/// If ``sidecar.lock`` names a live PID, send it SIGTERM and wait up
+/// to ``ORPHAN_SIGTERM_GRACE`` for it to exit. Falls back to SIGKILL.
+/// All branches are best-effort; on any failure we proceed and let
+/// the sidecar's own flock guard report the conflict.
+fn terminate_orphan_if_alive(lock_path: &std::path::Path) {
+    let Some(pid) = read_lock_holder_pid(lock_path) else {
+        return;
+    };
+    if !process_is_alive(pid) {
+        return;
+    }
+    log::info!(
+        "found existing search-sidecar at pid {pid} (likely from a prior session); sending SIGTERM"
+    );
+    if let Err(err) = send_signal(pid, "TERM") {
+        log::warn!("kill -TERM {pid} failed: {err}; will try SIGKILL");
+    }
+
+    let deadline = std::time::Instant::now() + ORPHAN_SIGTERM_GRACE;
+    while std::time::Instant::now() < deadline {
+        if !process_is_alive(pid) {
+            log::info!("orphan pid {pid} exited cleanly after SIGTERM");
+            return;
+        }
+        sleep(ORPHAN_POLL_INTERVAL);
+    }
+
+    log::warn!("orphan pid {pid} did not exit within {ORPHAN_SIGTERM_GRACE:?}; sending SIGKILL");
+    if let Err(err) = send_signal(pid, "KILL") {
+        log::warn!("kill -KILL {pid} failed: {err}");
+    }
+}
+
+fn read_lock_holder_pid(lock_path: &std::path::Path) -> Option<i32> {
+    let body = std::fs::read_to_string(lock_path).ok()?;
+    body.trim().parse::<i32>().ok().filter(|&p| p > 1)
+}
+
+fn process_is_alive(pid: i32) -> bool {
+    use std::process::Stdio;
+    StdCommand::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(Stdio::null())
+        .stdout(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn send_signal(pid: i32, signal: &str) -> std::io::Result<()> {
+    let status = StdCommand::new("kill")
+        .args(["-s", signal, &pid.to_string()])
+        .status()?;
+    if !status.success() {
+        return Err(std::io::Error::other(format!(
+            "kill -{signal} {pid} exited with {status}"
+        )));
+    }
+    Ok(())
 }
 
 fn spawn_first_available_sidecar(
@@ -331,6 +417,53 @@ mod tests {
             dir.path().to_path_buf(),
         );
         assert!(matches!(supervisor.state(), SupervisorState::NotStarted));
+    }
+
+    #[test]
+    fn read_lock_holder_pid_parses_trailing_newline() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("sidecar.lock");
+        std::fs::write(&path, "12345\n").expect("write");
+        assert_eq!(read_lock_holder_pid(&path), Some(12345));
+    }
+
+    #[test]
+    fn read_lock_holder_pid_returns_none_for_missing_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            read_lock_holder_pid(&dir.path().join("absent.lock")),
+            None
+        );
+    }
+
+    #[test]
+    fn read_lock_holder_pid_rejects_garbage() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("sidecar.lock");
+        std::fs::write(&path, "not a pid").expect("write");
+        assert_eq!(read_lock_holder_pid(&path), None);
+    }
+
+    #[test]
+    fn read_lock_holder_pid_rejects_pid_under_2() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("sidecar.lock");
+        std::fs::write(&path, "0").expect("write");
+        assert_eq!(read_lock_holder_pid(&path), None);
+        std::fs::write(&path, "1").expect("write");
+        assert_eq!(read_lock_holder_pid(&path), None);
+    }
+
+    #[test]
+    fn process_is_alive_returns_true_for_self() {
+        assert!(process_is_alive(std::process::id() as i32));
+    }
+
+    #[test]
+    fn process_is_alive_returns_false_for_unallocated_pid() {
+        // PID 99999999 is not allocatable on any modern Unix; pid_max
+        // tops out below this on macOS / Linux.
+        assert!(!process_is_alive(99_999_999));
     }
 
     #[test]

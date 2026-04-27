@@ -58,23 +58,58 @@ def write_runtime_file(path: Path, *, port: int, token: str) -> None:
 
 
 def acquire_lock(lock_path: Path) -> BufferedWriter:
-    """Acquire an exclusive non-blocking flock on ``lock_path``.
+    """Acquire an exclusive non-blocking flock on ``lock_path`` and
+    write the current process's PID into the file content.
 
     The returned file handle owns the lock — keep it alive for the
     process's lifetime. If another sidecar already holds the lock,
-    :class:`RuntimeError` is raised immediately.
+    :class:`RuntimeError` is raised, and the message includes the
+    holder's PID (read from the file body) so a supervising process
+    can decide to send it SIGTERM and retry.
+
+    Writing the PID is post-acquire so two racing acquirers don't
+    overwrite each other's PID before either has the flock.
     """
-    # Touch the file with mode 0600 if it does not exist yet.
-    fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
-    handle = os.fdopen(fd, "wb")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    handle = os.fdopen(fd, "r+b")
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as err:
+        holder_pid = _read_pid(handle)
         handle.close()
         raise RuntimeError(
             f"another sidecar instance holds the lock at {lock_path}"
+            f" (holder pid={holder_pid})"
         ) from err
+
+    # Got the lock — overwrite the PID payload so the next caller
+    # (or a supervising process) knows who to signal.
+    handle.seek(0)
+    handle.truncate()
+    handle.write(f"{os.getpid()}\n".encode("ascii"))
+    handle.flush()
+    try:
+        os.fsync(handle.fileno())
+    except OSError:
+        # Non-fatal — fsync isn't required for correctness here, only
+        # for visibility to a freshly-opened reader.
+        pass
     return handle
+
+
+def _read_pid(handle) -> str:  # type: ignore[no-untyped-def]
+    """Read whatever PID is currently written in the lock file body.
+
+    Returns "<unknown>" rather than raising — diagnostics-only.
+    """
+    try:
+        handle.seek(0)
+        body = handle.read()
+        if not body:
+            return "<empty>"
+        return body.decode("ascii", errors="replace").strip() or "<empty>"
+    except (OSError, ValueError):
+        return "<unreadable>"
 
 
 def remove_runtime_file(path: Path) -> None:

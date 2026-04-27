@@ -85,6 +85,32 @@ def test_acquire_lock_blocks_second_acquirer(tmp_path: Path):
         held.close()
 
 
+def test_acquire_lock_writes_pid_into_file(tmp_path: Path):
+    """Holder writes its PID so a supervising process can read it
+    and SIGTERM the holder on next start."""
+    import os
+
+    lock = tmp_path / "sidecar.lock"
+    held = acquire_lock(lock)
+    try:
+        body = lock.read_text("ascii").strip()
+        assert body == str(os.getpid())
+    finally:
+        held.close()
+
+
+def test_blocked_acquirer_error_message_includes_holder_pid(tmp_path: Path):
+    import os
+
+    lock = tmp_path / "sidecar.lock"
+    held = acquire_lock(lock)
+    try:
+        with pytest.raises(RuntimeError, match=f"holder pid={os.getpid()}"):
+            acquire_lock(lock)
+    finally:
+        held.close()
+
+
 def test_acquire_lock_releases_on_close(tmp_path: Path):
     lock = tmp_path / "sidecar.lock"
     first = acquire_lock(lock)
