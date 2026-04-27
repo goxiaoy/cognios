@@ -94,7 +94,8 @@ pub enum NodeEventKind {
 }
 
 /// Payload Rust posts to ``POST /events/node`` after a node mutation.
-/// Mirrors the sidecar's :class:`NodeEvent` Pydantic model.
+/// Mirrors the sidecar's :class:`NodeEvent` Pydantic model — Python
+/// expects snake_case keys, so we serialize as snake_case here.
 #[derive(Debug, Clone, Serialize)]
 pub struct NodeEvent {
     pub event: NodeEventKind,
@@ -112,7 +113,6 @@ pub struct NodeEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct NodeEventAck {
     pub accepted: bool,
     pub action: String,
@@ -128,8 +128,17 @@ pub struct SearchInput {
     pub limit: Option<u32>,
 }
 
+// Wire convention for sidecar-bound DTOs:
+// - Python emits snake_case JSON (dataclass.asdict / Pydantic default).
+// - Rust struct fields are snake_case (Rust idiom).
+// - The Tauri webview wants camelCase (TS idiom).
+//
+// `rename_all(serialize = "camelCase", deserialize = "snake_case")`
+// satisfies all three: deserialize from Python's snake_case, serialize
+// out to TS as camelCase, struct fields stay Rust-idiomatic.
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct SearchResultDto {
     pub node_id: String,
     pub kind: String,
@@ -142,7 +151,7 @@ pub struct SearchResultDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct SearchResponseDto {
     pub results: Vec<SearchResultDto>,
     pub degraded: bool,
@@ -153,7 +162,7 @@ pub struct SearchResponseDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct IndexStatusDto {
     pub queue_depth: u64,
     pub in_flight: Vec<String>,
@@ -161,7 +170,7 @@ pub struct IndexStatusDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct NodeIndexStatusDto {
     pub node_id: String,
     pub state: String,
@@ -174,13 +183,12 @@ pub struct NodeIndexStatusDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ModelsStatusDto {
     pub roles: HashMap<String, ModelRoleStatusDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct ModelRoleStatusDto {
     pub role: String,
     pub state: String,
@@ -193,7 +201,6 @@ pub struct ModelRoleStatusDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct LicenseAcceptResponseDto {
     pub accepted: bool,
     pub role: String,
@@ -428,5 +435,105 @@ mod tests {
         assert_eq!(urlencoded("abc-123"), "abc-123");
         assert_eq!(urlencoded("a/b"), "a%2Fb");
         assert_eq!(urlencoded("a b"), "a%20b");
+    }
+
+    /// Pins the wire convention. Python's sidecar emits snake_case;
+    /// the Rust DTO must deserialize that, and serialise to camelCase
+    /// for the Tauri webview. If this regresses we'll see a Cmd+K
+    /// "decode: error decoding response body" again.
+    #[test]
+    fn search_response_round_trips_snake_to_camel() {
+        let from_python = r#"{
+            "results": [{
+                "node_id": "abc-123",
+                "kind": "note",
+                "name": "x.md",
+                "score": 1.5,
+                "snippet": "hello",
+                "matched_in": "content",
+                "path": null
+            }],
+            "degraded": true,
+            "partial": null,
+            "state": "ready"
+        }"#;
+        let parsed: SearchResponseDto =
+            serde_json::from_str(from_python).expect("snake_case deserialize");
+        assert_eq!(parsed.results.len(), 1);
+        assert_eq!(parsed.results[0].node_id, "abc-123");
+        assert_eq!(parsed.results[0].matched_in, "content");
+
+        let to_ts = serde_json::to_value(&parsed).expect("serialize");
+        assert_eq!(to_ts["results"][0]["nodeId"], "abc-123");
+        assert_eq!(to_ts["results"][0]["matchedIn"], "content");
+        // Rust idiom keys must NOT leak through to the TS payload.
+        assert!(to_ts["results"][0].get("node_id").is_none());
+        assert!(to_ts["results"][0].get("matched_in").is_none());
+    }
+
+    #[test]
+    fn index_status_round_trips_snake_to_camel() {
+        let from_python = r#"{"queue_depth": 3, "in_flight": ["a"], "indexed_chunks": 100}"#;
+        let parsed: IndexStatusDto = serde_json::from_str(from_python).expect("decode");
+        assert_eq!(parsed.queue_depth, 3);
+        let to_ts = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(to_ts["queueDepth"], 3);
+        assert_eq!(to_ts["indexedChunks"], 100);
+    }
+
+    #[test]
+    fn node_index_status_round_trips_snake_to_camel() {
+        let from_python = r#"{
+            "node_id": "abc",
+            "state": "indexed",
+            "indexed_at": "2026-04-27T00:00:00Z",
+            "error": null,
+            "attempts": 1
+        }"#;
+        let parsed: NodeIndexStatusDto = serde_json::from_str(from_python).expect("decode");
+        assert_eq!(parsed.node_id, "abc");
+        let to_ts = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(to_ts["nodeId"], "abc");
+        assert_eq!(to_ts["indexedAt"], "2026-04-27T00:00:00Z");
+    }
+
+    #[test]
+    fn model_role_status_round_trips_snake_to_camel() {
+        let from_python = r#"{
+            "role": "captioner",
+            "state": "missing",
+            "commit": null,
+            "license_accepted": false,
+            "requires_acceptance": true,
+            "error": null
+        }"#;
+        let parsed: ModelRoleStatusDto = serde_json::from_str(from_python).expect("decode");
+        assert!(!parsed.license_accepted);
+        assert!(parsed.requires_acceptance);
+        let to_ts = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(to_ts["licenseAccepted"], false);
+        assert_eq!(to_ts["requiresAcceptance"], true);
+        assert!(to_ts.get("license_accepted").is_none());
+    }
+
+    #[test]
+    fn node_event_serialises_snake_case_for_python() {
+        let ev = NodeEvent {
+            event: NodeEventKind::NodeChanged,
+            node_id: "abc".into(),
+            kind: "note".into(),
+            name: "x.md".into(),
+            absolute_content_path: Some("/tmp/x.md".into()),
+            mount_id: None,
+            created_at: None,
+            updated_at: None,
+        };
+        let json = serde_json::to_value(&ev).unwrap();
+        // Python's Pydantic NodeEvent expects snake_case keys.
+        assert_eq!(json["event"], "node_changed");
+        assert_eq!(json["node_id"], "abc");
+        assert_eq!(json["absolute_content_path"], "/tmp/x.md");
+        // Optional fields with None must be skipped.
+        assert!(json.get("mount_id").is_none());
     }
 }
