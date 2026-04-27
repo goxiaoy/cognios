@@ -130,6 +130,56 @@ def test_hybrid_search_returns_empty_for_empty_table(tmp_path: Path):
     )
 
 
+def test_find_stale_chunks_returns_only_zero_vector_rows(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    store.upsert(
+        [
+            _make_chunk("node-stale", idx=0, text="stub-era"),
+            NodeChunk(
+                id="node-real:0",
+                node_id="node-real",
+                kind="note",
+                name="real",
+                text="indexed under a real embedder",
+                vector=[0.0] * (EMBEDDING_DIMENSION - 1) + [1.0],
+            ),
+        ]
+    )
+    stale = store.find_stale_chunks()
+    assert len(stale) == 1
+    assert stale[0]["id"] == "node-stale:0"
+
+
+def test_find_stale_chunks_returns_empty_for_empty_table(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    assert store.find_stale_chunks() == []
+
+
+def test_replace_rows_swaps_vectors_in_place(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    store.upsert(
+        [
+            _make_chunk("node-a", idx=0, text="hello"),
+            _make_chunk("node-a", idx=1, text="world"),
+        ]
+    )
+    stale = store.find_stale_chunks()
+    new_vec = [0.0] * (EMBEDDING_DIMENSION - 1) + [1.0]
+    updated = [{**row, "vector": new_vec} for row in stale]
+
+    written = store.replace_rows(updated)
+    assert written == 2
+    # No new rows added; in-place swap.
+    assert store.count() == 2
+    # The "stale" set is now empty.
+    assert store.find_stale_chunks() == []
+
+
+def test_replace_rows_handles_empty_input(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    assert store.replace_rows([]) == 0
+
+
 def test_open_store_is_idempotent(tmp_path: Path):
     path = tmp_path / "index.lance"
     open_store(path).upsert([_make_chunk("node-a")])

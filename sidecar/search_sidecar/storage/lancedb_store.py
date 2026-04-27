@@ -146,6 +146,50 @@ class LanceDBStore:
         """Total row count across all nodes."""
         return self._table.count_rows()
 
+    def find_stale_chunks(self) -> list[dict]:
+        """Return every row whose ``vector`` is the all-zero stub
+        marker — i.e. chunks indexed under :class:`StubEmbedder` that
+        a real embedder should re-embed.
+
+        L2-normalised vectors from :class:`GteEmbedder` always have
+        norm 1.0, so all-zero is an unambiguous discriminator. Each
+        returned dict carries every column needed to re-add the row
+        with a fresh vector via :meth:`replace_rows`.
+
+        Loads the full table into memory; v1 caps the workspace at
+        ~100K chunks where this is fine (<1 s, ~300 MB). A streaming
+        scan is the obvious upgrade for larger corpora but adds
+        complexity that is not warranted today.
+        """
+        if self._table.count_rows() == 0:
+            return []
+        rows = self._table.to_arrow().to_pylist()
+        stale: list[dict] = []
+        for row in rows:
+            vector = row.get("vector")
+            if vector is None:
+                continue
+            if all(x == 0.0 for x in vector):
+                stale.append(row)
+        return stale
+
+    def replace_rows(self, rows: list[dict]) -> int:
+        """Bulk replace by ``id``: delete every matching id, then add
+        the new rows. Used by the re-embed sweep, which feeds full
+        row dicts with refreshed ``vector`` values back in.
+
+        Mirrors :meth:`upsert` but skips the :class:`NodeChunk`
+        round-trip — the caller already has lancedb's native row
+        shape from :meth:`find_stale_chunks`.
+        """
+        if not rows:
+            return 0
+        ids = [r["id"] for r in rows]
+        in_clause = ", ".join(f"'{_quote(str(i))}'" for i in ids)
+        self._table.delete(f"id IN ({in_clause})")
+        self._table.add(rows)
+        return len(rows)
+
     def list_node_ids(self) -> set[str]:
         """The distinct ``node_id`` values currently in the table.
 

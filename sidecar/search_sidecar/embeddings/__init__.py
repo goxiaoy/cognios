@@ -21,11 +21,14 @@ from .factory import (
     select_embedder,
 )
 from .gte import GteEmbedder, GteEmbedderConfig
+from .reembed import ReembedSummary, reembed_stale_chunks
 
 __all__ = [
     "EmbedderFactoryError",
     "GteEmbedder",
     "GteEmbedderConfig",
+    "ReembedSummary",
     "can_load_real_embedder",
+    "reembed_stale_chunks",
     "select_embedder",
 ]

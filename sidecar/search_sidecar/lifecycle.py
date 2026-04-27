@@ -29,7 +29,7 @@ import uvicorn
 
 from .app import build_app
 from .auth import generate_token
-from .embeddings import select_embedder
+from .embeddings import reembed_stale_chunks, select_embedder
 from .index import IndexingRunner
 from .index.dispatch import Dispatcher
 from .index.queue import open_queue
@@ -82,6 +82,17 @@ def serve(storage_dir: Path) -> int:
         type(embedder).__name__,
         embedder.is_semantic,
     )
+    # Re-embed sweep: when a real embedder is wired and the lancedb
+    # table contains chunks left over from a prior stub-embedded
+    # session, transparently upgrade them in the background. Daemon
+    # thread so a slow sweep can never block sidecar shutdown.
+    if embedder.is_semantic:
+        threading.Thread(
+            target=_run_reembed_sweep,
+            args=(lancedb_store, embedder),
+            name="search-sidecar-reembed",
+            daemon=True,
+        ).start()
     dispatcher = Dispatcher(store=lancedb_store, embedder=embedder)
     indexing_runner = IndexingRunner(queue=indexing_queue, dispatcher=dispatcher)
     indexing_runner.start()
@@ -160,6 +171,19 @@ def serve(storage_dir: Path) -> int:
         lock_handle.close()
 
     return 0
+
+
+def _run_reembed_sweep(store, embedder) -> None:  # type: ignore[no-untyped-def]
+    """Background entrypoint for the re-embed sweep.
+
+    Wraps :func:`reembed_stale_chunks` with a top-level ``except`` so
+    a sweep failure does not propagate into a thread death exception
+    no one catches.
+    """
+    try:
+        reembed_stale_chunks(store, embedder)
+    except Exception as err:
+        LOG.warning("re-embed sweep crashed: %s", err)
 
 
 def _read_bound_port(server: uvicorn.Server) -> int | None:
