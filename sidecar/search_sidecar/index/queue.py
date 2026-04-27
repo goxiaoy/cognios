@@ -235,6 +235,27 @@ class IndexingQueue:
         rows = self._conn.execute("SELECT node_id FROM jobs").fetchall()
         return {r["node_id"] for r in rows}
 
+    def snapshot(self) -> dict[str, dict[str, str | None]]:
+        """Per-node ``(state, modified_at)`` snapshot of the queue.
+
+        Used by the resync flow: Rust calls ``GET /index/snapshot`` to
+        learn what the sidecar already has indexed, then diffs against
+        ``cognios.db`` to identify stale or missing nodes that need
+        forwarding. Returning lightweight metadata (no error strings,
+        no path) keeps the response payload small even for thousand-
+        node workspaces.
+        """
+        rows = self._conn.execute(
+            "SELECT node_id, state, modified_at FROM jobs"
+        ).fetchall()
+        return {
+            r["node_id"]: {
+                "state": r["state"],
+                "modified_at": r["modified_at"],
+            }
+            for r in rows
+        }
+
     # ----- lifecycle ----------------------------------------------------
 
     def reset_stale_indexing(self) -> int:

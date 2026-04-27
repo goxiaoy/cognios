@@ -62,3 +62,18 @@ def get_node_status(node_id: str, request: Request) -> dict:
         "error": job.last_error,
         "attempts": job.attempts,
     }
+
+
+@router.get("/snapshot")
+def get_index_snapshot(request: Request) -> dict:
+    """Per-node ``(state, modified_at)`` summary the Rust resync uses
+    to compute the diff against ``cognios.db``.
+
+    Returns one entry per node currently tracked by the queue. The
+    payload is intentionally lean — no paths, no error strings, no
+    indexed_at. Rust's diff only needs ``state`` (to detect "not
+    indexed yet") and ``modified_at`` (to detect "cognios has newer
+    content").
+    """
+    queue = _get_queue(request)
+    return {"nodes": queue.snapshot()}

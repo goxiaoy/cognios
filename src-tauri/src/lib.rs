@@ -135,6 +135,52 @@ pub fn run() {
             };
             url_jobs.resume_pending_jobs()?;
 
+            // Startup resync: once the sidecar reaches Running, diff
+            // its index against cognios.db and forward only the stale
+            // entries. For an unchanged workspace this is one HTTP
+            // call (the snapshot fetch) plus an in-memory diff;
+            // first-launch / post-crash workspaces forward exactly the
+            // nodes that need indexing. Backgrounded so it never
+            // blocks setup().
+            {
+                let resync_db = db.clone();
+                let resync_client = Arc::clone(&search_client);
+                let resync_storage = app_data_dir.clone();
+                let resync_supervisor = Arc::clone(&search_sidecar);
+                tauri::async_runtime::spawn(async move {
+                    use std::time::Duration;
+                    use crate::services::search::SupervisorState;
+                    // Wait up to 60 s for the sidecar to be Running.
+                    let mut waited = Duration::ZERO;
+                    let step = Duration::from_millis(500);
+                    while waited < Duration::from_secs(60) {
+                        if matches!(resync_supervisor.state(), SupervisorState::Running { .. })
+                        {
+                            break;
+                        }
+                        tokio::time::sleep(step).await;
+                        waited += step;
+                    }
+                    if !matches!(resync_supervisor.state(), SupervisorState::Running { .. })
+                    {
+                        log::info!("startup resync skipped: sidecar never reached Running");
+                        return;
+                    }
+                    let summary = services::search::forwarder::resync_all_nodes(
+                        &resync_db,
+                        &resync_client,
+                        &resync_storage,
+                    )
+                    .await;
+                    log::info!(
+                        "startup resync complete: forwarded={} deleted={} skipped={}",
+                        summary.forwarded,
+                        summary.deleted,
+                        summary.skipped
+                    );
+                });
+            }
+
             app.manage(AppState {
                 db,
                 storage_dir: app_data_dir,

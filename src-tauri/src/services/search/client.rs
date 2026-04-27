@@ -182,6 +182,22 @@ pub struct NodeIndexStatusDto {
     pub attempts: u32,
 }
 
+/// Lean per-node summary the resync flow uses to compute the diff
+/// against ``cognios.db``. Mirrors the sidecar's ``GET /index/snapshot``
+/// response shape — Python keeps it lightweight on purpose.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct IndexSnapshotEntry {
+    pub state: String,
+    #[serde(default)]
+    pub modified_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct IndexSnapshotDto {
+    pub nodes: HashMap<String, IndexSnapshotEntry>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelsStatusDto {
     pub roles: HashMap<String, ModelRoleStatusDto>,
@@ -340,6 +356,10 @@ impl SearchSidecarClient {
 
     pub async fn index_status(&self) -> SidecarEnvelope<IndexStatusDto> {
         self.get_envelope("/index/status").await
+    }
+
+    pub async fn index_snapshot(&self) -> SidecarEnvelope<IndexSnapshotDto> {
+        self.get_envelope("/index/snapshot").await
     }
 
     pub async fn node_index_status(
