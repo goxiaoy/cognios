@@ -5,6 +5,7 @@ import type {
   NodeIndexStatus,
   SearchQueryInput,
   SearchResponse,
+  SearchResult,
   SidecarEnvelope,
 } from "../../../lib/contracts/search";
 
@@ -15,6 +16,7 @@ export type {
   NodeIndexStatus,
   SearchQueryInput,
   SearchResponse,
+  SearchResult,
   SidecarEnvelope,
 };
 

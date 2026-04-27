@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { BookOpen, Files, Home, MessageCircle, Search, X } from "lucide-react";
+import { BookOpen, Files, Home, MessageCircle, Search } from "lucide-react";
 
 export type AppSection = "home" | "chat" | "explorer" | "memory";
 
@@ -14,22 +13,13 @@ const NAV_ITEMS: NavItem[] = [
 
 export function AppSidebar({
   activeSection,
-  onSelect
+  onSelect,
+  onOpenSearch,
 }: {
   activeSection: AppSection;
   onSelect(section: AppSection): void;
+  onOpenSearch(): void;
 }) {
-  const [searchOpen, setSearchOpen] = useState(false);
-
-  useEffect(() => {
-    if (!searchOpen) return;
-    function handleKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setSearchOpen(false);
-    }
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [searchOpen]);
-
   return (
     <aside className="app-sidebar">
       <div className="app-brand">
@@ -40,7 +30,7 @@ export function AppSidebar({
       <div className="app-ops">
         <button
           className="app-ops-item"
-          onClick={() => setSearchOpen(true)}
+          onClick={onOpenSearch}
           type="button"
         >
           <Search className="app-ops-icon" size={15} aria-hidden="true" />
@@ -63,33 +53,6 @@ export function AppSidebar({
           </button>
         ))}
       </nav>
-
-      {searchOpen ? (
-        <div
-          className="search-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Search"
-          onClick={(e) => { if (e.target === e.currentTarget) setSearchOpen(false); }}
-        >
-          <div className="search-modal">
-            <header className="search-modal-header">
-              <p className="eyebrow">Search</p>
-              <button
-                aria-label="Close search"
-                className="search-modal-close"
-                onClick={() => setSearchOpen(false)}
-                type="button"
-              >
-                <X size={14} />
-              </button>
-            </header>
-            <p className="muted-copy">
-              Search is not yet implemented in this milestone.
-            </p>
-          </div>
-        </div>
-      ) : null}
     </aside>
   );
 }

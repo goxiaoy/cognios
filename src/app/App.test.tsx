@@ -26,6 +26,12 @@ vi.mock("../lib/tauri/ipc", () => ({
   saveNoteContent: vi.fn(),
   readFileContent: (nodeId: string) => readFileContent(nodeId),
   showNodeInFileManager: (nodeId: string) => showNodeInFileManager(nodeId),
+  // Phase 2 / Unit 7 search-sidecar bridge — stubbed for the App test.
+  searchQuery: vi.fn().mockResolvedValue({ state: "initialising" }),
+  getIndexingStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
+  getNodeIndexingStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
+  getModelsStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
+  acceptModelLicense: vi.fn().mockResolvedValue({ state: "initialising" }),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({

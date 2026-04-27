@@ -5,7 +5,8 @@ import type { ExistingMount, ExplorerClient, ExplorerNode, MountSetupContext } f
 import type { CreateAction } from "./CreateMenu";
 import type { SelectModifiers } from "./ExplorerRow";
 import { useExplorerEvents } from "../hooks/useExplorerEvents";
-import { useExplorerStore, isDisplayFolder } from "../store/useExplorerStore";
+import { useExplorerStoreContext } from "../store/ExplorerStoreContext";
+import { isDisplayFolder } from "../store/useExplorerStore";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { CreateMenu } from "./CreateMenu";
 import { ExplorerInspector } from "./ExplorerInspector";
@@ -28,7 +29,13 @@ export function ExplorerLayout({
   active: boolean;
   client: ExplorerClient;
 }) {
-  const store = useExplorerStore(client);
+  // The store is hoisted to a context provider at the App root so
+  // SearchPalette + this layout share one instance. ``client`` stays
+  // on the props for the existing test harness (App.test.tsx mounts
+  // ExplorerLayout directly with an injected client) — when used
+  // there the test wraps it in <ExplorerStoreProvider client={client}>.
+  void client;
+  const store = useExplorerStoreContext();
   const [openModal, setOpenModal] = useState<CreateAction | null>(null);
   // parentId snapshot at modal-open time so the user can change selection
   // mid-modal without shifting the new node's parent.

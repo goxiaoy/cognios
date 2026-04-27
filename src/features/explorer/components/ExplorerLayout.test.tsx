@@ -1,6 +1,16 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExplorerLayout } from "./ExplorerLayout";
+import { ExplorerStoreProvider } from "../store/ExplorerStoreContext";
+
+function renderWithProvider(client: unknown) {
+  const typed = client as Parameters<typeof ExplorerStoreProvider>[0]["client"];
+  return render(
+    <ExplorerStoreProvider client={typed}>
+      <ExplorerLayout active={true} client={typed} />
+    </ExplorerStoreProvider>
+  );
+}
 import type { ExplorerClient } from "../types/explorer";
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -76,7 +86,7 @@ describe("ExplorerLayout", () => {
   });
 
   it("drags the tree separator within clamped bounds", async () => {
-    render(<ExplorerLayout active={true} client={makeClient()} />);
+    renderWithProvider(makeClient());
 
     await screen.findByText("long-file-name-that-needs-more-room-than-default.md");
 
@@ -103,7 +113,7 @@ describe("ExplorerLayout", () => {
   });
 
   it("keeps pane scroll containers independent", async () => {
-    const { container } = render(<ExplorerLayout active={true} client={makeClient()} />);
+    const { container } = renderWithProvider(makeClient());
 
     await screen.findByText("long-file-name-that-needs-more-room-than-default.md");
 
