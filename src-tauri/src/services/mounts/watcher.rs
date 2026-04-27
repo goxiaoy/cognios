@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use notify::{Config, PollWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 
-use crate::infrastructure::db::connection::open_database;
+use crate::infrastructure::db::connection::Database;
 use crate::infrastructure::db::mount_repository::{list_mount_watch_configs, reconcile_mount};
 
 const WATCHER_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -37,13 +37,13 @@ impl MountWatcherRegistry {
         }
     }
 
-    pub fn start_all(&self, db_path: &Path) -> Result<(), String> {
-        let conn = open_database(db_path).map_err(|error| error.to_string())?;
+    pub fn start_all(&self, db: Database) -> Result<(), String> {
+        let conn = db.connect().map_err(|error| error.to_string())?;
         let mounts = list_mount_watch_configs(&conn).map_err(|error| error.to_string())?;
 
         for mount in mounts {
             self.start_mount(
-                db_path.to_path_buf(),
+                db.clone(),
                 mount.mount_id,
                 PathBuf::from(mount.absolute_path),
             )?;
@@ -54,7 +54,7 @@ impl MountWatcherRegistry {
 
     pub fn start_mount(
         &self,
-        db_path: PathBuf,
+        db: Database,
         mount_id: String,
         mount_path: PathBuf,
     ) -> Result<(), String> {
@@ -81,12 +81,7 @@ impl MountWatcherRegistry {
                 if path_exists && !mount_path.is_dir() {
                     path_exists = false;
                     watcher = None;
-                    reconcile_and_emit(
-                        &db_path,
-                        &mount_id_for_thread,
-                        "mount-unavailable",
-                        &emitter,
-                    );
+                    reconcile_and_emit(&db, &mount_id_for_thread, "mount-unavailable", &emitter);
                     last_health_sync = Instant::now();
                     continue;
                 }
@@ -94,7 +89,7 @@ impl MountWatcherRegistry {
                 if !path_exists && mount_path.is_dir() {
                     path_exists = true;
                     watcher = create_watcher(&mount_path, event_tx.clone()).ok();
-                    reconcile_and_emit(&db_path, &mount_id_for_thread, "mount-available", &emitter);
+                    reconcile_and_emit(&db, &mount_id_for_thread, "mount-available", &emitter);
                     last_health_sync = Instant::now();
                     continue;
                 }
@@ -102,7 +97,7 @@ impl MountWatcherRegistry {
                 match event_rx.recv_timeout(WATCHER_POLL_INTERVAL) {
                     Ok(()) => {
                         while event_rx.recv_timeout(WATCHER_DEBOUNCE_WINDOW).is_ok() {}
-                        reconcile_and_emit(&db_path, &mount_id_for_thread, "mount-sync", &emitter);
+                        reconcile_and_emit(&db, &mount_id_for_thread, "mount-sync", &emitter);
                         last_health_sync = Instant::now();
                         if watcher.is_none() && mount_path.is_dir() {
                             watcher = create_watcher(&mount_path, event_tx.clone()).ok();
@@ -113,7 +108,7 @@ impl MountWatcherRegistry {
                         if path_exists && last_health_sync.elapsed() >= WATCHER_HEALTH_SYNC_INTERVAL
                         {
                             reconcile_and_emit(
-                                &db_path,
+                                &db,
                                 &mount_id_for_thread,
                                 "mount-health-sync",
                                 &emitter,
@@ -172,12 +167,12 @@ fn create_watcher(path: &Path, event_tx: Sender<()>) -> notify::Result<PollWatch
 }
 
 fn reconcile_and_emit(
-    db_path: &Path,
+    db: &Database,
     mount_id: &str,
     reason: &str,
     emitter: &Arc<dyn Fn(VfsChangeEvent) + Send + Sync>,
 ) {
-    let mut conn = match open_database(db_path) {
+    let mut conn = match db.connect() {
         Ok(conn) => conn,
         Err(error) => {
             eprintln!("failed to open database for watcher reconcile: {error}");

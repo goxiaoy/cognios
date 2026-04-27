@@ -2,7 +2,6 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::domain::vfs::node::ExplorerSnapshotDto;
-use crate::infrastructure::db::connection::open_database;
 use crate::infrastructure::db::mount_repository::{
     find_existing_mount_by_absolute_path, list_existing_mounts, CreateMountInput, ExistingMount,
 };
@@ -38,17 +37,20 @@ pub fn create_mount(
     input: CreateMountInput,
 ) -> Result<ExplorerSnapshotDto, CreateMountErrorDto> {
     let mut conn =
-        open_database(&state.db_path).map_err(|error: rusqlite::Error| CreateMountErrorDto::Message {
-            message: error.to_string(),
-        })?;
-    let normalized_path = normalize_mount_path(&input.path).map_err(|message| CreateMountErrorDto::Message {
-        message,
-    })?;
-    if let Some(existing_mount) =
-        find_existing_mount_by_absolute_path(&conn, &normalized_path.to_string_lossy())
-            .map_err(|error| CreateMountErrorDto::Message {
+        state
+            .db
+            .connect()
+            .map_err(|error: rusqlite::Error| CreateMountErrorDto::Message {
                 message: error.to_string(),
-            })?
+            })?;
+    let normalized_path = normalize_mount_path(&input.path)
+        .map_err(|message| CreateMountErrorDto::Message { message })?;
+    if let Some(existing_mount) =
+        find_existing_mount_by_absolute_path(&conn, &normalized_path.to_string_lossy()).map_err(
+            |error| CreateMountErrorDto::Message {
+                message: error.to_string(),
+            },
+        )?
     {
         return Err(CreateMountErrorDto::DuplicateMount {
             mount_id: existing_mount.node_id,
@@ -57,25 +59,26 @@ pub fn create_mount(
             message: "This folder is already mounted.".into(),
         });
     }
-    let created_mount =
-        create_mount_snapshot(&mut conn, &input).map_err(|message| CreateMountErrorDto::Message {
-            message,
-        })?;
-    state.mount_watchers.start_mount(
-        state.db_path.clone(),
-        created_mount.mount_id,
-        std::path::PathBuf::from(created_mount.absolute_path),
-    ).map_err(|message| CreateMountErrorDto::Message { message })?;
+    let created_mount = create_mount_snapshot(&mut conn, &input)
+        .map_err(|message| CreateMountErrorDto::Message { message })?;
+    state
+        .mount_watchers
+        .start_mount(
+            state.db.clone(),
+            created_mount.mount_id,
+            std::path::PathBuf::from(created_mount.absolute_path),
+        )
+        .map_err(|message| CreateMountErrorDto::Message { message })?;
 
     Ok(created_mount.snapshot)
 }
 
 #[tauri::command]
-pub fn get_mount_setup_context(
-    state: State<'_, AppState>,
-) -> Result<MountSetupContextDto, String> {
-    let conn =
-        open_database(&state.db_path).map_err(|error: rusqlite::Error| error.to_string())?;
+pub fn get_mount_setup_context(state: State<'_, AppState>) -> Result<MountSetupContextDto, String> {
+    let conn = state
+        .db
+        .connect()
+        .map_err(|error: rusqlite::Error| error.to_string())?;
     let existing_mounts = list_existing_mounts(&conn).map_err(|error| error.to_string())?;
     let existing_paths = existing_mounts
         .iter()

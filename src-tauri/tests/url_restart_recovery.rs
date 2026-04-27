@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use tempfile::tempdir;
 
-use cognios_lib::infrastructure::db::connection::open_database;
+use cognios_lib::infrastructure::db::connection::{open_database, Database};
 use cognios_lib::infrastructure::db::url_repository::create_url;
 use cognios_lib::infrastructure::db::url_repository::CreateUrlInput;
 use cognios_lib::services::url_indexing::queue::UrlJobRunner;
@@ -44,7 +44,7 @@ fn restart_requeues_failed_or_inflight_url_jobs() {
         .expect("mark error");
     }
 
-    let runner = UrlJobRunner::new(db_path.clone(), cache_dir, |_| {});
+    let runner = UrlJobRunner::new(Database::new(db_path.clone()), cache_dir, |_| {});
     runner.resume_pending_jobs().expect("resume jobs");
 
     let deadline = Instant::now() + Duration::from_secs(5);

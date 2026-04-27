@@ -5,7 +5,6 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::Deserialize;
 use tauri::State;
 
-use crate::infrastructure::db::connection::open_database;
 use crate::AppState;
 
 const MAX_THUMBNAIL_BYTES: u64 = 5 * 1024 * 1024;
@@ -21,20 +20,29 @@ pub fn get_node_thumbnail(
     state: State<'_, AppState>,
     input: GetNodeThumbnailInput,
 ) -> Result<String, String> {
-    let conn = open_database(&state.db_path).map_err(|_| "thumbnail unavailable".to_string())?;
+    let conn = state
+        .db
+        .connect()
+        .map_err(|_| "thumbnail unavailable".to_string())?;
     load_thumbnail_data_url(&conn, &input.node_id)
 }
 
 pub fn load_thumbnail_data_url(conn: &Connection, node_id: &str) -> Result<String, String> {
-    let record = load_thumbnail_record(conn, node_id)?.ok_or_else(|| "thumbnail unavailable".to_string())?;
-    let mime_type = mime_type_for_name(&record.name).ok_or_else(|| "thumbnail unavailable".to_string())?;
+    let record =
+        load_thumbnail_record(conn, node_id)?.ok_or_else(|| "thumbnail unavailable".to_string())?;
+    let mime_type =
+        mime_type_for_name(&record.name).ok_or_else(|| "thumbnail unavailable".to_string())?;
     let canonical_mount_root = PathBuf::from(&record.mount_root)
         .canonicalize()
         .map_err(|_| "thumbnail unavailable".to_string())?;
     let candidate_path = canonical_mount_root.join(record.relative_path);
-    let metadata = fs::symlink_metadata(&candidate_path).map_err(|_| "thumbnail unavailable".to_string())?;
+    let metadata =
+        fs::symlink_metadata(&candidate_path).map_err(|_| "thumbnail unavailable".to_string())?;
 
-    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > MAX_THUMBNAIL_BYTES {
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() > MAX_THUMBNAIL_BYTES
+    {
         return Err("thumbnail unavailable".into());
     }
 
@@ -57,7 +65,10 @@ struct ThumbnailRecord {
     relative_path: String,
 }
 
-fn load_thumbnail_record(conn: &Connection, node_id: &str) -> Result<Option<ThumbnailRecord>, String> {
+fn load_thumbnail_record(
+    conn: &Connection,
+    node_id: &str,
+) -> Result<Option<ThumbnailRecord>, String> {
     conn.query_row(
         "
         SELECT n.name, m.absolute_path, n.relative_path
@@ -97,8 +108,7 @@ fn base64_encode(bytes: &[u8]) -> String {
         let first = chunk.first().copied().unwrap_or_default();
         let second = chunk.get(1).copied().unwrap_or_default();
         let third = chunk.get(2).copied().unwrap_or_default();
-        let combined =
-            ((first as u32) << 16) | ((second as u32) << 8) | third as u32;
+        let combined = ((first as u32) << 16) | ((second as u32) << 8) | third as u32;
 
         output.push(TABLE[((combined >> 18) & 0x3f) as usize] as char);
         output.push(TABLE[((combined >> 12) & 0x3f) as usize] as char);

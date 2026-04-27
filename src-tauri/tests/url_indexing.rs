@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use tempfile::tempdir;
 
-use cognios_lib::infrastructure::db::connection::open_database;
+use cognios_lib::infrastructure::db::connection::{open_database, Database};
 use cognios_lib::infrastructure::db::node_repository::list_snapshot;
 use cognios_lib::infrastructure::db::url_repository::create_url;
 use cognios_lib::infrastructure::db::url_repository::CreateUrlInput;
@@ -61,7 +61,7 @@ fn url_node_appears_immediately_and_is_indexed_in_background() {
     assert_eq!(pending_node.state, "pending");
     assert_eq!(pending_node.name, url);
 
-    let runner = UrlJobRunner::new(db_path.clone(), cache_dir, |_| {});
+    let runner = UrlJobRunner::new(Database::new(db_path.clone()), cache_dir, |_| {});
     runner
         .enqueue(created_url.node_id.clone())
         .expect("job queued");
@@ -83,8 +83,7 @@ fn url_node_appears_immediately_and_is_indexed_in_background() {
             assert_eq!(node.name, "Example Title");
 
             let (title, description, preview_text, canonical_url, cache_path): UrlMetadataRow =
-                conn
-                .query_row(
+                conn.query_row(
                     "
                     SELECT title, description, preview_text, canonical_url, html_cache_path
                     FROM url_jobs

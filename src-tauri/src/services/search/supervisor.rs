@@ -3,26 +3,29 @@
 //! Lifecycle (Phase 1 / Unit 2 — single-attempt; restart-on-crash with
 //! exponential backoff is a follow-up commit on this branch):
 //!
-//! 1. `start()` spawns `binaries/search-sidecar` via `app.shell().sidecar()`
-//!    with `serve --storage-dir <abs-path>` arguments. Pumps the
-//!    CommandEvent stream in a background tokio task; logs stdout/stderr
-//!    at debug level; transitions state to `Failed` on `Terminated`.
+//! 1. `start()` spawns the search sidecar with `serve --storage-dir
+//!    <abs-path>` arguments. Dev builds run the local Python package from
+//!    `sidecar/`; packaged builds run `binaries/search-sidecar` via
+//!    Tauri's sidecar API. Pumps the CommandEvent stream in a background
+//!    tokio task; logs stdout/stderr at debug level; transitions state to
+//!    `Failed` on `Terminated`.
 //! 2. A second background task polls the runtime file (1 s ticks, 30 s
 //!    deadline). On success, transitions state to `Running { runtime }`.
 //! 3. `kill()` calls `child.kill()` on the stored handle (called from
 //!    Tauri's window-close handler in `lib.rs`).
 //!
-//! When the binary is missing in dev (no `binaries/search-sidecar-<host>`
-//! present yet), `start()` transitions to `Failed { retryable: false }`
-//! and logs at info level — the rest of the app continues to work.
+//! If no candidate can be spawned, `start()` transitions to `Failed` and
+//! logs the attempted launch paths — the rest of the app continues to work.
 //! Search and captioning are simply unavailable.
 
+#[cfg(debug_assertions)]
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::AppHandle;
-use tauri_plugin_shell::process::CommandChild;
+use tauri_plugin_shell::process::{Command, CommandChild};
 use tauri_plugin_shell::ShellExt;
 
 use super::runtime_file::{read_runtime_file, RuntimeFile, RuntimeFileError};
@@ -30,6 +33,11 @@ use super::runtime_file::{read_runtime_file, RuntimeFile, RuntimeFileError};
 const RUNTIME_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const RUNTIME_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const SIDECAR_BINARY_NAME: &str = "search-sidecar";
+
+struct SidecarCommandCandidate {
+    label: &'static str,
+    command: Command,
+}
 
 /// Public state snapshot — what the rest of the app sees about the
 /// supervisor at any moment.
@@ -44,7 +52,14 @@ pub enum SupervisorState {
 
 impl SupervisorState {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Stopped | Self::Failed { retryable: false, .. })
+        matches!(
+            self,
+            Self::Stopped
+                | Self::Failed {
+                    retryable: false,
+                    ..
+                }
+        )
     }
 }
 
@@ -93,7 +108,10 @@ impl SearchSidecarSupervisor {
     }
 
     fn take_child(&self) -> Option<CommandChild> {
-        self.inner.lock().ok().and_then(|mut inner| inner.child.take())
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|mut inner| inner.child.take())
     }
 
     /// Spawn the sidecar and return immediately. Background tasks pump
@@ -105,24 +123,9 @@ impl SearchSidecarSupervisor {
         self.set_state(SupervisorState::Spawning);
 
         let storage_dir_str = self.storage_dir.to_string_lossy().into_owned();
-
-        let cmd = match app.shell().sidecar(SIDECAR_BINARY_NAME) {
-            Ok(cmd) => cmd.args(["serve", "--storage-dir", &storage_dir_str]),
-            Err(err) => {
-                let reason = format!("could not resolve sidecar binary: {err}");
-                log::info!("{reason}");
-                self.set_state(SupervisorState::Failed {
-                    reason,
-                    retryable: false,
-                });
-                return;
-            }
-        };
-
-        let (mut rx, child) = match cmd.spawn() {
-            Ok((rx, child)) => (rx, child),
-            Err(err) => {
-                let reason = format!("sidecar spawn failed: {err}");
+        let (mut rx, child) = match spawn_first_available_sidecar(app, &storage_dir_str) {
+            Ok(spawned) => spawned,
+            Err(reason) => {
                 log::warn!("{reason}");
                 self.set_state(SupervisorState::Failed {
                     reason,
@@ -147,7 +150,10 @@ impl SearchSidecarSupervisor {
                         log::debug!("[sidecar stderr] {}", String::from_utf8_lossy(&bytes));
                     }
                     CommandEvent::Terminated(payload) => {
-                        let reason = format!("sidecar terminated: code={:?}, signal={:?}", payload.code, payload.signal);
+                        let reason = format!(
+                            "sidecar terminated: code={:?}, signal={:?}",
+                            payload.code, payload.signal
+                        );
                         log::warn!("{reason}");
                         supervisor.set_state(SupervisorState::Failed {
                             reason,
@@ -172,10 +178,7 @@ impl SearchSidecarSupervisor {
             while std::time::Instant::now() < deadline {
                 match read_runtime_file(&runtime_path) {
                     Ok(runtime) => {
-                        log::info!(
-                            "search sidecar runtime ready on port {}",
-                            runtime.port
-                        );
+                        log::info!("search sidecar runtime ready on port {}", runtime.port);
                         supervisor.set_state(SupervisorState::Running { runtime });
                         return;
                     }
@@ -220,6 +223,102 @@ impl SearchSidecarSupervisor {
     }
 }
 
+fn spawn_first_available_sidecar(
+    app: &AppHandle,
+    storage_dir: &str,
+) -> Result<
+    (
+        tauri::async_runtime::Receiver<tauri_plugin_shell::process::CommandEvent>,
+        CommandChild,
+    ),
+    String,
+> {
+    let mut errors = Vec::new();
+
+    for candidate in sidecar_command_candidates(app, storage_dir) {
+        match candidate.command.spawn() {
+            Ok((rx, child)) => {
+                log::info!("started search sidecar via {}", candidate.label);
+                return Ok((rx, child));
+            }
+            Err(err) => {
+                errors.push(format!("{}: {err}", candidate.label));
+            }
+        }
+    }
+
+    Err(format!(
+        "sidecar spawn failed; attempted {}",
+        errors.join("; ")
+    ))
+}
+
+fn sidecar_command_candidates(app: &AppHandle, storage_dir: &str) -> Vec<SidecarCommandCandidate> {
+    let mut candidates = Vec::new();
+
+    #[cfg(debug_assertions)]
+    {
+        let sidecar_dir = dev_sidecar_dir();
+        candidates.push(SidecarCommandCandidate {
+            label: "local Python sidecar via uv",
+            command: app.shell().command("uv").current_dir(&sidecar_dir).args([
+                "run",
+                "search-sidecar",
+                "serve",
+                "--storage-dir",
+                storage_dir,
+            ]),
+        });
+
+        let venv_python = dev_venv_python_path(&sidecar_dir);
+        if venv_python.exists() {
+            candidates.push(SidecarCommandCandidate {
+                label: "local Python sidecar via sidecar/.venv",
+                command: app
+                    .shell()
+                    .command(venv_python)
+                    .current_dir(&sidecar_dir)
+                    .args([
+                        "-m",
+                        "search_sidecar",
+                        "serve",
+                        "--storage-dir",
+                        storage_dir,
+                    ]),
+            });
+        }
+    }
+
+    match app.shell().sidecar(SIDECAR_BINARY_NAME) {
+        Ok(command) => candidates.push(SidecarCommandCandidate {
+            label: "packaged Tauri sidecar",
+            command: command.args(["serve", "--storage-dir", storage_dir]),
+        }),
+        Err(err) => log::info!("could not resolve packaged sidecar binary: {err}"),
+    }
+
+    candidates
+}
+
+#[cfg(debug_assertions)]
+fn dev_sidecar_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .join("sidecar")
+}
+
+#[cfg(all(debug_assertions, windows))]
+fn dev_venv_python_path(sidecar_dir: &Path) -> PathBuf {
+    sidecar_dir.join(".venv").join("Scripts").join("python.exe")
+}
+
+#[cfg(all(debug_assertions, not(windows)))]
+fn dev_venv_python_path(sidecar_dir: &Path) -> PathBuf {
+    sidecar_dir.join(".venv").join("bin").join("python")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +359,15 @@ mod tests {
         }
         .is_terminal());
         assert!(SupervisorState::Stopped.is_terminal());
+    }
+
+    #[test]
+    fn dev_sidecar_dir_points_at_repo_sidecar_package() {
+        let dir = dev_sidecar_dir();
+        assert_eq!(
+            dir.file_name().and_then(|name| name.to_str()),
+            Some("sidecar")
+        );
+        assert!(dir.join("pyproject.toml").exists());
     }
 }

@@ -1,8 +1,23 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
 use crate::infrastructure::db::migrations::run_migrations;
+
+#[derive(Clone, Debug)]
+pub struct Database {
+    path: PathBuf,
+}
+
+impl Database {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    pub fn connect(&self) -> rusqlite::Result<Connection> {
+        open_database(&self.path)
+    }
+}
 
 pub fn open_database(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;

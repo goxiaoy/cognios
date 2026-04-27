@@ -1,11 +1,10 @@
 use std::fs;
-use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use tempfile::tempdir;
 
-use cognios_lib::infrastructure::db::connection::open_database;
+use cognios_lib::infrastructure::db::connection::{open_database, Database};
 use cognios_lib::infrastructure::db::mount_repository::{create_mount, CreateMountInput};
 use cognios_lib::infrastructure::db::node_repository::list_snapshot;
 use cognios_lib::services::mounts::watcher::MountWatcherRegistry;
@@ -32,7 +31,7 @@ fn watcher_reconciles_mount_after_filesystem_changes() {
     let registry = MountWatcherRegistry::new(|_| {});
     registry
         .start_mount(
-            PathBuf::from(&db_path),
+            Database::new(db_path.clone()),
             created_mount.mount_id,
             mount_tempdir.path().to_path_buf(),
         )

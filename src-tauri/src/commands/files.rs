@@ -5,7 +5,6 @@ use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use tauri::State;
 
-use crate::infrastructure::db::connection::open_database;
 use crate::services::files::read_file_content::read_file_content as read_file_content_record;
 use crate::AppState;
 
@@ -26,7 +25,10 @@ pub fn read_file_content(
     state: State<'_, AppState>,
     input: ReadFileContentInput,
 ) -> Result<String, String> {
-    let conn = open_database(&state.db_path).map_err(|_| "file unavailable".to_string())?;
+    let conn = state
+        .db
+        .connect()
+        .map_err(|_| "file unavailable".to_string())?;
     read_file_content_record(&conn, &input.node_id)
 }
 
@@ -35,7 +37,10 @@ pub fn show_node_in_file_manager(
     state: State<'_, AppState>,
     input: ShowNodeInFileManagerInput,
 ) -> Result<(), String> {
-    let conn = open_database(&state.db_path).map_err(|_| "file unavailable".to_string())?;
+    let conn = state
+        .db
+        .connect()
+        .map_err(|_| "file unavailable".to_string())?;
     let notes_dir = state.storage_dir.join("notes");
     let path = resolve_real_node_path(&conn, &input.node_id, &notes_dir)?;
     reveal_in_file_manager(&path)

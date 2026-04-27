@@ -8,7 +8,6 @@ pub mod urls;
 use tauri::State;
 
 use crate::domain::vfs::node::ExplorerSnapshotDto;
-use crate::infrastructure::db::connection::open_database;
 use crate::infrastructure::db::node_repository::{
     create_folder as create_folder_record, list_snapshot, CreateFolderInput,
 };
@@ -17,7 +16,10 @@ use crate::AppState;
 
 #[tauri::command]
 pub fn get_explorer_snapshot(state: State<'_, AppState>) -> Result<ExplorerSnapshotDto, String> {
-    let conn = open_database(&state.db_path).map_err(|error: rusqlite::Error| error.to_string())?;
+    let conn = state
+        .db
+        .connect()
+        .map_err(|error: rusqlite::Error| error.to_string())?;
     list_snapshot(&conn).map_err(|error: rusqlite::Error| error.to_string())
 }
 
@@ -26,7 +28,10 @@ pub fn create_folder(
     state: State<'_, AppState>,
     input: CreateFolderInput,
 ) -> Result<ExplorerSnapshotDto, String> {
-    let conn = open_database(&state.db_path).map_err(|error: rusqlite::Error| error.to_string())?;
+    let conn = state
+        .db
+        .connect()
+        .map_err(|error: rusqlite::Error| error.to_string())?;
     let created =
         create_folder_record(&conn, &input).map_err(|error: rusqlite::Error| error.to_string())?;
     (state.emitter)(VfsChangeEvent {

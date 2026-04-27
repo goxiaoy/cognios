@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::infrastructure::db::connection::open_database;
+use crate::infrastructure::db::connection::Database;
 use crate::infrastructure::db::url_repository::{
     load_url_job, mark_url_error, mark_url_indexed, mark_url_indexing, requeue_stale_jobs,
     UrlJobResult,
@@ -12,19 +12,19 @@ use crate::services::url_indexing::cache::write_html_cache;
 use crate::services::url_indexing::registry::run_pipeline;
 
 pub struct UrlJobRunner {
-    db_path: PathBuf,
+    db: Database,
     cache_dir: PathBuf,
     emitter: Arc<dyn Fn(VfsChangeEvent) + Send + Sync>,
     active_jobs: Arc<Mutex<HashSet<String>>>,
 }
 
 impl UrlJobRunner {
-    pub fn new<F>(db_path: PathBuf, cache_dir: PathBuf, emitter: F) -> Self
+    pub fn new<F>(db: Database, cache_dir: PathBuf, emitter: F) -> Self
     where
         F: Fn(VfsChangeEvent) + Send + Sync + 'static,
     {
         Self {
-            db_path,
+            db,
             cache_dir,
             emitter: Arc::new(emitter),
             active_jobs: Arc::new(Mutex::new(HashSet::new())),
@@ -32,7 +32,7 @@ impl UrlJobRunner {
     }
 
     pub fn resume_pending_jobs(&self) -> Result<(), String> {
-        let conn = open_database(&self.db_path).map_err(|error| error.to_string())?;
+        let conn = self.db.connect().map_err(|error| error.to_string())?;
         let node_ids = requeue_stale_jobs(&conn).map_err(|error| error.to_string())?;
         for node_id in node_ids {
             self.enqueue(node_id)?;
@@ -52,18 +52,18 @@ impl UrlJobRunner {
             active_jobs.insert(node_id.clone());
         }
 
-        let db_path = self.db_path.clone();
+        let db = self.db.clone();
         let cache_dir = self.cache_dir.clone();
         let emitter = Arc::clone(&self.emitter);
         let active_jobs = Arc::clone(&self.active_jobs);
 
         std::thread::spawn(move || {
-            let result = process_job(&db_path, &cache_dir, &node_id, &emitter);
+            let result = process_job(&db, &cache_dir, &node_id, &emitter);
 
             let reason = match result {
                 Ok(()) => "url-indexed".to_string(),
                 Err(error) => {
-                    if let Ok(conn) = open_database(&db_path) {
+                    if let Ok(conn) = db.connect() {
                         let _ = mark_url_error(&conn, &node_id, &error);
                     }
                     "url-error".to_string()
@@ -85,12 +85,12 @@ impl UrlJobRunner {
 }
 
 fn process_job(
-    db_path: &Path,
+    db: &Database,
     cache_dir: &Path,
     node_id: &str,
     emitter: &Arc<dyn Fn(VfsChangeEvent) + Send + Sync>,
 ) -> Result<(), String> {
-    let conn = open_database(db_path).map_err(|error| error.to_string())?;
+    let conn = db.connect().map_err(|error| error.to_string())?;
     let job = load_url_job(&conn, node_id)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "url job not found".to_string())?;

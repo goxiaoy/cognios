@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
 
-use crate::infrastructure::db::connection::open_database;
+use crate::infrastructure::db::connection::Database;
 use crate::services::mounts::reconcile::reconcile_all_mounts;
 use crate::services::mounts::watcher::{MountWatcherRegistry, VfsChangeEvent};
 use crate::services::search::SearchSidecarSupervisor;
@@ -21,7 +21,7 @@ const VFS_EVENT_NAME: &str = "vfs://changed";
 pub type VfsEventEmitter = Arc<dyn Fn(VfsChangeEvent) + Send + Sync>;
 
 pub struct AppState {
-    pub db_path: PathBuf,
+    pub db: Database,
     pub storage_dir: PathBuf,
     pub mount_watchers: Arc<MountWatcherRegistry>,
     pub url_jobs: Arc<UrlJobRunner>,
@@ -44,6 +44,19 @@ pub fn run() {
                 .level_for("cognios_lib", log::LevelFilter::Debug)
                 .build(),
         )
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                let app_handle = window.app_handle();
+                let state = app_handle.state::<AppState>();
+                state.search_sidecar.kill();
+                state.mount_watchers.stop_all();
+                app_handle.exit(0);
+            }
+        })
         .setup(|app| {
             let home_dir = app
                 .path()
@@ -52,13 +65,14 @@ pub fn run() {
             let app_data_dir = storage_dir_from_home(home_dir);
 
             fs::create_dir_all(&app_data_dir).map_err(|error| error.to_string())?;
-            fs::create_dir_all(app_data_dir.join("notes"))
-                .map_err(|error| error.to_string())?;
+            fs::create_dir_all(app_data_dir.join("notes")).map_err(|error| error.to_string())?;
 
             let db_path = app_data_dir.join("cognios.db");
+            let db = Database::new(db_path);
             let cache_dir = app_data_dir.join("url-cache");
-            let mut conn =
-                open_database(&db_path).map_err(|error: rusqlite::Error| error.to_string())?;
+            let mut conn = db
+                .connect()
+                .map_err(|error: rusqlite::Error| error.to_string())?;
             reconcile_all_mounts(&mut conn)?;
             ensure_cache_dir(&cache_dir)?;
 
@@ -76,12 +90,12 @@ pub fn run() {
                     emitter(event);
                 }))
             };
-            mount_watchers.start_all(&db_path)?;
+            mount_watchers.start_all(db.clone())?;
 
             let url_jobs = {
                 let emitter = Arc::clone(&emitter);
                 Arc::new(UrlJobRunner::new(
-                    db_path.clone(),
+                    db.clone(),
                     cache_dir,
                     move |event: VfsChangeEvent| {
                         emitter(event);
@@ -103,7 +117,7 @@ pub fn run() {
             search_sidecar.start(app.handle());
 
             app.manage(AppState {
-                db_path,
+                db,
                 storage_dir: app_data_dir,
                 mount_watchers,
                 url_jobs,
