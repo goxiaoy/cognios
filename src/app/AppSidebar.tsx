@@ -1,14 +1,27 @@
-import { BookOpen, Files, Home, MessageCircle, Search } from "lucide-react";
+import {
+  BookOpen,
+  Files,
+  Home,
+  MessageCircle,
+  Search,
+  Settings,
+} from "lucide-react";
 
-export type AppSection = "home" | "chat" | "explorer" | "memory";
+export type AppSection =
+  | "home"
+  | "chat"
+  | "explorer"
+  | "memory"
+  | "settings";
 
 type NavItem = { id: AppSection; label: string; Icon: React.ComponentType<{ size?: number }> };
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "home",     label: "Home",    Icon: Home },
-  { id: "chat",     label: "Chat",    Icon: MessageCircle },
-  { id: "explorer", label: "Explorer",Icon: Files },
-  { id: "memory",   label: "Memory",  Icon: BookOpen },
+  { id: "home",     label: "Home",     Icon: Home },
+  { id: "chat",     label: "Chat",     Icon: MessageCircle },
+  { id: "explorer", label: "Explorer", Icon: Files },
+  { id: "memory",   label: "Memory",   Icon: BookOpen },
+  { id: "settings", label: "Settings", Icon: Settings },
 ];
 
 export function AppSidebar({

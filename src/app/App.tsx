@@ -7,6 +7,7 @@ import {
 } from "../features/explorer/store/ExplorerStoreContext";
 import { searchClient } from "../features/search/api/searchClient";
 import { SearchPalette } from "../features/search/components/SearchPalette";
+import { SettingsLayout } from "../features/settings/components/SettingsLayout";
 import { AppSection, AppSidebar } from "./AppSidebar";
 
 const SECTION_LABELS: Record<AppSection, string> = {
@@ -14,6 +15,7 @@ const SECTION_LABELS: Record<AppSection, string> = {
   chat: "Chat",
   explorer: "Explorer",
   memory: "Memory Timeline",
+  settings: "Settings",
 };
 
 export function App() {
@@ -103,7 +105,11 @@ function AppShell() {
             />
           </div>
 
-          {activeSection !== "explorer" ? (
+          {activeSection === "settings" ? (
+            <SettingsLayout client={searchClient} />
+          ) : null}
+
+          {activeSection !== "explorer" && activeSection !== "settings" ? (
             <section className="placeholder-panel">
               <p className="eyebrow">{sectionLabel}</p>
               <p className="muted-copy">

@@ -2827,3 +2827,156 @@ body.is-resizing-pane {
   background: transparent;
   margin: 0;
 }
+
+/* ---- Settings (Unit 10 part 1) ----------------------------------------- */
+
+.settings-layout {
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 920px;
+}
+
+.settings-header {
+  margin: 0;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.85rem;
+}
+
+@media (min-width: 760px) {
+  .settings-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+.settings-card {
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  padding: 0.85rem 1rem;
+  background: var(--surface-2, #f6f7f9);
+}
+
+.settings-card-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.settings-card-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+}
+
+.settings-role-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.settings-role-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 0.3rem;
+  background: var(--surface, white);
+  border: 1px solid var(--line);
+}
+
+.settings-role-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.settings-role-name {
+  font-weight: 500;
+}
+
+.settings-role-commit {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.settings-role-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+}
+
+.settings-role-state {
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 1px solid var(--line);
+}
+
+.settings-role-state.is-ready {
+  background: color-mix(in srgb, #2ecc71 18%, transparent 82%);
+  border-color: color-mix(in srgb, #2ecc71 35%, var(--line));
+}
+
+.settings-role-state.is-pending {
+  background: color-mix(in srgb, var(--accent) 18%, transparent 82%);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+.settings-role-state.is-missing {
+  color: var(--muted);
+}
+
+.settings-role-state.is-error {
+  background: color-mix(in srgb, #c0392b 18%, transparent 82%);
+  border-color: color-mix(in srgb, #c0392b 35%, var(--line));
+  color: #c0392b;
+}
+
+.settings-role-license {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.settings-role-error {
+  color: #c0392b;
+  font-size: 0.72rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.settings-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.settings-stat {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-stat dt {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settings-stat dd {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+}
