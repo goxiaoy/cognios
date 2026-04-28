@@ -160,6 +160,12 @@ pub struct SearchResultDto {
     pub path: Option<String>,
     #[serde(default)]
     pub modified_at: Option<String>,
+    /// Inclusive-start, exclusive-end character offsets of query
+    /// matches within `snippet`. Sorted, non-overlapping. The
+    /// frontend wraps these in `<mark>` spans via React text nodes
+    /// only — the offset list is the security-relevant boundary.
+    #[serde(default)]
+    pub match_offsets: Vec<(u32, u32)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -483,10 +489,11 @@ mod tests {
                 "kind": "note",
                 "name": "x.md",
                 "score": 1.5,
-                "snippet": "hello",
+                "snippet": "hello world",
                 "matched_in": "content",
                 "path": null,
-                "modified_at": "2026-04-27T10:00:00Z"
+                "modified_at": "2026-04-27T10:00:00Z",
+                "match_offsets": [[0, 5]]
             }],
             "degraded": true,
             "partial": null,
@@ -502,17 +509,20 @@ mod tests {
             parsed.results[0].modified_at.as_deref(),
             Some("2026-04-27T10:00:00Z")
         );
+        assert_eq!(parsed.results[0].match_offsets, vec![(0u32, 5u32)]);
         assert_eq!(parsed.next_cursor.as_deref(), Some("offset:50"));
 
         let to_ts = serde_json::to_value(&parsed).expect("serialize");
         assert_eq!(to_ts["results"][0]["nodeId"], "abc-123");
         assert_eq!(to_ts["results"][0]["matchedIn"], "content");
         assert_eq!(to_ts["results"][0]["modifiedAt"], "2026-04-27T10:00:00Z");
+        assert_eq!(to_ts["results"][0]["matchOffsets"], serde_json::json!([[0, 5]]));
         assert_eq!(to_ts["nextCursor"], "offset:50");
         // Rust idiom keys must NOT leak through to the TS payload.
         assert!(to_ts["results"][0].get("node_id").is_none());
         assert!(to_ts["results"][0].get("matched_in").is_none());
         assert!(to_ts["results"][0].get("modified_at").is_none());
+        assert!(to_ts["results"][0].get("match_offsets").is_none());
         assert!(to_ts.get("next_cursor").is_none());
     }
 

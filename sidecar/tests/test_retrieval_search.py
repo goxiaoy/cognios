@@ -399,6 +399,57 @@ def test_orchestrator_skips_hybrid_when_embedder_returns_empty(tmp_path):
     fake_store.fts_search.assert_called_once()
 
 
+def test_snippet_match_offsets_align_with_returned_string():
+    """Every offset pair returned alongside the snippet must point at
+    a substring equal (case-insensitive) to one of the query terms in
+    the *snippet* string the frontend will render."""
+    from search_sidecar.retrieval.search import _make_snippet
+
+    text = "The quick brown fox jumps over the lazy OAuth dog quickly"
+    snippet, offsets = _make_snippet(text, "OAuth quick")
+    assert offsets, "expected at least one match offset"
+    terms = {"oauth", "quick"}
+    for start, end in offsets:
+        slice_ = snippet[start:end].lower()
+        # Term may be a prefix-of (e.g. quick → quickly), so we accept
+        # any term that the slice starts with.
+        assert any(
+            slice_.startswith(term) or slice_ == term for term in terms
+        ), f"slice {slice_!r} did not match any of {terms}"
+
+
+def test_snippet_offsets_are_sorted_and_non_overlapping():
+    from search_sidecar.retrieval.search import _make_snippet
+
+    text = "OAuth oauth Oauth oauth"
+    _, offsets = _make_snippet(text, "OAuth")
+    assert offsets == sorted(offsets)
+    for (a_start, a_end), (b_start, _) in zip(offsets, offsets[1:]):
+        assert a_end <= b_start, "offsets overlap"
+
+
+def test_snippet_offsets_account_for_ellipsis_prefix():
+    """When the snippet is truncated with a leading "…", the offsets
+    must point at the match within the *prefixed* string, not the
+    raw text."""
+    from search_sidecar.retrieval.search import _make_snippet
+
+    text = "x" * 400 + " OAuth introduces PKCE for every public client " + "y" * 400
+    snippet, offsets = _make_snippet(text, "OAuth")
+    assert snippet.startswith("…")
+    assert offsets, "expected at least one match offset"
+    for start, end in offsets:
+        assert snippet[start:end].lower() == "oauth"
+
+
+def test_empty_query_returns_no_offsets():
+    from search_sidecar.retrieval.search import _make_snippet
+
+    snippet, offsets = _make_snippet("hello world", "")
+    assert snippet == "hello world"
+    assert offsets == []
+
+
 def test_snippet_is_bounded(setup, tmp_path: Path):
     store, orch = setup
     long_note = tmp_path / "long.md"

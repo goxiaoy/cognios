@@ -35,6 +35,13 @@ export interface SearchResult {
   matchedIn: "name" | "content" | "both";
   path?: string | null;
   modifiedAt?: string | null;
+  /**
+   * Inclusive-start, exclusive-end character offsets of query
+   * matches within `snippet`. Sorted, non-overlapping. The frontend
+   * wraps each in a `<mark>` span via React text nodes; never via
+   * `dangerouslySetInnerHTML` (SEC-FINDING-002).
+   */
+  matchOffsets?: [number, number][];
 }
 
 export interface SearchResponse {

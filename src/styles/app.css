@@ -962,6 +962,13 @@ button:disabled {
   overflow: hidden;
 }
 
+.search-result-snippet mark {
+  background: color-mix(in srgb, var(--accent) 28%, transparent 72%);
+  color: var(--text);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 .search-help {
   position: relative;
   display: inline-flex;

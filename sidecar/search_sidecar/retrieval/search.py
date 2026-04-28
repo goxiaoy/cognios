@@ -74,6 +74,12 @@ class SearchResult:
     matched_in: str  # "name" | "content" | "both"
     path: str | None = None  # breadcrumb; populated Rust-side post-filter
     modified_at: str | None = None  # ISO 8601, used for sort=modified
+    # Inclusive-start, exclusive-end character offsets of query-term
+    # matches within ``snippet``. Sorted, non-overlapping. The frontend
+    # renders these as ``<mark>`` spans via React text nodes only —
+    # never via dangerouslySetInnerHTML — so the offsets are the
+    # security-relevant boundary (SEC-FINDING-002).
+    match_offsets: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -237,7 +243,7 @@ class SearchOrchestrator:
         out: list[SearchResult] = []
         for r in best.values():
             text = r.get("text") or ""
-            snippet = _make_snippet(text, parsed.text)
+            snippet, offsets = _make_snippet(text, parsed.text)
             matched_in = _matched_in(parsed.text, r.get("name") or "", text)
             out.append(
                 SearchResult(
@@ -248,6 +254,7 @@ class SearchOrchestrator:
                     snippet=snippet,
                     matched_in=matched_in,
                     modified_at=_iso_or_none(r.get("modified_at")),
+                    match_offsets=tuple(offsets),
                 )
             )
         return out
@@ -387,20 +394,28 @@ def _row_score(row: dict) -> float:
     return 0.0
 
 
-def _make_snippet(text: str, query: str) -> str:
-    """Return a ``SNIPPET_MAX_CHARS``-bounded slice of ``text`` centred
-    on the first query-term match if any term matches; otherwise
-    return the leading window.
+def _make_snippet(
+    text: str, query: str
+) -> tuple[str, list[tuple[int, int]]]:
+    """Return a ``(snippet, match_offsets)`` pair.
+
+    The snippet is a ``SNIPPET_MAX_CHARS``-bounded slice of ``text``
+    centred on the first query-term match if any term matches;
+    otherwise the leading window. Match offsets are inclusive-start,
+    exclusive-end character indices into the *returned* snippet
+    string (not the original ``text``), already accounting for any
+    ellipsis prefix added when the snippet was truncated.
 
     The frontend renders snippets via React text nodes only — never
-    via dangerouslySetInnerHTML — so the snippet is plain text.
-    Highlighting offsets are a Phase 4 / Unit 8 concern; for now we
-    return raw text and let the UI compute match offsets client-side.
+    via ``dangerouslySetInnerHTML``. The orchestrator-side offset
+    computation is the security-relevant step: each offset must be
+    valid against the snippet string the frontend will render.
     """
     if not text:
-        return ""
+        return "", []
     if len(text) <= SNIPPET_MAX_CHARS:
-        return text.strip()
+        snippet = text.strip()
+        return snippet, _find_match_offsets(snippet, query)
 
     terms = [t for t in (query or "").split() if t.strip()]
     lower = text.lower()
@@ -410,15 +425,64 @@ def _make_snippet(text: str, query: str) -> str:
             continue
         start = max(0, idx - SNIPPET_MAX_CHARS // 3)
         end = min(len(text), start + SNIPPET_MAX_CHARS)
-        snippet = text[start:end].strip()
-        if start > 0:
-            snippet = "…" + snippet
-        if end < len(text):
-            snippet = snippet + "…"
-        return snippet
+        body = text[start:end]
+        # ``.strip()`` may chop characters; track lengths through the
+        # transform so the ellipsis prefix lands at the right offset.
+        leading_strip = len(body) - len(body.lstrip())
+        body_stripped = body.strip()
+        prefix = "…" if start > 0 else ""
+        suffix = "…" if end < len(text) else ""
+        snippet = prefix + body_stripped + suffix
+        # Re-find offsets within the actual snippet so the frontend
+        # doesn't have to know about the slicing/ellipsis math.
+        return snippet, _find_match_offsets(snippet, query)
 
     # No match — fall back to the leading window.
-    return text[:SNIPPET_MAX_CHARS].strip() + "…"
+    body = text[:SNIPPET_MAX_CHARS].strip()
+    snippet = body + "…"
+    return snippet, _find_match_offsets(snippet, query)
+
+
+def _find_match_offsets(
+    text: str, query: str
+) -> list[tuple[int, int]]:
+    """All inclusive-start, exclusive-end character offsets where
+    one of the query terms appears in ``text`` (case-insensitive).
+    Overlapping ranges are merged so the frontend can wrap each in a
+    single ``<mark>`` span.
+
+    The empty query returns no offsets — the snippet renders as
+    plain text. Single-character terms are tolerated but yield very
+    noisy highlights; the upstream FTS already filters those before
+    this function sees them.
+    """
+    if not text or not query:
+        return []
+    text_lower = text.lower()
+    raw: list[tuple[int, int]] = []
+    for term in query.lower().split():
+        if not term:
+            continue
+        cursor = 0
+        while True:
+            idx = text_lower.find(term, cursor)
+            if idx == -1:
+                break
+            raw.append((idx, idx + len(term)))
+            # Step past the match start so overlapping terms (e.g.
+            # ``query="a aa"`` against ``"aaa"``) all surface.
+            cursor = idx + 1
+    if not raw:
+        return []
+    raw.sort()
+    merged: list[tuple[int, int]] = [raw[0]]
+    for start, end in raw[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _matched_in(query: str, name: str, text: str) -> str:
