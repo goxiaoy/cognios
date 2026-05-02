@@ -1,17 +1,23 @@
 """Embedder selection logic.
 
-Two checks decide whether the orchestrator gets a real
-:class:`GteEmbedder` or the fallback :class:`StubEmbedder`:
+Three layers of choice:
 
-1. The ``embedding`` extra is installed (``optimum`` + ``transformers``
-   importable). Dev installs default to no extra; the StubEmbedder
-   path keeps test runs snappy.
-2. :class:`ModelManager` reports the embedding role as ``ready`` and
-   the on-disk files actually exist.
+1. **Settings binding.** If a :class:`SearchSettings` is passed and
+   the ``semantic-search`` feature is bound to a known provider,
+   the factory routes to that provider. Cloud providers go through
+   :class:`OpenAICompatEmbedder` with the API key resolved lazily
+   from the OS keychain. Local providers continue to use
+   :class:`GteEmbedder` (today's only local option).
+2. **Real-vs-stub for local providers.** When the local route is
+   chosen, the existing checks apply: ``embedding`` extra installed,
+   :class:`ModelManager` reports ready, on-disk files present.
+3. **Fallback.** Any failure or missing config returns
+   :class:`StubEmbedder`. The orchestrator inspects
+   :attr:`Embedder.is_semantic` to choose between hybrid retrieval
+   and the FTS-only fallback.
 
-Either failing → :class:`StubEmbedder`. The orchestrator inspects
-:attr:`Embedder.is_semantic` to choose between hybrid retrieval and
-the FTS-only fallback, so a missing model is not a fatal condition.
+Settings is optional — when it's ``None``, the factory behaves as it
+did pre-Unit-2 (defaults to local GTE behavior).
 """
 
 from __future__ import annotations
@@ -22,10 +28,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..index.embedder import Embedder, StubEmbedder
+from ..providers import (
+    PRESETS,
+    KeychainUnavailableError,
+    get_provider_secret,
+)
 from .gte import GteEmbedder, GteEmbedderConfig
+from .openai_compat import OpenAICompatEmbedder
 
 if TYPE_CHECKING:
     from ..models.manager import ModelManager
+    from ..settings import SearchSettings
 
 LOG = logging.getLogger("search_sidecar.embeddings.factory")
 
@@ -48,20 +61,126 @@ def can_load_real_embedder() -> bool:
 def select_embedder(
     *,
     model_manager: "ModelManager | None",
+    settings: "SearchSettings | None" = None,
     role: str = "embedding",
 ) -> Embedder:
     """Return the most-capable embedder available right now.
 
     Order:
-    1. Real :class:`GteEmbedder` when (a) the extra is installed,
-       (b) ``model_manager.is_ready(role)`` is True, and (c) the
-       per-role current commit dir contains the expected files.
-    2. :class:`StubEmbedder` for everything else.
+    1. If ``settings`` is provided, look at the ``semantic-search``
+       feature binding. Cloud provider → :class:`OpenAICompatEmbedder`
+       (lazy key from keychain). Unknown provider id → log + fall
+       through to local routing.
+    2. Local route: real :class:`GteEmbedder` when the extra is
+       installed, ``model_manager.is_ready(role)`` is True, and the
+       per-role current commit dir contains expected files.
+    3. :class:`StubEmbedder` for everything else.
 
-    Failures during real-embedder construction (missing files, model
-    init crash) are logged at WARN and fall through to the stub. The
-    orchestrator prefers degraded-FTS results to no results at all.
+    Failures during construction (missing files, model init crash,
+    keychain unavailable) are logged at WARN and fall through to the
+    stub. The orchestrator prefers degraded-FTS results to no results.
     """
+    cloud = _try_select_cloud_embedder(settings)
+    if cloud is not None:
+        return cloud
+    return _select_local_embedder(model_manager, role)
+
+
+def _try_select_cloud_embedder(
+    settings: "SearchSettings | None",
+) -> Embedder | None:
+    """If settings binds semantic-search to a cloud provider, build
+    that embedder. Returns ``None`` to indicate "fall through to
+    local routing" — both for the no-settings case and for
+    binding-points-at-local-provider.
+    """
+    if settings is None:
+        return None
+    feature = settings.features.get("semantic-search")
+    if feature is None or feature.provider_id is None:
+        return None
+    preset = PRESETS.get(feature.provider_id)
+    if preset is None:
+        LOG.warning(
+            "semantic-search bound to unknown provider_id %r; "
+            "falling back to local route",
+            feature.provider_id,
+        )
+        return None
+    if preset.provider_type != "cloud":
+        # Local provider — local route handles it.
+        return None
+    if "embedding" not in preset.capabilities:
+        LOG.warning(
+            "provider %r does not declare embedding capability; "
+            "falling back to local route",
+            preset.provider_id,
+        )
+        return None
+    if preset.base_url is None:
+        LOG.warning(
+            "cloud provider %r has no base_url in preset; falling back",
+            preset.provider_id,
+        )
+        return None
+    # Resolve model: caller-overridden → preset default → fail.
+    provider_cfg = settings.providers.get(preset.provider_id)
+    model = (
+        (provider_cfg.model_per_capability.get("embedding") if provider_cfg else None)
+        or preset.default_model_per_capability.get("embedding")
+    )
+    if not model:
+        LOG.warning(
+            "cloud provider %r has no embedding model configured; "
+            "falling back to local route",
+            preset.provider_id,
+        )
+        return None
+    base_url = (provider_cfg.base_url if provider_cfg else None) or preset.base_url
+    LOG.info(
+        "cloud embedder selected: provider=%s model=%s base_url=%s",
+        preset.provider_id,
+        model,
+        base_url,
+    )
+    return OpenAICompatEmbedder(
+        base_url=base_url,
+        model=model,
+        provider_label=preset.provider_id,
+        api_key_provider=lambda: _resolve_api_key(preset.provider_id),
+    )
+
+
+def _resolve_api_key(provider_id: str) -> str:
+    """Read the API key from the OS keychain at embed-time.
+
+    Lazy resolution is intentional: a key rotation between sidecar
+    boot and the next embed call is picked up without restart, and
+    the key never sits in the embedder's constructor closure for
+    longer than necessary.
+    """
+    try:
+        secret = get_provider_secret(provider_id)
+    except KeychainUnavailableError as err:
+        raise RuntimeError(
+            f"OS keychain unreachable for provider {provider_id!r}: {err}. "
+            "On Linux ensure a Secret Service daemon (gnome-keyring / "
+            "KeePassXC / kwallet) is running, or install `keyrings.alt`."
+        ) from err
+    if not secret:
+        raise RuntimeError(
+            f"no API key configured for provider {provider_id!r} — "
+            "add it via Settings → Providers."
+        )
+    return secret
+
+
+def _select_local_embedder(
+    model_manager: "ModelManager | None",
+    role: str,
+) -> Embedder:
+    """Original local-only selection logic, unchanged behavior for
+    callers that don't pass settings."""
     if model_manager is None:
         LOG.debug("no model_manager wired; using StubEmbedder")
         return StubEmbedder()

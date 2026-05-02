@@ -80,10 +80,14 @@ def serve(storage_dir: Path) -> int:
     # at 0600 from the start; subsequent runs no-op via the load path.
     if not settings_path.exists():
         save_settings(settings_path, load_settings(settings_path))
+    settings = load_settings(settings_path)
     model_manager = ModelManager(storage_dir=storage_dir, manifest=DEFAULTS)
     lancedb_store = open_store(search_dir / "index.lance")
     indexing_queue = open_queue(search_dir / "queue.db")
-    embedder = select_embedder(model_manager=model_manager)
+    embedder = select_embedder(
+        model_manager=model_manager,
+        settings=settings,
+    )
     LOG.info(
         "embedder selected: %s (is_semantic=%s)",
         type(embedder).__name__,

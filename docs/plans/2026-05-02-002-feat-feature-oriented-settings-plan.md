@@ -327,7 +327,7 @@ State machine for the workspace first-run banner:
 
 ---
 
-- [ ] **Unit 2: Provider registry + cloud embedder + Python keyring access**
+- [x] **Unit 2: Provider registry + cloud embedder + Python keyring access** — shipped in commit pending
 
 **Goal:** Sidecar knows what providers exist (preset table), can read API keys from the OS keychain, and can call OpenAI's `/v1/embeddings` to produce 768-dim vectors. Cloud embedding works end-to-end at the sidecar level.
 
