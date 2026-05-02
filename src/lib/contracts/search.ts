@@ -154,6 +154,48 @@ export interface StartModelDownloadInput {
   hfToken?: string;
 }
 
+// ----- Search settings (Phase 1 of feature-oriented Settings) ----------------
+
+/** A user-configured cloud or local provider entry stored in
+ * settings.json. References to API keys are by reference only —
+ * the real secret lives in the OS keychain. */
+export interface ProviderConfig {
+  providerId: string;
+  enabled: boolean;
+  apiKeyRef?: string | null;
+  baseUrl?: string | null;
+  modelPerCapability: Record<string, string>;
+}
+
+/** A user-facing feature toggle. ``enabled=true`` means the feature
+ * runs against ``providerId``; ``providerId=null`` means the feature
+ * is unbound and effectively off until the user picks one. */
+export interface FeatureConfig {
+  enabled: boolean;
+  providerId?: string | null;
+}
+
+/** Top-level persisted search settings. ``needsRestart`` is computed
+ * by the sidecar — true when the on-disk settings differ from what
+ * the running sidecar booted with in any dispatcher-affecting way. */
+export interface SearchSettings {
+  version: number;
+  providers: Record<string, ProviderConfig>;
+  features: Record<string, FeatureConfig>;
+  cloudConsentAcked: string[];
+  firstRunSkipped: boolean;
+  needsRestart: boolean;
+}
+
+export interface SetProviderSecretInput {
+  providerId: string;
+  secret: string;
+}
+
+export interface ProviderSecretLookupInput {
+  providerId: string;
+}
+
 /**
  * Helper to narrow an envelope to its `ready` variant. Returns the
  * inner `data` if present; otherwise `null`. Use this when the caller

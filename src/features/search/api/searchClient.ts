@@ -1,11 +1,18 @@
 import {
   acceptModelLicense,
+  deleteProviderSecret,
   getIndexingStatus,
   getModelsStatus,
   getNodeContent,
   getNodeIndexingStatus,
+  getProviderSecretPresent,
+  getSearchSettings,
+  readSearchSettingsFallback,
+  restartSidecar,
   searchQuery,
+  setProviderSecret,
   startModelDownload,
+  updateSearchSettings,
 } from "../../../lib/tauri/ipc";
 import type { SearchClient } from "../types/search";
 
@@ -17,4 +24,11 @@ export const searchClient: SearchClient = {
   modelsStatus: getModelsStatus,
   acceptModelLicense,
   startModelDownload,
+  settings: getSearchSettings,
+  updateSettings: updateSearchSettings,
+  restartSidecar,
+  readSettingsFallback: readSearchSettingsFallback,
+  setProviderSecret,
+  hasProviderSecret: getProviderSecretPresent,
+  deleteProviderSecret,
 };

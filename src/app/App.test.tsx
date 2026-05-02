@@ -34,6 +34,21 @@ vi.mock("../lib/tauri/ipc", () => ({
   acceptModelLicense: vi.fn().mockResolvedValue({ state: "initialising" }),
   startModelDownload: vi.fn().mockResolvedValue(undefined),
   getNodeContent: vi.fn().mockResolvedValue({ state: "initialising" }),
+  // Feature-oriented Settings (Phase 1) bridge — stubbed.
+  getSearchSettings: vi.fn().mockResolvedValue({ state: "initialising" }),
+  updateSearchSettings: vi.fn().mockResolvedValue({ state: "initialising" }),
+  readSearchSettingsFallback: vi.fn().mockResolvedValue({
+    version: 1,
+    providers: {},
+    features: {},
+    cloudConsentAcked: [],
+    firstRunSkipped: false,
+    needsRestart: false,
+  }),
+  restartSidecar: vi.fn().mockResolvedValue(undefined),
+  setProviderSecret: vi.fn().mockResolvedValue(undefined),
+  getProviderSecretPresent: vi.fn().mockResolvedValue(false),
+  deleteProviderSecret: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({

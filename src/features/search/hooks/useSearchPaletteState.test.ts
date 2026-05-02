@@ -22,6 +22,20 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
     acceptModelLicense: vi.fn(),
     startModelDownload: vi.fn(),
     nodeContent: vi.fn(),
+    settings: vi.fn().mockResolvedValue({ state: "initialising" }),
+    updateSettings: vi.fn().mockResolvedValue({ state: "initialising" }),
+    restartSidecar: vi.fn().mockResolvedValue(undefined),
+    readSettingsFallback: vi.fn().mockResolvedValue({
+      version: 1,
+      providers: {},
+      features: {},
+      cloudConsentAcked: [],
+      firstRunSkipped: false,
+      needsRestart: false,
+    }),
+    setProviderSecret: vi.fn().mockResolvedValue(undefined),
+    hasProviderSecret: vi.fn().mockResolvedValue(false),
+    deleteProviderSecret: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }

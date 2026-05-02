@@ -6,6 +6,7 @@ import { searchClient } from "../features/search/api/searchClient";
 import { SearchPalette } from "../features/search/components/SearchPalette";
 import { SettingsModal } from "../features/settings/components/SettingsModal";
 import { AppSection, AppSidebar } from "./AppSidebar";
+import { WorkspaceBanner } from "./components/WorkspaceBanner";
 
 const SECTION_LABELS: Record<AppSection, string> = {
   home: "Home",
@@ -92,6 +93,8 @@ function AppShell() {
           ) : null}
         </div>
       </div>
+
+      <WorkspaceBanner client={searchClient} onOpenSettings={openSettings} />
 
       {paletteOpen ? (
         <SearchPalette

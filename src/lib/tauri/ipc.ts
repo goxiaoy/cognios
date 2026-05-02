@@ -5,8 +5,11 @@ import type {
   ModelsStatus,
   NodeContent,
   NodeIndexStatus,
+  ProviderSecretLookupInput,
   SearchQueryInput,
   SearchResponse,
+  SearchSettings,
+  SetProviderSecretInput,
   SidecarEnvelope,
   StartModelDownloadInput,
 } from "../contracts/search";
@@ -177,6 +180,46 @@ export async function hasHfToken(): Promise<boolean> {
 
 export async function deleteHfToken(): Promise<void> {
   return invoke<void>("delete_hf_token");
+}
+
+export async function getSearchSettings(): Promise<
+  SidecarEnvelope<SearchSettings>
+> {
+  return invoke<SidecarEnvelope<SearchSettings>>("get_search_settings");
+}
+
+export async function updateSearchSettings(
+  settings: SearchSettings
+): Promise<SidecarEnvelope<SearchSettings>> {
+  return invoke<SidecarEnvelope<SearchSettings>>("update_search_settings", {
+    settings,
+  });
+}
+
+export async function readSearchSettingsFallback(): Promise<SearchSettings> {
+  return invoke<SearchSettings>("read_search_settings_fallback");
+}
+
+export async function restartSidecar(): Promise<void> {
+  return invoke<void>("restart_sidecar");
+}
+
+export async function setProviderSecret(
+  input: SetProviderSecretInput
+): Promise<void> {
+  return invoke<void>("set_provider_secret", { input });
+}
+
+export async function getProviderSecretPresent(
+  input: ProviderSecretLookupInput
+): Promise<boolean> {
+  return invoke<boolean>("get_provider_secret_present", { input });
+}
+
+export async function deleteProviderSecret(
+  input: ProviderSecretLookupInput
+): Promise<void> {
+  return invoke<void>("delete_provider_secret", { input });
 }
 
 function isDuplicateMountError(error: unknown): error is DuplicateMountError {

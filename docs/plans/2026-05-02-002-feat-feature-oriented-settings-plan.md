@@ -420,7 +420,7 @@ State machine for the workspace first-run banner:
 
 ---
 
-- [x] **Unit 4: Rust IPC commands + supervisor restart + secure_storage extension + degraded-mode fallback read** — shipped in commit pending
+- [x] **Unit 4: Rust IPC commands + supervisor restart + secure_storage extension + degraded-mode fallback read** — shipped in commit `221a646`
 
 **Goal:** The frontend can read/write settings, restart the sidecar, and manage provider secrets through Tauri commands. When the sidecar fails to start, the frontend can still read `settings.json` directly through Rust for a read-only view.
 
@@ -476,7 +476,7 @@ State machine for the workspace first-run banner:
 
 ---
 
-- [ ] **Unit 5: Frontend SearchClient extensions + workspace banner + restart UX**
+- [x] **Unit 5: Frontend SearchClient extensions + workspace banner + restart UX** — shipped in commit pending
 
 **Goal:** TS contracts, IPC bindings, and the always-visible workspace banner for first-run download. The banner runs the consent → download → done/failed/skipped state machine. A separate Restart confirmation modal handles provider-swap restarts triggered from Settings.
 
