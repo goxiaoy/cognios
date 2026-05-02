@@ -605,7 +605,7 @@ State machine for the workspace first-run banner:
 
 ---
 
-- [x] **Unit 7: Diagnostics relocation + cloud egress consent gate + final cleanup** — shipped in commit pending
+- [x] **Unit 7: Diagnostics relocation + cloud egress consent gate + final cleanup** — shipped in commit `3e605e6`
 
 **Goal:** Old `ModelManagerStatus` card is reachable but no longer the primary view; cloud egress consent gate prevents silent first-time data send; final wiring cleanup.
 
