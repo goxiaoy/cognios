@@ -16,8 +16,6 @@ import { MarkdownPreview } from "./MarkdownPreview";
 import { MountModal } from "./MountModal";
 import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
 import { UrlModal } from "./UrlModal";
-import { searchClient } from "../../search/api/searchClient";
-import { SearchView } from "../../search/components/SearchView";
 import { error as logError } from "../../../lib/logger";
 
 const DEFAULT_TREE_WIDTH = 240;
@@ -401,37 +399,22 @@ export function ExplorerLayout({
     handleModalClose();
   }
 
-  // Center surface decision. The dedicated search view (Cmd+Shift+F)
-  // takes the highest priority: when active it replaces every other
-  // file surface. Otherwise note > markdown > image > placeholder.
-  const showSearchView = !!store.activeSearchView;
-  const showNote =
-    !showSearchView && !!store.activeNoteId && !!store.activeNote;
-  const showMarkdown =
-    !showSearchView &&
-    !showNote &&
-    !!store.activePreviewId &&
-    !!store.activePreview;
+  // Center surface decision. Note takes render priority if both fields are set.
+  const showNote = !!store.activeNoteId && !!store.activeNote;
+  const showMarkdown = !showNote && !!store.activePreviewId && !!store.activePreview;
   const showImage =
-    !showSearchView &&
     !showNote &&
     !showMarkdown &&
     !!store.activeImagePreviewId &&
     !!store.activeImagePreview;
   // Cannot-preview placeholder: a single non-previewable file node is selected.
   const showCannotPreview =
-    !showSearchView &&
     !showNote &&
     !showMarkdown &&
     !showImage &&
     store.selectionCount === 1 &&
     store.selectedArtifacts[0].kind === "file";
-  const showWelcome =
-    !showSearchView &&
-    !showNote &&
-    !showMarkdown &&
-    !showImage &&
-    !showCannotPreview;
+  const showWelcome = !showNote && !showMarkdown && !showImage && !showCannotPreview;
   const clampedTreeWidth = clampTreeWidth(treeWidth, workspaceRef.current);
 
   function handleResizeStart(event: ReactMouseEvent<HTMLDivElement>) {
@@ -515,13 +498,6 @@ export function ExplorerLayout({
           <div className="detail-surface-scroll">
             {store.isLoading ? (
               <p className="empty-state">Loading explorer...</p>
-            ) : showSearchView ? (
-              <SearchView
-                client={client}
-                searchClient={searchClient}
-                initialQuery={store.activeSearchView!.initialQuery}
-                onClose={store.closeSearchView}
-              />
             ) : (
               <>
                 {activeFileNode ? <Breadcrumbs nodes={breadcrumbNodes} /> : null}

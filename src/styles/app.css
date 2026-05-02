@@ -899,6 +899,86 @@ button:disabled {
   font-size: 0.78rem;
 }
 
+.search-palette-filter-toggle {
+  position: relative;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0.25rem 0.4rem;
+  border-radius: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.search-palette-filter-toggle:hover,
+.search-palette-filter-toggle.is-open {
+  background: color-mix(in srgb, var(--line) 60%, white 40%);
+  color: var(--text);
+}
+
+.search-palette-filter-toggle.has-active {
+  color: var(--text);
+}
+
+.search-palette-filter-count {
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+  min-width: 1rem;
+  text-align: center;
+}
+
+.search-palette-filters {
+  padding: 0.6rem 0.85rem;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--line) 18%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Compact tweaks so the filter bar fits inside the overlay. */
+.search-palette-filters .search-filter-bar {
+  gap: 0.5rem 0.85rem;
+}
+
+.search-palette-filters .search-filter-legend {
+  font-size: 0.66rem;
+}
+
+.search-palette-filters .search-filter-chip {
+  font-size: 0.74rem;
+  padding: 0.15rem 0.55rem;
+}
+
+.search-palette-filters .search-filter-select,
+.search-palette-filters .search-filter-date {
+  font-size: 0.78rem;
+  padding: 0.18rem 0.4rem;
+}
+
+.search-palette-filter-clear {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.74rem;
+  padding: 0.15rem 0.3rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.search-palette-filter-clear:hover {
+  color: var(--text);
+}
+
 .search-result-row {
   display: flex;
   gap: 0.55rem;

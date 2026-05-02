@@ -1,52 +1,54 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import { Search, SlidersHorizontal, X } from "lucide-react";
 import { useExplorerStoreContext } from "../../explorer/store/ExplorerStoreContext";
 import { useRecentNodes } from "../hooks/useRecentNodes";
 import {
-  SEARCH_PALETTE_RESULT_CAP,
+  SEARCH_PALETTE_PAGE_SIZE,
   useSearchPaletteState,
 } from "../hooks/useSearchPaletteState";
 import type { SearchClient, SearchResult } from "../types/search";
 import { QuerySyntaxHelp } from "./QuerySyntaxHelp";
+import {
+  collectMountNodes,
+  EMPTY_FILTERS,
+  SearchFilterBar,
+} from "./SearchFilterBar";
 import { SearchResultRow } from "./SearchResultRow";
 
 const LIST_ID = "search-palette-results";
 const ROW_ID = (idx: number) => `search-palette-row-${idx}`;
 
 /**
- * The Cmd+K palette.
+ * The Cmd+K palette — the only search surface in the app. Holds the
+ * free-text query, the structured filter bar (kind chips, mount
+ * picker, modified-date inputs, sort dropdown), and the result list
+ * with cursor-based "Load more" pagination.
  *
- * Renders as a global overlay; the App owns the open/close state and
- * mounts/unmounts this component. Internally tracks active-row and
- * the search lifecycle via :func:`useSearchPaletteState`.
+ * Filters and free text both flow into the same composed query
+ * string via :func:`buildQueryString`, so the sidecar parses one
+ * inline-syntax form regardless of how the user supplied operators.
  *
- * ARIA pattern: combobox + listbox. The input is the combobox, the
- * `<ul>` is the listbox, and each row is an option. ``aria-activedescendant``
- * tracks the keyboard-active row without moving DOM focus off the input —
- * keystrokes always go to the search field.
+ * ARIA pattern: combobox + listbox. The input is the combobox; the
+ * `<ul>` is the listbox; rows are options.
+ * ``aria-activedescendant`` tracks the keyboard-active row without
+ * moving DOM focus off the input — keystrokes always go to the
+ * search field.
  */
 export function SearchPalette({
   client,
   onClose,
   onActivate,
-  onShowAll,
 }: {
   client: SearchClient;
   onClose(): void;
   onActivate(): void;
-  /**
-   * Invoked when the user follows the "More results" affordance.
-   * Carries the in-flight palette query forward so the dedicated
-   * search view can seed its input field. Optional — when omitted,
-   * the affordance still renders but does nothing on click (used by
-   * tests that don't exercise navigation).
-   */
-  onShowAll?(query: string): void;
 }) {
   const store = useExplorerStoreContext();
   const recentNodes = useRecentNodes();
-  const { state, setQuery } = useSearchPaletteState(client);
+  const { state, setQuery, setFilters, setSort, loadMore } =
+    useSearchPaletteState(client);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
@@ -64,9 +66,16 @@ export function SearchPalette({
     setActiveIndex(0);
   }, [state.results, state.envelopeState, recentNodes]);
 
+  // Mount choices for the filter bar — derived from the explorer
+  // snapshot so the picker stays in sync with the workspace.
+  const mounts = useMemo(
+    () => collectMountNodes(store.snapshot.roots),
+    [store.snapshot.roots]
+  );
+
   // Build the list of items the keyboard navigates over. When the
-  // query is empty we render the recent-nodes list; otherwise the
-  // search results.
+  // query is empty (and no filters are applied) we render the
+  // recent-nodes list; otherwise the search results.
   const navigableItems: NavigableItem[] = useMemo(() => {
     if (state.envelopeState === "idle") {
       return recentNodes.map((node) => ({
@@ -127,6 +136,22 @@ export function SearchPalette({
     [activate, activeIndex, close, navigableItems]
   );
 
+  const filtersActive =
+    state.filters.kinds.length > 0 ||
+    state.filters.mountId !== null ||
+    state.filters.modifiedAfter !== null ||
+    state.filters.modifiedBefore !== null;
+  const filterCount =
+    state.filters.kinds.length +
+    (state.filters.mountId ? 1 : 0) +
+    (state.filters.modifiedAfter ? 1 : 0) +
+    (state.filters.modifiedBefore ? 1 : 0);
+
+  function handleClearFilters() {
+    setFilters(EMPTY_FILTERS);
+    setSort("relevance");
+  }
+
   return (
     <div
       className="search-overlay"
@@ -160,6 +185,20 @@ export function SearchPalette({
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={handleKeyDown}
           />
+          <button
+            type="button"
+            className={`search-palette-filter-toggle${filtersOpen ? " is-open" : ""}${filtersActive ? " has-active" : ""}`}
+            aria-pressed={filtersOpen}
+            aria-label={filtersOpen ? "Hide filters" : "Show filters"}
+            onClick={() => setFiltersOpen((open) => !open)}
+          >
+            <SlidersHorizontal size={14} aria-hidden="true" />
+            {filterCount > 0 ? (
+              <span className="search-palette-filter-count" aria-hidden="true">
+                {filterCount}
+              </span>
+            ) : null}
+          </button>
           <QuerySyntaxHelp />
           <button
             type="button"
@@ -170,6 +209,27 @@ export function SearchPalette({
             <X size={14} aria-hidden="true" />
           </button>
         </div>
+
+        {filtersOpen ? (
+          <div className="search-palette-filters">
+            <SearchFilterBar
+              filters={state.filters}
+              sort={state.sort}
+              mounts={mounts}
+              onFiltersChange={setFilters}
+              onSortChange={setSort}
+            />
+            {filtersActive ? (
+              <button
+                type="button"
+                className="search-palette-filter-clear"
+                onClick={handleClearFilters}
+              >
+                Clear filters
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {state.degraded ? (
           <div className="search-palette-banner" role="status">
@@ -185,10 +245,8 @@ export function SearchPalette({
           activate={activate}
           recentNodes={recentNodes}
           results={state.results}
-          hasMore={state.hasMore}
-          onShowAll={
-            onShowAll ? () => onShowAll(state.query) : undefined
-          }
+          hasMore={state.nextCursor !== null}
+          onLoadMore={() => void loadMore()}
         />
 
         <span className="visually-hidden" aria-live="polite">
@@ -212,9 +270,15 @@ function PaletteBody({
   recentNodes,
   results,
   hasMore,
-  onShowAll,
+  onLoadMore,
 }: {
-  state: "idle" | "loading" | "ready" | "initialising" | "unavailable";
+  state:
+    | "idle"
+    | "loading"
+    | "ready"
+    | "loadingMore"
+    | "initialising"
+    | "unavailable";
   error: string | null;
   activeIndex: number;
   setActiveIndex(idx: number): void;
@@ -222,13 +286,14 @@ function PaletteBody({
   recentNodes: ReturnType<typeof useRecentNodes>;
   results: SearchResult[];
   hasMore: boolean;
-  onShowAll?: () => void;
+  onLoadMore(): void;
 }) {
   if (state === "idle") {
     if (recentNodes.length === 0) {
       return (
         <div className="search-palette-empty muted-copy">
-          Start typing to search across notes, URLs, and mounted files.
+          Start typing or apply a filter to search across notes, URLs, and
+          mounted files.
         </div>
       );
     }
@@ -288,7 +353,7 @@ function PaletteBody({
     );
   }
 
-  // ready
+  // ready or loadingMore
   if (results.length === 0) {
     return (
       <div className="search-palette-empty muted-copy">No matches.</div>
@@ -315,26 +380,27 @@ function PaletteBody({
         ))}
       </ul>
       {hasMore ? (
-        onShowAll ? (
-          <button
-            type="button"
-            className="search-palette-more search-palette-more-button"
-            onClick={onShowAll}
-          >
-            More results in dedicated view (⇧⌘F)
-          </button>
-        ) : (
-          <div className="search-palette-more muted-copy">
-            More results in dedicated view (⇧⌘F).
-          </div>
-        )
+        <button
+          type="button"
+          className="search-palette-more search-palette-more-button"
+          disabled={state === "loadingMore"}
+          onClick={onLoadMore}
+        >
+          {state === "loadingMore" ? "Loading…" : "Load more"}
+        </button>
       ) : null}
     </>
   );
 }
 
 function liveRegionMessage(
-  state: "idle" | "loading" | "ready" | "initialising" | "unavailable",
+  state:
+    | "idle"
+    | "loading"
+    | "ready"
+    | "loadingMore"
+    | "initialising"
+    | "unavailable",
   count: number
 ): string {
   switch (state) {
@@ -342,6 +408,8 @@ function liveRegionMessage(
       return count > 0 ? `${count} recent items` : "";
     case "loading":
       return "Searching";
+    case "loadingMore":
+      return "Loading more results";
     case "ready":
       return count === 0 ? "No matches" : `${count} ${count === 1 ? "result" : "results"}`;
     case "initialising":
@@ -351,6 +419,5 @@ function liveRegionMessage(
   }
 }
 
-// Sentinel — exposes the result cap so tests can assert the slice
-// applied by useSearchPaletteState.
-export const SEARCH_PALETTE_VISIBLE_CAP = SEARCH_PALETTE_RESULT_CAP;
+// Sentinel — exposes the page size so tests can assert it.
+export const SEARCH_PALETTE_VISIBLE_CAP = SEARCH_PALETTE_PAGE_SIZE;

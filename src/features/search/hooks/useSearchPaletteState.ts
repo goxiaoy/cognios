@@ -1,38 +1,50 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  buildQueryString,
+  EMPTY_FILTERS,
+  type SearchFilters,
+} from "../components/SearchFilterBar";
 import type {
   SearchClient,
   SearchResponse,
+  SearchSort,
   SidecarEnvelope,
 } from "../types/search";
 
 const DEBOUNCE_MS = 150;
-const RESULT_CAP = 15;
-// Sidecar returns up to N+1 to flag "more available"; the +1 is dropped
-// from the rendered list and replaced with a "More results" affordance.
-const OVER_FETCH = RESULT_CAP + 1;
+// Page size when paging into deeper results via "Load more". The
+// palette is now the only search surface (the dedicated view was
+// removed in favour of folding filters + cursor pagination here),
+// so the page size matches what the dedicated view used.
+const PAGE_SIZE = 25;
 
 export type PaletteEnvelopeState =
   | "idle"        // empty query; show recent-nodes placeholder
   | "loading"     // request in flight
   | "ready"       // results received
+  | "loadingMore" // appending the next page
   | "initialising" // sidecar warming up
   | "unavailable"; // sidecar gone
 
 export interface PaletteState {
   query: string;
+  filters: SearchFilters;
+  sort: SearchSort;
   envelopeState: PaletteEnvelopeState;
   results: SearchResponse["results"];
   degraded: boolean;
-  hasMore: boolean;
+  nextCursor: string | null;
   error: string | null;
 }
 
 const INITIAL: PaletteState = {
   query: "",
+  filters: EMPTY_FILTERS,
+  sort: "relevance",
   envelopeState: "idle",
   results: [],
   degraded: false,
-  hasMore: false,
+  nextCursor: null,
   error: null,
 };
 
@@ -45,6 +57,19 @@ export function useSearchPaletteState(client: SearchClient) {
     setState((prev) => ({ ...prev, query: next }));
   }, []);
 
+  const setFilters = useCallback((next: SearchFilters) => {
+    setState((prev) => ({ ...prev, filters: next }));
+  }, []);
+
+  const setSort = useCallback((next: SearchSort) => {
+    setState((prev) => ({ ...prev, sort: next }));
+  }, []);
+
+  // The composed query the sidecar parses — free text plus inline
+  // ``kind:``, ``mount:``, ``modified:>=…`` operators built from the
+  // structured filter object. Recomputed every render; cheap.
+  const composedQuery = buildQueryString(state.query, state.filters);
+
   // Clean up any pending debounce on unmount.
   useEffect(() => {
     return () => {
@@ -52,20 +77,20 @@ export function useSearchPaletteState(client: SearchClient) {
     };
   }, []);
 
-  // Debounced search. Each new query bumps `requestIdRef` so a stale
-  // response from a slower in-flight call cannot overwrite a newer
-  // result list.
+  // Debounced first-page search. Each new (query, filters, sort)
+  // bumps `requestIdRef` so a stale response from a slower in-flight
+  // call cannot overwrite a newer result list.
   useEffect(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
 
-    const trimmed = state.query.trim();
+    const trimmed = composedQuery.trim();
     if (!trimmed) {
       setState((prev) => ({
         ...prev,
         envelopeState: "idle",
         results: [],
         degraded: false,
-        hasMore: false,
+        nextCursor: null,
         error: null,
       }));
       return;
@@ -78,7 +103,8 @@ export function useSearchPaletteState(client: SearchClient) {
       try {
         envelope = await client.search({
           query: trimmed,
-          limit: OVER_FETCH,
+          limit: PAGE_SIZE,
+          sort: state.sort,
         });
       } catch (err) {
         if (myRequestId !== requestIdRef.current) return;
@@ -86,7 +112,7 @@ export function useSearchPaletteState(client: SearchClient) {
           ...prev,
           envelopeState: "unavailable",
           results: [],
-          hasMore: false,
+          nextCursor: null,
           error: err instanceof Error ? err.message : "Search failed",
         }));
         return;
@@ -94,14 +120,12 @@ export function useSearchPaletteState(client: SearchClient) {
       if (myRequestId !== requestIdRef.current) return;
 
       if (envelope.state === "ready" && envelope.data) {
-        const all = envelope.data.results;
-        const visible = all.slice(0, RESULT_CAP);
         setState((prev) => ({
           ...prev,
           envelopeState: "ready",
-          results: visible,
+          results: envelope.data!.results,
           degraded: envelope.data?.degraded ?? false,
-          hasMore: all.length > RESULT_CAP,
+          nextCursor: envelope.data?.nextCursor ?? null,
           error: null,
         }));
       } else if (envelope.state === "initialising") {
@@ -109,7 +133,7 @@ export function useSearchPaletteState(client: SearchClient) {
           ...prev,
           envelopeState: "initialising",
           results: [],
-          hasMore: false,
+          nextCursor: null,
           error: null,
         }));
       } else {
@@ -117,15 +141,65 @@ export function useSearchPaletteState(client: SearchClient) {
           ...prev,
           envelopeState: "unavailable",
           results: [],
-          hasMore: false,
+          nextCursor: null,
           error: envelope.error ?? "Search unavailable",
         }));
       }
     }, DEBOUNCE_MS);
-  }, [client, state.query]);
+  }, [client, composedQuery, state.sort]);
 
-  return { state, setQuery };
+  // Load more — appends the next page using the opaque cursor the
+  // last response handed back. Concurrent first-page requests bump
+  // ``requestIdRef``, so a load-more triggered against a stale
+  // result set is naturally cancelled.
+  const loadMore = useCallback(async () => {
+    const cursor = state.nextCursor;
+    if (!cursor) return;
+    if (state.envelopeState === "loadingMore") return;
+    const trimmed = composedQuery.trim();
+    if (!trimmed) return;
+
+    const myRequestId = ++requestIdRef.current;
+    setState((prev) => ({ ...prev, envelopeState: "loadingMore" }));
+    let envelope: SidecarEnvelope<SearchResponse>;
+    try {
+      envelope = await client.search({
+        query: trimmed,
+        limit: PAGE_SIZE,
+        sort: state.sort,
+        cursor,
+      });
+    } catch (err) {
+      if (myRequestId !== requestIdRef.current) return;
+      setState((prev) => ({
+        ...prev,
+        envelopeState: "unavailable",
+        error: err instanceof Error ? err.message : "Failed to load more",
+      }));
+      return;
+    }
+    if (myRequestId !== requestIdRef.current) return;
+    if (envelope.state === "ready" && envelope.data) {
+      setState((prev) => ({
+        ...prev,
+        envelopeState: "ready",
+        results: [...prev.results, ...envelope.data!.results],
+        nextCursor: envelope.data?.nextCursor ?? null,
+      }));
+    } else {
+      setState((prev) => ({
+        ...prev,
+        envelopeState: "ready",
+        error: envelope.error ?? null,
+      }));
+    }
+  }, [client, composedQuery, state.envelopeState, state.nextCursor, state.sort]);
+
+  return { state, setQuery, setFilters, setSort, loadMore };
 }
 
 export const SEARCH_PALETTE_DEBOUNCE_MS = DEBOUNCE_MS;
-export const SEARCH_PALETTE_RESULT_CAP = RESULT_CAP;
+export const SEARCH_PALETTE_PAGE_SIZE = PAGE_SIZE;
+// Backwards-compatible alias for the old "result cap" sentinel still
+// referenced by some tests / consumers; equals the page size now.
+export const SEARCH_PALETTE_RESULT_CAP = PAGE_SIZE;

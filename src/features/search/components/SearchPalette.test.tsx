@@ -69,7 +69,7 @@ describe("SearchPalette", () => {
     renderPalette();
     await waitFor(() => {
       expect(
-        screen.getByText(/start typing to search across notes/i)
+        screen.getByText(/start typing or apply a filter/i)
       ).toBeInTheDocument();
     });
   });
@@ -234,5 +234,108 @@ describe("SearchPalette", () => {
       "aria-selected",
       "true"
     );
+  });
+
+  it("toggles the filter bar via the slider button", () => {
+    renderPalette();
+    const toggle = screen.getByRole("button", { name: /show filters/i });
+    // Initially collapsed: no kind chips visible.
+    expect(screen.queryByRole("button", { name: /^Notes$/ })).toBeNull();
+    fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: /^Notes$/ })).toBeInTheDocument();
+    // Toggle copy flips after open.
+    fireEvent.click(screen.getByRole("button", { name: /hide filters/i }));
+    expect(screen.queryByRole("button", { name: /^Notes$/ })).toBeNull();
+  });
+
+  it("clicking a kind chip triggers a search with the inline-syntax filter", async () => {
+    const search = vi.fn().mockResolvedValue({
+      state: "ready",
+      data: {
+        results: [
+          {
+            nodeId: "abc",
+            kind: "note",
+            name: "OAuth.md",
+            score: 1,
+            snippet: "PKCE",
+            matchedIn: "content",
+          },
+        ],
+        degraded: false,
+        partial: null,
+        state: "ready",
+      },
+    });
+    renderPalette({ searchClient: makeSearchClient({ search }) });
+    fireEvent.click(screen.getByRole("button", { name: /show filters/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Notes$/ }));
+    await waitFor(() => {
+      expect(search).toHaveBeenCalled();
+    });
+    const lastCall = search.mock.calls[search.mock.calls.length - 1][0];
+    expect(lastCall.query).toBe("kind:note");
+  });
+
+  it("renders the Load more button when nextCursor is present and appends results on click", async () => {
+    let call = 0;
+    const search = vi.fn().mockImplementation(() => {
+      call += 1;
+      if (call === 1) {
+        return Promise.resolve({
+          state: "ready",
+          data: {
+            results: [
+              {
+                nodeId: "a",
+                kind: "note",
+                name: "A.md",
+                score: 1,
+                snippet: "x",
+                matchedIn: "content",
+              },
+            ],
+            degraded: false,
+            partial: null,
+            state: "ready",
+            nextCursor: "offset:25",
+          },
+        });
+      }
+      return Promise.resolve({
+        state: "ready",
+        data: {
+          results: [
+            {
+              nodeId: "b",
+              kind: "note",
+              name: "B.md",
+              score: 0.9,
+              snippet: "y",
+              matchedIn: "content",
+            },
+          ],
+          degraded: false,
+          partial: null,
+          state: "ready",
+          nextCursor: null,
+        },
+      });
+    });
+    renderPalette({ searchClient: makeSearchClient({ search }) });
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "x" },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("A.md")).toBeInTheDocument();
+    });
+    const loadMore = screen.getByRole("button", { name: /^Load more$/ });
+    fireEvent.click(loadMore);
+    await waitFor(() => {
+      expect(screen.getByText("B.md")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("button", { name: /^Load more$/ })
+    ).toBeNull();
   });
 });
