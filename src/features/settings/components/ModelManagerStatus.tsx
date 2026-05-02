@@ -5,8 +5,10 @@ import type {
   ModelsStatus,
   SidecarEnvelope,
 } from "../../../lib/contracts/search";
+import { setHfToken as setHfTokenIpc } from "../../../lib/tauri/ipc";
 import type { SearchClient } from "../../search/types/search";
 import type { ProgressByRole } from "../hooks/useModelDownloadProgress";
+import { LicenseAcceptanceModal } from "./LicenseAcceptanceModal";
 
 const ROLE_LABELS: Record<string, string> = {
   embedding: "Embedding",
@@ -157,6 +159,7 @@ function ModelRoleActions({
   progress?: ModelDownloadEvent;
 }) {
   const [action, setAction] = useState<ActionState>({ kind: "idle" });
+  const [showLicenseModal, setShowLicenseModal] = useState(false);
 
   const liveState = progress?.state;
   const liveError = progress?.error;
@@ -164,12 +167,16 @@ function ModelRoleActions({
     liveState === "downloading" || liveState === "verifying";
 
   // Acceptance gate: a role that requires license acceptance must
-  // be accepted before download is offered.
+  // be accepted before download is offered. Roles that gate on a
+  // HuggingFace token (currently only the Gemma captioner) walk
+  // through LicenseAcceptanceModal; non-gated roles flip
+  // immediately via a single IPC call.
   const needsLicense = role.requiresAcceptance && !role.licenseAccepted;
+  const needsHfToken = needsLicense && role.role === "captioner";
   const canDownload =
     role.state === "missing" && !needsLicense && !isLiveDownloading;
 
-  async function handleAccept() {
+  async function handleSimpleAccept() {
     setAction({ kind: "starting" });
     try {
       const env = await client.acceptModelLicense(role.role);
@@ -184,7 +191,8 @@ function ModelRoleActions({
     } catch (err) {
       setAction({
         kind: "error",
-        message: err instanceof Error ? err.message : "License acceptance failed.",
+        message:
+          err instanceof Error ? err.message : "License acceptance failed.",
       });
     }
   }
@@ -204,48 +212,63 @@ function ModelRoleActions({
   }
 
   return (
-    <div className="settings-role-actions">
-      {needsLicense ? (
-        <button
-          type="button"
-          className="settings-action"
-          disabled={action.kind === "starting"}
-          onClick={() => void handleAccept()}
-        >
-          {action.kind === "starting" ? "Accepting…" : "Accept license"}
-        </button>
+    <>
+      <div className="settings-role-actions">
+        {needsLicense ? (
+          <button
+            type="button"
+            className="settings-action"
+            disabled={action.kind === "starting"}
+            onClick={() =>
+              needsHfToken
+                ? setShowLicenseModal(true)
+                : void handleSimpleAccept()
+            }
+          >
+            {action.kind === "starting" ? "Accepting…" : "Accept license"}
+          </button>
+        ) : null}
+        {canDownload ? (
+          <button
+            type="button"
+            className="settings-action"
+            disabled={action.kind === "starting"}
+            onClick={() => void handleDownload()}
+          >
+            {action.kind === "starting" ? "Starting…" : "Download"}
+          </button>
+        ) : null}
+        {role.state === "error" ? (
+          <button
+            type="button"
+            className="settings-action"
+            disabled={action.kind === "starting" || isLiveDownloading}
+            onClick={() => void handleDownload()}
+          >
+            Retry
+          </button>
+        ) : null}
+        {action.kind === "error" ? (
+          <span className="settings-role-error" role="status">
+            {action.message}
+          </span>
+        ) : null}
+        {liveError ? (
+          <span className="settings-role-error" role="status">
+            {liveError}
+          </span>
+        ) : null}
+      </div>
+      {showLicenseModal ? (
+        <LicenseAcceptanceModal
+          role={role.role}
+          client={client}
+          setHfToken={setHfTokenIpc}
+          onAccepted={() => setShowLicenseModal(false)}
+          onCancel={() => setShowLicenseModal(false)}
+        />
       ) : null}
-      {canDownload ? (
-        <button
-          type="button"
-          className="settings-action"
-          disabled={action.kind === "starting"}
-          onClick={() => void handleDownload()}
-        >
-          {action.kind === "starting" ? "Starting…" : "Download"}
-        </button>
-      ) : null}
-      {role.state === "error" ? (
-        <button
-          type="button"
-          className="settings-action"
-          disabled={action.kind === "starting" || isLiveDownloading}
-          onClick={() => void handleDownload()}
-        >
-          Retry
-        </button>
-      ) : null}
-      {action.kind === "error" ? (
-        <span className="settings-role-error" role="status">
-          {action.message}
-        </span>
-      ) : null}
-      {liveError ? (
-        <span className="settings-role-error" role="status">
-          {liveError}
-        </span>
-      ) : null}
-    </div>
+    </>
   );
 }
 

@@ -14,6 +14,15 @@ import type {
 import type { SearchClient } from "../../search/types/search";
 import { ModelManagerStatus } from "./ModelManagerStatus";
 
+// ModelManagerStatus's LicenseAcceptanceModal calls setHfToken via
+// the Tauri IPC bridge. JSDOM has no Tauri runtime; mock the module
+// so the modal can complete its happy path without invoking
+// `invoke()` directly.
+const setHfTokenMock = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../../lib/tauri/ipc", () => ({
+  setHfToken: (token: string) => setHfTokenMock(token),
+}));
+
 afterEach(() => cleanup());
 
 function readyEnvelope(roles: ModelsStatus["roles"]): SidecarEnvelope<ModelsStatus> {
@@ -151,7 +160,8 @@ describe("ModelManagerStatus", () => {
     });
   });
 
-  it("blocks Download for license-gated roles until license is accepted", async () => {
+  it("blocks Download for license-gated captioner until license is accepted via modal", async () => {
+    setHfTokenMock.mockClear();
     const client = makeClient();
     render(
       <ModelManagerStatus
@@ -166,8 +176,21 @@ describe("ModelManagerStatus", () => {
         })}
       />
     );
+    // No Download until license is accepted.
     expect(screen.queryByRole("button", { name: /^Download$/i })).toBeNull();
+    // Captioner license requires HF token — click goes through modal.
     fireEvent.click(screen.getByRole("button", { name: /accept license/i }));
+    expect(client.acceptModelLicense).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText(/HuggingFace token/i), {
+      target: { value: "hf_test_token" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /accept and save token/i })
+    );
+    await waitFor(() => {
+      expect(setHfTokenMock).toHaveBeenCalledWith("hf_test_token");
+    });
     await waitFor(() => {
       expect(client.acceptModelLicense).toHaveBeenCalledWith("captioner");
     });

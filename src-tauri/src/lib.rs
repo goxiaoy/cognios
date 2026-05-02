@@ -213,7 +213,10 @@ pub fn run() {
             commands::search::get_node_indexing_status,
             commands::search::get_models_status,
             commands::search::accept_model_license,
-            commands::search::start_model_download
+            commands::search::start_model_download,
+            commands::secrets::set_hf_token,
+            commands::secrets::has_hf_token,
+            commands::secrets::delete_hf_token
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri application");

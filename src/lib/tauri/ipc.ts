@@ -145,6 +145,24 @@ export async function startModelDownload(
   return invoke<void>("start_model_download", { input });
 }
 
+// ---- Secure storage (HuggingFace token for gated repos) -------------------
+//
+// The renderer never sees the actual token. `setHfToken` stores it in
+// the OS keychain via `keyring`; `hasHfToken` returns a presence flag
+// for UI gating; `deleteHfToken` removes it.
+
+export async function setHfToken(token: string): Promise<void> {
+  return invoke<void>("set_hf_token", { input: { token } });
+}
+
+export async function hasHfToken(): Promise<boolean> {
+  return invoke<boolean>("has_hf_token");
+}
+
+export async function deleteHfToken(): Promise<void> {
+  return invoke<void>("delete_hf_token");
+}
+
 function isDuplicateMountError(error: unknown): error is DuplicateMountError {
   if (typeof error !== "object" || error === null) return false;
   const candidate = error as Partial<DuplicateMountError>;

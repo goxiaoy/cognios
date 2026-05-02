@@ -14,6 +14,7 @@ use crate::services::search::{
     IndexStatusDto, LicenseAcceptResponseDto, ModelDownloadEvent, ModelsStatusDto,
     NodeIndexStatusDto, SearchInput, SearchResponseDto, SidecarEnvelope,
 };
+use crate::services::secure_storage;
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -109,16 +110,22 @@ pub async fn start_model_download(
     state: State<'_, AppState>,
     input: StartModelDownloadInput,
 ) -> Result<(), String> {
-    // Each parsed SSE frame from the sidecar becomes a Tauri event the
-    // frontend listens on. The closure captures the AppHandle by move
-    // and re-uses it for every emit; AppHandle is Clone-able and
-    // Send + Sync, satisfying the Fn bound.
+    // If the caller didn't supply an explicit token, fall back to the
+    // one stashed in the OS keychain (set via the LicenseAcceptanceModal
+    // for gated repos like Gemma). Renderer never sees the value —
+    // only a presence flag via `has_hf_token`.
+    let resolved_token = match input.hf_token {
+        Some(t) => Some(t),
+        None => secure_storage::get_secret(secure_storage::HF_TOKEN_ACCOUNT)
+            .unwrap_or(None),
+    };
+
     let app = app.clone();
     state
         .search_client
         .start_model_download(
             &input.role,
-            input.hf_token.as_deref(),
+            resolved_token.as_deref(),
             move |event: ModelDownloadEvent| {
                 if let Err(err) = app.emit(MODELS_PROGRESS_EVENT, event) {
                     log::warn!(

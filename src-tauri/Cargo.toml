@@ -14,6 +14,12 @@ tauri-build = { version = "2.5.6", features = [] }
 
 [dependencies]
 ignore = "0.4.25"
+# OS-keychain-backed secret store. macOS Keychain on darwin, Windows
+# Credential Manager on win, Secret Service on linux — single API.
+# We reach for keyring rather than tauri-plugin-stronghold because
+# Stronghold requires a per-snapshot user passphrase intended for
+# cryptographic key material, not user-facing API keys.
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-async-persistent"] }
 notify = "8.2.0"
 reqwest = { version = "0.13.2", default-features = false, features = ["blocking", "rustls", "json", "http2"] }
 rusqlite = { version = "0.39.0", features = ["bundled"] }
