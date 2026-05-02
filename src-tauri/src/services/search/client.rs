@@ -220,6 +220,12 @@ pub struct IndexSnapshotDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelsStatusDto {
+    /// `HashMap` iteration order is non-deterministic, so the JSON
+    /// reaches the frontend with rows in shifting order. The frontend
+    /// (see `ModelManagerStatus.tsx::sortRoles`) sorts by canonical
+    /// role order before render. If the Tauri layer ever needs to
+    /// emit a stable order without frontend cooperation, swap to
+    /// `IndexMap` (preserves insertion order) or `BTreeMap` (sorted).
     pub roles: HashMap<String, ModelRoleStatusDto>,
 }
 
@@ -228,6 +234,13 @@ pub struct ModelsStatusDto {
 pub struct ModelRoleStatusDto {
     pub role: String,
     pub state: String,
+    /// Upstream model identifier (today: a HuggingFace ``owner/repo``
+    /// slug from the sidecar manifest). Surfaced in Settings →
+    /// Models so users can cross-reference docs and open the
+    /// upstream page. Defaults to empty string for compatibility
+    /// with pre-2026-05 sidecars.
+    #[serde(default)]
+    pub repo: String,
     #[serde(default)]
     pub commit: Option<String>,
     pub license_accepted: bool,
@@ -727,6 +740,7 @@ mod tests {
         let from_python = r#"{
             "role": "captioner",
             "state": "missing",
+            "repo": "unsloth/gemma-3n-E2B-it-GGUF",
             "commit": null,
             "license_accepted": false,
             "requires_acceptance": true,
@@ -735,10 +749,27 @@ mod tests {
         let parsed: ModelRoleStatusDto = serde_json::from_str(from_python).expect("decode");
         assert!(!parsed.license_accepted);
         assert!(parsed.requires_acceptance);
+        assert_eq!(parsed.repo, "unsloth/gemma-3n-E2B-it-GGUF");
         let to_ts = serde_json::to_value(&parsed).unwrap();
         assert_eq!(to_ts["licenseAccepted"], false);
         assert_eq!(to_ts["requiresAcceptance"], true);
+        assert_eq!(to_ts["repo"], "unsloth/gemma-3n-E2B-it-GGUF");
         assert!(to_ts.get("license_accepted").is_none());
+    }
+
+    #[test]
+    fn model_role_status_defaults_repo_for_legacy_payloads() {
+        // Pre-2026-05 sidecars omit ``repo`` entirely. The serde
+        // default keeps the decode alive; the frontend renders the
+        // empty string as a missing repo (no link).
+        let legacy = r#"{
+            "role": "embedding",
+            "state": "missing",
+            "license_accepted": false,
+            "requires_acceptance": false
+        }"#;
+        let parsed: ModelRoleStatusDto = serde_json::from_str(legacy).expect("legacy decode");
+        assert_eq!(parsed.repo, "");
     }
 
     #[test]

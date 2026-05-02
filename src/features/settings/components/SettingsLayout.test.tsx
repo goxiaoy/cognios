@@ -30,6 +30,7 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
           embedding: {
             role: "embedding",
             state: "ready",
+            repo: "onnx-community/gte-multilingual-base",
             commit: "abcdef0123",
             licenseAccepted: true,
             requiresAcceptance: false,

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { open as openExternal } from "@tauri-apps/plugin-shell";
 import type {
   ModelDownloadEvent,
   ModelRoleStatus,
@@ -9,6 +10,14 @@ import { setHfToken as setHfTokenIpc } from "../../../lib/tauri/ipc";
 import type { SearchClient } from "../../search/types/search";
 import type { ProgressByRole } from "../hooks/useModelDownloadProgress";
 import { LicenseAcceptanceModal } from "./LicenseAcceptanceModal";
+
+// Canonical row order. Embedding is the foundation of search,
+// reranker refines it, OCR/captioner are auxiliary. Roles not in
+// this list (future additions) sort after the known four,
+// alphabetically. The Rust DTO uses HashMap<String,_> which
+// surfaces map keys in non-deterministic order; sorting on the
+// client guarantees the user sees the same order on every render.
+const ROLE_ORDER = ["embedding", "reranker", "ocr", "captioner"] as const;
 
 const ROLE_LABELS: Record<string, string> = {
   embedding: "Embedding",
@@ -74,7 +83,7 @@ export function ModelManagerStatus({
     );
   }
 
-  const roles = Object.values(envelope.data.roles);
+  const roles = sortRoles(Object.values(envelope.data.roles));
   if (roles.length === 0) {
     return (
       <div className="settings-card">
@@ -101,6 +110,43 @@ export function ModelManagerStatus({
   );
 }
 
+/** Order: canonical roles first in dependency order, then any
+ * unknown roles alphabetically. Pure function so it's trivially
+ * testable and reusable. */
+function sortRoles(roles: ModelRoleStatus[]): ModelRoleStatus[] {
+  const rank = new Map<string, number>(
+    ROLE_ORDER.map((name, idx) => [name, idx])
+  );
+  return [...roles].sort((a, b) => {
+    const ra = rank.get(a.role) ?? ROLE_ORDER.length;
+    const rb = rank.get(b.role) ?? ROLE_ORDER.length;
+    if (ra !== rb) return ra - rb;
+    return a.role.localeCompare(b.role);
+  });
+}
+
+/** Treat anything starting with `<` as an unresolved manifest
+ * placeholder (e.g. literal `<pinned>` from the default manifest).
+ * Returns the cleaned commit or null. */
+function resolvedCommit(commit: string | null | undefined): string | null {
+  if (!commit) return null;
+  if (commit.startsWith("<")) return null;
+  return commit;
+}
+
+/** Build the HuggingFace tree URL for a (repo, commit) pair. Falls
+ * back to the repo root when commit is unresolved. Returns null if
+ * we have no repo to link to. */
+function huggingFaceUrl(
+  repo: string,
+  commit: string | null
+): string | null {
+  if (!repo) return null;
+  return commit
+    ? `https://huggingface.co/${repo}/tree/${commit}`
+    : `https://huggingface.co/${repo}`;
+}
+
 function ModelRoleRow({
   role,
   client,
@@ -114,15 +160,29 @@ function ModelRoleRow({
   const liveState = progress?.state;
   const isLiveDownloading =
     liveState === "downloading" || liveState === "verifying";
+  const commit = resolvedCommit(role.commit);
+  const hfUrl = huggingFaceUrl(role.repo, commit);
   return (
     <li className="settings-role-row">
       <div className="settings-role-meta">
         <span className="settings-role-name">
           {ROLE_LABELS[role.role] ?? role.role}
         </span>
-        {role.commit ? (
-          <span className="settings-role-commit" title={role.commit}>
-            commit {role.commit.slice(0, 8)}
+        {role.repo ? (
+          <span className="settings-role-identity">
+            <span className="settings-role-repo">{role.repo}</span>
+            {commit ? (
+              <>
+                <span className="settings-role-identity-sep">·</span>
+                <span
+                  className="settings-role-commit"
+                  title={role.commit ?? undefined}
+                >
+                  commit {commit.slice(0, 8)}
+                </span>
+              </>
+            ) : null}
+            {hfUrl ? <HuggingFaceLink url={hfUrl} repo={role.repo} /> : null}
           </span>
         ) : null}
       </div>
@@ -301,6 +361,29 @@ function DownloadProgressBar({ progress }: { progress: ModelDownloadEvent }) {
         {file ? <span className="settings-role-progress-file">{file}</span> : null}
       </span>
     </div>
+  );
+}
+
+function HuggingFaceLink({ url, repo }: { url: string; repo: string }) {
+  async function handleClick() {
+    try {
+      await openExternal(url);
+    } catch {
+      // Tauri's shell-open failures are rare in practice and not
+      // recoverable from the UI; the row stays usable, the link
+      // just doesn't open. Swallowing here matches how
+      // ExplorerLayout handles its own openExternal failures.
+    }
+  }
+  return (
+    <button
+      type="button"
+      className="settings-role-link"
+      aria-label={`Open ${repo} on HuggingFace`}
+      onClick={() => void handleClick()}
+    >
+      ↗
+    </button>
   );
 }
 

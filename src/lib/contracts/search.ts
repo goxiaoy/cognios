@@ -107,6 +107,13 @@ export type ModelRoleStateName =
 export interface ModelRoleStatus {
   role: string;
   state: ModelRoleStateName | string;
+  /**
+   * Upstream model identifier (today: a HuggingFace `owner/repo`
+   * slug from the sidecar manifest). Empty string for legacy
+   * payloads from pre-2026-05 sidecars; treat empty as "unknown
+   * repo, no link target".
+   */
+  repo: string;
   commit?: string | null;
   licenseAccepted: boolean;
   requiresAcceptance: boolean;

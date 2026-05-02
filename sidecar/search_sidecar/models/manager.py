@@ -72,10 +72,17 @@ class ProgressEvent:
 
 @dataclass
 class RoleStatus:
-    """What ``GET /models/status`` returns per role."""
+    """What ``GET /models/status`` returns per role.
+
+    ``repo`` is the upstream model identifier (today: a HuggingFace
+    ``owner/repo`` slug from the manifest). The frontend surfaces it
+    in Settings → Models so users can cross-reference docs / file
+    bugs / open the upstream page without reading the manifest.
+    """
 
     role: str
     state: str  # "missing" | "downloading" | "ready" | "error"
+    repo: str = ""
     commit: str | None = None
     license_accepted: bool = False
     requires_acceptance: bool = False
@@ -155,6 +162,7 @@ class ModelManager:
             out[role] = RoleStatus(
                 role=role,
                 state=state,
+                repo=spec.repo,
                 commit=current,
                 license_accepted=self.is_license_accepted(role),
                 requires_acceptance=spec.requires_acceptance,

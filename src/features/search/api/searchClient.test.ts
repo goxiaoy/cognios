@@ -98,6 +98,7 @@ describe("searchClient.modelsStatus", () => {
           embedding: {
             role: "embedding",
             state: "missing",
+            repo: "",
             commit: null,
             licenseAccepted: false,
             requiresAcceptance: false,

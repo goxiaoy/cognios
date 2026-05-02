@@ -51,6 +51,10 @@ def test_status_returns_initial_state(tmp_path: Path):
     assert body["roles"]["embedding"]["requires_acceptance"] is False
     assert body["roles"]["captioner"]["requires_acceptance"] is True
     assert body["roles"]["captioner"]["license_accepted"] is False
+    # repo flows through from manifest so the frontend can render
+    # which upstream model backs each role.
+    assert body["roles"]["embedding"]["repo"] == "fixture/repo"
+    assert body["roles"]["captioner"]["repo"] == "fixture/repo"
 
 
 def test_status_requires_bearer_auth(tmp_path: Path):
