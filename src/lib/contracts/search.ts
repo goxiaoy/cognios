@@ -73,6 +73,18 @@ export interface NodeIndexStatus {
   attempts: number;
 }
 
+export interface NodeContentChunk {
+  id: string;
+  text: string;
+}
+
+export interface NodeContent {
+  nodeId: string;
+  kind?: string | null;
+  chunks: NodeContentChunk[];
+  joined: string;
+}
+
 export type ModelRoleName = "embedding" | "reranker" | "ocr" | "captioner";
 
 export type ModelRoleStateName =

@@ -16,9 +16,10 @@ pub mod supervisor;
 
 pub use client::{
     IndexSnapshotDto, IndexSnapshotEntry, IndexStatusDto, LicenseAcceptResponseDto,
-    ModelDownloadEvent, ModelRoleStatusDto, ModelsStatusDto, NodeEvent, NodeEventAck,
-    NodeEventKind, NodeIndexStatusDto, SearchInput, SearchResponseDto,
-    SearchResultDto, SearchSidecarClient, SidecarEnvelope, SidecarEnvelopeState,
+    ModelDownloadEvent, ModelRoleStatusDto, ModelsStatusDto, NodeContentChunkDto,
+    NodeContentDto, NodeEvent, NodeEventAck, NodeEventKind, NodeIndexStatusDto,
+    SearchInput, SearchResponseDto, SearchResultDto, SearchSidecarClient,
+    SidecarEnvelope, SidecarEnvelopeState,
 };
 pub use runtime_file::{read_runtime_file, RuntimeFile, RuntimeFileError};
 pub use supervisor::{SearchSidecarSupervisor, SupervisorState};

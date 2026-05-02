@@ -242,6 +242,28 @@ pub struct LicenseAcceptResponseDto {
     pub role: String,
 }
 
+/// One indexed chunk's body — element of `NodeContentDto.chunks`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct NodeContentChunkDto {
+    pub id: String,
+    pub text: String,
+}
+
+/// Indexed text for a single node, used by the image preview surface
+/// (and any future "what did the indexer pull from this file" view).
+/// Empty for nodes that produced no chunks (image with no extractors,
+/// fresh upload before the runner drains).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct NodeContentDto {
+    pub node_id: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    pub chunks: Vec<NodeContentChunkDto>,
+    pub joined: String,
+}
+
 /// One frame of the ``POST /models/download/{role}`` SSE stream.
 ///
 /// The sidecar emits these as ``data: {json}\n\n`` lines; the client
@@ -412,6 +434,14 @@ impl SearchSidecarClient {
 
     pub async fn models_status(&self) -> SidecarEnvelope<ModelsStatusDto> {
         self.get_envelope("/models/status").await
+    }
+
+    pub async fn node_content(
+        &self,
+        node_id: &str,
+    ) -> SidecarEnvelope<NodeContentDto> {
+        let path = format!("/index/node/{}/content", urlencoded(node_id));
+        self.get_envelope(&path).await
     }
 
     pub async fn accept_model_license(

@@ -3,6 +3,8 @@ import type {
   LicenseAcceptResponse,
   ModelDownloadEvent,
   ModelsStatus,
+  NodeContent,
+  NodeContentChunk,
   NodeIndexStatus,
   SearchQueryInput,
   SearchResponse,
@@ -17,6 +19,8 @@ export type {
   LicenseAcceptResponse,
   ModelDownloadEvent,
   ModelsStatus,
+  NodeContent,
+  NodeContentChunk,
   NodeIndexStatus,
   SearchQueryInput,
   SearchResponse,
@@ -35,6 +39,7 @@ export interface SearchClient {
   search(input: SearchQueryInput): Promise<SidecarEnvelope<SearchResponse>>;
   indexStatus(): Promise<SidecarEnvelope<IndexStatus>>;
   nodeIndexStatus(nodeId: string): Promise<SidecarEnvelope<NodeIndexStatus>>;
+  nodeContent(nodeId: string): Promise<SidecarEnvelope<NodeContent>>;
   modelsStatus(): Promise<SidecarEnvelope<ModelsStatus>>;
   acceptModelLicense(
     role: string

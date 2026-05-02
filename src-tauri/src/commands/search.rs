@@ -12,7 +12,7 @@ use tauri::{Emitter, State};
 
 use crate::services::search::{
     IndexStatusDto, LicenseAcceptResponseDto, ModelDownloadEvent, ModelsStatusDto,
-    NodeIndexStatusDto, SearchInput, SearchResponseDto, SidecarEnvelope,
+    NodeContentDto, NodeIndexStatusDto, SearchInput, SearchResponseDto, SidecarEnvelope,
 };
 use crate::services::secure_storage;
 use crate::AppState;
@@ -87,6 +87,14 @@ pub async fn get_node_indexing_status(
     input: GetNodeIndexingStatusInput,
 ) -> EnvelopeResult<NodeIndexStatusDto> {
     Ok(state.search_client.node_index_status(&input.node_id).await)
+}
+
+#[tauri::command]
+pub async fn get_node_content(
+    state: State<'_, AppState>,
+    input: GetNodeIndexingStatusInput,
+) -> EnvelopeResult<NodeContentDto> {
+    Ok(state.search_client.node_content(&input.node_id).await)
 }
 
 #[tauri::command]

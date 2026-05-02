@@ -11,11 +11,12 @@ import { Breadcrumbs } from "./Breadcrumbs";
 import { CreateMenu } from "./CreateMenu";
 import { ExplorerInspector } from "./ExplorerInspector";
 import { ExplorerTree } from "./ExplorerTree";
-import { ImageViewer } from "./ImageViewer";
+import { ImagePreview } from "./ImagePreview";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { MountModal } from "./MountModal";
 import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
 import { UrlModal } from "./UrlModal";
+import { searchClient } from "../../search/api/searchClient";
 import { error as logError } from "../../../lib/logger";
 
 const DEFAULT_TREE_WIDTH = 240;
@@ -521,8 +522,8 @@ export function ExplorerLayout({
                   />
                 ) : null}
                 {showImage ? (
-                  <ImageViewer
-                    client={client}
+                  <ImagePreview
+                    searchClient={searchClient}
                     name={store.activeImagePreview!.name}
                     nodeId={store.activeImagePreviewId!}
                   />
@@ -545,6 +546,7 @@ export function ExplorerLayout({
         <aside className="inspector-panel">
           <div className="inspector-panel-scroll">
             <ExplorerInspector
+              client={client}
               node={store.inspectorNode}
               selectedArtifacts={store.selectedArtifacts}
               selectionCount={store.selectionCount}

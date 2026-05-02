@@ -21,6 +21,7 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
     modelsStatus: vi.fn(),
     acceptModelLicense: vi.fn(),
     startModelDownload: vi.fn(),
+    nodeContent: vi.fn(),
     ...overrides,
   };
 }

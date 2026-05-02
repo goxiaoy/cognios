@@ -23,6 +23,7 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
       data: { accepted: true, role: "captioner" },
     }),
     startModelDownload: vi.fn(),
+    nodeContent: vi.fn(),
     ...overrides,
   };
 }

@@ -33,6 +33,7 @@ vi.mock("../lib/tauri/ipc", () => ({
   getModelsStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
   acceptModelLicense: vi.fn().mockResolvedValue({ state: "initialising" }),
   startModelDownload: vi.fn().mockResolvedValue(undefined),
+  getNodeContent: vi.fn().mockResolvedValue({ state: "initialising" }),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({

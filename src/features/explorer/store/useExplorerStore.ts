@@ -112,6 +112,15 @@ export function useExplorerStore(client: ExplorerClient) {
 
       // Activate the appropriate center-pane surface based on node kind.
       // Selection is already handled by the layout before this call.
+      // Clear *all* preview slots before setting the new one — the
+      // layout's center-pane decision uses a priority chain
+      // (note > markdown > image), so leaving the previous slot set
+      // would pin the user on the old surface even after they
+      // clicked a different file.
+      setActiveNoteId(null);
+      setActivePreviewId(null);
+      setActiveImagePreviewId(null);
+
       if (node.kind === "note") {
         setActiveNoteId(node.id);
         return;
@@ -125,8 +134,9 @@ export function useExplorerStore(client: ExplorerClient) {
           setActiveImagePreviewId(node.id);
           return;
         }
-        // Other file kinds: no surface change; the layout shows the
-        // "Cannot preview" placeholder via its own derivation.
+        // Other file kinds: no surface change beyond the clear above;
+        // the layout shows the "Cannot preview" placeholder via its
+        // own derivation.
       }
       // url, directory, mount were already handled or have no surface.
     },

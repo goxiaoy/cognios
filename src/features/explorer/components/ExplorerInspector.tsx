@@ -1,19 +1,23 @@
-import type { ExplorerNode } from "../types/explorer";
+import type { ExplorerClient, ExplorerNode } from "../types/explorer";
 import {
   formatInspectorKindLabel,
   formatNodeDate,
   formatNodeSize,
-  formatNodeKindLabel
+  formatNodeKindLabel,
+  isImageNode,
 } from "../utils/presentation";
+import { InspectorImageThumbnail } from "./InspectorImageThumbnail";
 
 export function ExplorerInspector({
   node,
   selectedArtifacts,
-  selectionCount
+  selectionCount,
+  client,
 }: {
   node: ExplorerNode | null;
   selectedArtifacts: ExplorerNode[];
   selectionCount: number;
+  client: ExplorerClient;
 }) {
   if (selectionCount > 1) {
     const commonType =
@@ -50,6 +54,8 @@ export function ExplorerInspector({
     );
   }
 
+  const showImage = isImageNode(node);
+
   return (
     <div className="inspector-pane">
       <div className="inspector-pane-header">
@@ -74,6 +80,13 @@ export function ExplorerInspector({
           <dd>{node.state}</dd>
         </div>
       </dl>
+      {showImage ? (
+        <InspectorImageThumbnail
+          client={client}
+          nodeId={node.id}
+          name={node.name}
+        />
+      ) : null}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import type {
   IndexStatus,
   LicenseAcceptResponse,
   ModelsStatus,
+  NodeContent,
   NodeIndexStatus,
   SearchQueryInput,
   SearchResponse,
@@ -116,6 +117,21 @@ export async function getNodeIndexingStatus(
   nodeId: string
 ): Promise<SidecarEnvelope<NodeIndexStatus>> {
   return invoke<SidecarEnvelope<NodeIndexStatus>>("get_node_indexing_status", {
+    input: { nodeId },
+  });
+}
+
+/**
+ * Pulls the indexed text the sidecar holds for a single node — used
+ * by the image preview surface to render OCR + caption as markdown
+ * in the center pane. Returns ``state: "ready"`` with empty chunks
+ * for un-indexed nodes (image with no extractors wired, fresh
+ * upload before the runner drains).
+ */
+export async function getNodeContent(
+  nodeId: string
+): Promise<SidecarEnvelope<NodeContent>> {
+  return invoke<SidecarEnvelope<NodeContent>>("get_node_content", {
     input: { nodeId },
   });
 }

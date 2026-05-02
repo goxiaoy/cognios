@@ -245,3 +245,50 @@ def test_routes_require_bearer_auth(stack):
         for path in ("/events/node", "/events/resync", "/index/status", f"/index/status/{UUID_A}"):
             resp = client.post(path, json={}) if path.startswith("/events") else client.get(path)
             assert resp.status_code == 401, path
+
+
+def test_get_node_content_returns_empty_for_unindexed_node(stack):
+    app, _, _, _, _ = stack
+    with TestClient(app) as client:
+        resp = client.get(f"/index/node/{UUID_A}/content", headers=_auth())
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {
+        "node_id": UUID_A,
+        "kind": None,
+        "chunks": [],
+        "joined": "",
+    }
+
+
+def test_get_node_content_concatenates_chunks_in_order(stack):
+    app, queue, store, runner, tmp_path = stack
+    # Synthesise a multi-paragraph note that the chunker will split
+    # into multiple chunks. Lexicographic chunk-id sort would put
+    # ``:10`` before ``:2``; the route's int-suffix sort keeps the
+    # natural reading order.
+    note = tmp_path / "n.md"
+    note.write_text(
+        "\n\n".join(f"Paragraph {i} body content here." for i in range(12))
+    )
+    queue.enqueue(
+        node_id=UUID_A,
+        kind="note",
+        name="n.md",
+        absolute_content_path=str(note),
+    )
+    runner.process_one()
+    assert store.count() >= 1
+
+    with TestClient(app) as client:
+        resp = client.get(f"/index/node/{UUID_A}/content", headers=_auth())
+    body = resp.json()
+    assert body["node_id"] == UUID_A
+    assert body["kind"] == "note"
+    assert len(body["chunks"]) >= 1
+    # Joined text must keep paragraphs in source order.
+    joined = body["joined"]
+    pos_2 = joined.find("Paragraph 2 ")
+    pos_10 = joined.find("Paragraph 10 ")
+    assert pos_2 != -1 and pos_10 != -1
+    assert pos_2 < pos_10, "Paragraph 10 must appear after Paragraph 2"

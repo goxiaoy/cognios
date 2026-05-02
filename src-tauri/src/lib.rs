@@ -211,6 +211,7 @@ pub fn run() {
             commands::search::search_query,
             commands::search::get_indexing_status,
             commands::search::get_node_indexing_status,
+            commands::search::get_node_content,
             commands::search::get_models_status,
             commands::search::accept_model_license,
             commands::search::start_model_download,
