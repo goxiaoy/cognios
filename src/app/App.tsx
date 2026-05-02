@@ -4,7 +4,7 @@ import { ExplorerLayout } from "../features/explorer/components/ExplorerLayout";
 import { ExplorerStoreProvider } from "../features/explorer/store/ExplorerStoreContext";
 import { searchClient } from "../features/search/api/searchClient";
 import { SearchPalette } from "../features/search/components/SearchPalette";
-import { SettingsLayout } from "../features/settings/components/SettingsLayout";
+import { SettingsModal } from "../features/settings/components/SettingsModal";
 import { AppSection, AppSidebar } from "./AppSidebar";
 
 const SECTION_LABELS: Record<AppSection, string> = {
@@ -12,7 +12,6 @@ const SECTION_LABELS: Record<AppSection, string> = {
   chat: "Chat",
   explorer: "Explorer",
   memory: "Memory Timeline",
-  settings: "Settings",
 };
 
 export function App() {
@@ -30,10 +29,13 @@ export function App() {
 function AppShell() {
   const [activeSection, setActiveSection] = useState<AppSection>("explorer");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const sectionLabel = SECTION_LABELS[activeSection];
 
   const openPalette = useCallback(() => setPaletteOpen(true), []);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
   // Global keyboard shortcut. Cmd/Ctrl+K toggles the palette; the
   // palette is the only search surface — filter chips, sort, and
@@ -64,6 +66,7 @@ function AppShell() {
         activeSection={activeSection}
         onSelect={setActiveSection}
         onOpenSearch={openPalette}
+        onOpenSettings={openSettings}
       />
 
       <div className="app-content">
@@ -79,11 +82,7 @@ function AppShell() {
             />
           </div>
 
-          {activeSection === "settings" ? (
-            <SettingsLayout client={searchClient} />
-          ) : null}
-
-          {activeSection !== "explorer" && activeSection !== "settings" ? (
+          {activeSection !== "explorer" ? (
             <section className="placeholder-panel">
               <p className="eyebrow">{sectionLabel}</p>
               <p className="muted-copy">
@@ -100,6 +99,10 @@ function AppShell() {
           onClose={closePalette}
           onActivate={focusExplorer}
         />
+      ) : null}
+
+      {settingsOpen ? (
+        <SettingsModal client={searchClient} onClose={closeSettings} />
       ) : null}
     </main>
   );

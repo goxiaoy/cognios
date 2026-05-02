@@ -7,12 +7,7 @@ import {
   Settings,
 } from "lucide-react";
 
-export type AppSection =
-  | "home"
-  | "chat"
-  | "explorer"
-  | "memory"
-  | "settings";
+export type AppSection = "home" | "chat" | "explorer" | "memory";
 
 type NavItem = { id: AppSection; label: string; Icon: React.ComponentType<{ size?: number }> };
 
@@ -21,17 +16,18 @@ const NAV_ITEMS: NavItem[] = [
   { id: "chat",     label: "Chat",     Icon: MessageCircle },
   { id: "explorer", label: "Explorer", Icon: Files },
   { id: "memory",   label: "Memory",   Icon: BookOpen },
-  { id: "settings", label: "Settings", Icon: Settings },
 ];
 
 export function AppSidebar({
   activeSection,
   onSelect,
   onOpenSearch,
+  onOpenSettings,
 }: {
   activeSection: AppSection;
   onSelect(section: AppSection): void;
   onOpenSearch(): void;
+  onOpenSettings(): void;
 }) {
   return (
     <aside className="app-sidebar">
@@ -66,6 +62,18 @@ export function AppSidebar({
           </button>
         ))}
       </nav>
+
+      <div className="app-sidebar-footer">
+        <button
+          type="button"
+          className="app-nav-item app-sidebar-footer-item"
+          onClick={onOpenSettings}
+          aria-label="Open settings"
+        >
+          <Settings size={15} aria-hidden="true" />
+          <span className="app-nav-label">Settings</span>
+        </button>
+      </div>
     </aside>
   );
 }

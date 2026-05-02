@@ -83,8 +83,19 @@ export interface RetryUrlInput {
   nodeId: string;
 }
 
-export const DEFAULT_MOUNT_IGNORE_CONFIG = `node_modules/
-.git/
+/**
+ * Default ignore patterns for new mounts. Hidden entries (anything
+ * starting with ``.``) are skipped wholesale — most are noise
+ * (``.git``, ``.DS_Store``, ``.vscode``, ``.idea``, ``.env``,
+ * ``.cache``, ``.pytest_cache``, …) and users who genuinely want
+ * to index a dotfile can edit the per-mount config to drop the
+ * wildcard.
+ *
+ * Patterns follow gitignore syntax (the Rust ``ignore`` crate that
+ * powers the mount watcher uses the same parser as ripgrep).
+ */
+export const DEFAULT_MOUNT_IGNORE_CONFIG = `.*
+node_modules/
 dist/
 target/
 *.log

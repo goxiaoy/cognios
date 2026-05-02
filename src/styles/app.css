@@ -642,13 +642,27 @@ button:disabled {
 
 .app-sidebar {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  /* brand → ops → primary nav (stretches) → footer pinned to bottom */
+  grid-template-rows: auto auto 1fr auto;
   gap: 1.25rem;
   /* top padding clears the fixed titlebar + traffic lights */
   padding: 2.75rem 0.75rem 1.5rem 1rem;
   background: transparent;
   border: none;
   box-shadow: none;
+}
+
+.app-sidebar-footer {
+  display: grid;
+  gap: 0.1rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+}
+
+.app-sidebar-footer-item {
+  /* Inherits from .app-nav-item; defined separately so the footer
+   * button can never be marked aria-current="page" — it's not a
+   * section. */
 }
 
 .app-brand-mark {
@@ -3299,6 +3313,65 @@ body.is-resizing-pane {
 .settings-role-progress-file {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 0.7rem;
+}
+
+/* Settings modal — opens from the sidebar footer; SettingsLayout
+ * renders its cards inside the modal body. Sized to fit the
+ * read-only model + indexing dashboard plus future write controls. */
+.settings-modal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  width: min(960px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 48px rgba(30, 25, 20, 0.18);
+}
+
+.settings-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1.1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-modal-title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.settings-modal-close {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 0.3rem;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.settings-modal-close:hover {
+  background: color-mix(in srgb, var(--ink) 6%, transparent 94%);
+  color: var(--ink);
+}
+
+.settings-modal-body {
+  padding: 1rem 1.1rem 1.25rem;
+  overflow-y: auto;
+}
+
+/* SettingsLayout originally rendered as a full panel; inside the
+ * modal we drop its outer max-width so the cards span the full
+ * dialog width. */
+.settings-modal-body .settings-layout {
+  padding: 0;
+  max-width: none;
 }
 
 .license-modal {

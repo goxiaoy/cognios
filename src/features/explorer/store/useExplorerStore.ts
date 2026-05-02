@@ -76,6 +76,16 @@ export function useExplorerStore(client: ExplorerClient) {
     });
   }, []);
 
+  // Idempotent "ensure this node is expanded". Used by create flows
+  // that drop a new child into a container — we want the user to
+  // see the new row immediately, even if they hadn't expanded the
+  // parent yet.
+  const expandNode = useCallback((nodeId: string) => {
+    setExpandedIds((current) =>
+      current.includes(nodeId) ? current : [...current, nodeId]
+    );
+  }, []);
+
   const selectArtifact = useCallback((nodeId: string, additive = false) => {
     if (!additive) {
       setSelectedArtifactIds([nodeId]);
@@ -181,6 +191,7 @@ export function useExplorerStore(client: ExplorerClient) {
     selectArtifact,
     replaceSelection,
     activateArtifact,
+    expandNode,
     runAction,
     pendingInlineRenameId,
     setPendingInlineRenameId,

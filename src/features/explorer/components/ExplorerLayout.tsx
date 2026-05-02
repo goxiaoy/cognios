@@ -271,6 +271,10 @@ export function ExplorerLayout({
     if (snapshot) {
       const prevIds = collectIds(store.snapshot.roots);
       store.applySnapshot(snapshot);
+      // Auto-expand the parent so the new child is visible — without
+      // this the user clicks "New folder" on a collapsed mount and
+      // sees nothing happen.
+      if (parentId) store.expandNode(parentId);
       for (const root of snapshot.roots) {
         const newId = findNewId(root, prevIds);
         if (newId) {
@@ -288,6 +292,7 @@ export function ExplorerLayout({
     if (snapshot) {
       const prevIds = collectIds(store.snapshot.roots);
       store.applySnapshot(snapshot);
+      if (parentId) store.expandNode(parentId);
       for (const root of snapshot.roots) {
         const newId = findNewId(root, prevIds);
         if (newId) {
@@ -351,6 +356,7 @@ export function ExplorerLayout({
         ignoreConfig: args.ignoreConfig || undefined
       });
       store.applySnapshot(snapshot);
+      if (modalParentId) store.expandNode(modalParentId);
       setOpenModal(null);
       setModalParentId(null);
       setMountSetupContext(null);
@@ -368,6 +374,7 @@ export function ExplorerLayout({
     );
     if (snapshot) {
       store.applySnapshot(snapshot);
+      if (modalParentId) store.expandNode(modalParentId);
       setOpenModal(null);
       setModalParentId(null);
     }
