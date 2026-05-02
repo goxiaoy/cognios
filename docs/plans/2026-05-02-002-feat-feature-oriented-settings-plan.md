@@ -281,7 +281,7 @@ State machine for the workspace first-run banner:
 
 ## Implementation Units
 
-- [ ] **Unit 1: Sidecar settings persistence (schema + routes + file I/O)**
+- [x] **Unit 1: Sidecar settings persistence (schema + routes + file I/O)** — shipped in commit `e86cf14`
 
 **Goal:** A single source of truth for search settings on disk, accessible via authenticated HTTP. Foundation for everything else.
 
