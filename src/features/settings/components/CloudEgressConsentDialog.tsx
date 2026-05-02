@@ -24,13 +24,13 @@ export function CloudEgressConsentDialog({
 }) {
   return (
     <div
-      className="settings-modal-backdrop"
+      className="confirm-dialog-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="consent-dialog-title"
     >
-      <div className="settings-modal">
-        <h2 className="settings-modal-title" id="consent-dialog-title">
+      <div className="confirm-dialog">
+        <h2 className="confirm-dialog-title" id="consent-dialog-title">
           Send data to {preset.displayName}?
         </h2>
         <p className="muted-copy">
@@ -43,7 +43,7 @@ export function CloudEgressConsentDialog({
           You can revoke this provider at any time in Settings →
           Providers.
         </p>
-        <div className="settings-modal-actions">
+        <div className="confirm-dialog-actions">
           <button
             type="button"
             className="settings-action"

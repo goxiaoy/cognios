@@ -67,7 +67,6 @@ export function SettingsLayout({ client }: { client: SearchClient }) {
   return (
     <section className="settings-layout" aria-label="Settings">
       <header className="settings-header">
-        <h1 className="settings-title">Settings</h1>
         <button
           type="button"
           className="settings-diagnostics-link"

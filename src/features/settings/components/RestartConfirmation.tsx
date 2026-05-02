@@ -39,9 +39,9 @@ export function RestartConfirmation({
   }
 
   return (
-    <div className="settings-modal-backdrop" role="dialog" aria-modal="true">
-      <div className="settings-modal">
-        <h2 className="settings-modal-title">Restart sidecar to apply</h2>
+    <div className="confirm-dialog-backdrop" role="dialog" aria-modal="true">
+      <div className="confirm-dialog">
+        <h2 className="confirm-dialog-title">Restart sidecar to apply</h2>
         <p className="muted-copy">
           Your search subsystem will restart and reload settings. This
           takes a few seconds; search will be briefly unavailable.
@@ -51,7 +51,7 @@ export function RestartConfirmation({
             Restart failed: {state.message}
           </p>
         ) : null}
-        <div className="settings-modal-actions">
+        <div className="confirm-dialog-actions">
           <button
             type="button"
             className="settings-action"
