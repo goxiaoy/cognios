@@ -61,34 +61,94 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
 
 afterEach(() => cleanup());
 
-describe("SettingsLayout", () => {
-  it("polls both endpoints on mount and renders model + indexing cards", async () => {
-    const client = makeClient();
-    render(<SettingsLayout client={client} />);
+function readySettings() {
+  return {
+    state: "ready" as const,
+    data: {
+      version: 1,
+      providers: {
+        "local-gte": {
+          providerId: "local-gte",
+          enabled: true,
+          apiKeyRef: null,
+          baseUrl: null,
+          modelPerCapability: {},
+        },
+      },
+      features: {
+        "semantic-search": { enabled: true, providerId: "local-gte" },
+        "result-reranking": { enabled: false, providerId: null },
+        "image-ocr": { enabled: false, providerId: null },
+        "image-captioning": { enabled: false, providerId: null },
+      },
+      cloudConsentAcked: [] as string[],
+      firstRunSkipped: false,
+      needsRestart: false,
+    },
+  };
+}
 
-    // Initial render shows loading hints; first poll fills them in.
-    await waitFor(() => {
-      expect(screen.getByText("Embedding")).toBeInTheDocument();
+describe("SettingsLayout", () => {
+  it("loads settings and renders the Features + Providers sections", async () => {
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(readySettings()),
     });
+    render(<SettingsLayout client={client} />);
     await waitFor(() => {
-      expect(screen.getByText("Indexed chunks")).toBeInTheDocument();
+      expect(screen.getByText("Features")).toBeInTheDocument();
     });
-    expect(client.modelsStatus).toHaveBeenCalled();
-    expect(client.indexStatus).toHaveBeenCalled();
+    expect(screen.getByText("Providers")).toBeInTheDocument();
+    expect(screen.getByText("Semantic search")).toBeInTheDocument();
+    expect(client.settings).toHaveBeenCalled();
   });
 
-  it("renders both cards independently — failure of one doesn't blank the other", async () => {
+  it("falls back to direct file read when sidecar is unavailable", async () => {
     const client = makeClient({
-      modelsStatus: vi
+      settings: vi
         .fn()
-        .mockResolvedValue({ state: "unavailable", error: "no model_manager" }),
+        .mockResolvedValue({ state: "unavailable", error: "no sidecar" }),
+      readSettingsFallback: vi
+        .fn()
+        .mockResolvedValue(readySettings().data),
     });
     render(<SettingsLayout client={client} />);
-
     await waitFor(() => {
-      expect(screen.getByText(/no model_manager/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Sidecar unavailable.*read-only/i)
+      ).toBeInTheDocument();
     });
-    // Indexing card still renders its data.
+    // Even in fallback mode, the Features list still renders.
+    expect(screen.getByText("Semantic search")).toBeInTheDocument();
+  });
+
+  it("shows a Restart required banner when needsRestart is true", async () => {
+    const ready = readySettings();
+    ready.data.needsRestart = true;
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(ready),
+    });
+    render(<SettingsLayout client={client} />);
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Settings changed.*restart/i)
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("reveals legacy Models card when Diagnostics is toggled on", async () => {
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(readySettings()),
+    });
+    render(<SettingsLayout client={client} />);
+    await waitFor(() => {
+      expect(screen.getByText("Features")).toBeInTheDocument();
+    });
+    // ModelManagerStatus's "Models" card title is hidden by default.
+    expect(screen.queryByText("Indexed chunks")).toBeNull();
+
+    const toggle = screen.getByRole("button", { name: /show diagnostics/i });
+    toggle.click();
+
     await waitFor(() => {
       expect(screen.getByText("Indexed chunks")).toBeInTheDocument();
     });

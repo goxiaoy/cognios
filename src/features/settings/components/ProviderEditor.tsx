@@ -1,0 +1,223 @@
+import { useEffect, useState } from "react";
+
+import type {
+  ProviderConfig,
+  SearchSettings,
+} from "../../../lib/contracts/search";
+import type { SearchClient } from "../../search/types/search";
+import type { ProviderPreset } from "../data/providerPresets";
+
+/**
+ * Per-provider editor — used both inline from a feature row and from
+ * the Providers section. Manages the API key entry state machine
+ * (idle → editing → validating → error/saved) and persists changes
+ * via the SearchClient + provider-secret IPC commands.
+ */
+type EditorState =
+  | { kind: "idle" }
+  | { kind: "editing" }
+  | { kind: "validating" }
+  | { kind: "error"; message: string }
+  | { kind: "saved" };
+
+export function ProviderEditor({
+  preset,
+  config,
+  settings,
+  client,
+  onSettingsChange,
+  onClose,
+}: {
+  preset: ProviderPreset;
+  config: ProviderConfig | null;
+  settings: SearchSettings;
+  client: SearchClient;
+  onSettingsChange: (next: SearchSettings) => void;
+  onClose: () => void;
+}) {
+  const [state, setState] = useState<EditorState>({ kind: "idle" });
+  const [secret, setSecret] = useState("");
+  const [hasSecret, setHasSecret] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (preset.authKind !== "api-key") {
+      setHasSecret(false);
+      return;
+    }
+    let cancelled = false;
+    void client
+      .hasProviderSecret({ providerId: preset.providerId })
+      .then((present) => {
+        if (!cancelled) setHasSecret(present);
+      })
+      .catch(() => {
+        if (!cancelled) setHasSecret(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, preset.authKind, preset.providerId]);
+
+  async function handleSave() {
+    setState({ kind: "validating" });
+    try {
+      // Persist key first; if validation fails we leave it stored but
+      // surface the error so the user can rotate it.
+      await client.setProviderSecret({
+        providerId: preset.providerId,
+        secret,
+      });
+      // Optimistic config write — adds the provider entry if missing.
+      const nextProviders: SearchSettings["providers"] = {
+        ...settings.providers,
+        [preset.providerId]: {
+          providerId: preset.providerId,
+          enabled: true,
+          apiKeyRef: `keychain://cognios-search/provider:${preset.providerId}`,
+          baseUrl: config?.baseUrl ?? null,
+          modelPerCapability: config?.modelPerCapability ?? {},
+        },
+      };
+      const env = await client.updateSettings({
+        ...settings,
+        providers: nextProviders,
+      });
+      if (env.state !== "ready" || !env.data) {
+        setState({
+          kind: "error",
+          message: env.error ?? "Failed to persist settings.",
+        });
+        return;
+      }
+      onSettingsChange(env.data);
+      setHasSecret(true);
+      setSecret("");
+      setState({ kind: "saved" });
+    } catch (err) {
+      setState({
+        kind: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  async function handleRemove() {
+    setState({ kind: "validating" });
+    try {
+      await client.deleteProviderSecret({ providerId: preset.providerId });
+      const { [preset.providerId]: _, ...rest } = settings.providers;
+      const env = await client.updateSettings({
+        ...settings,
+        providers: rest,
+      });
+      if (env.state !== "ready" || !env.data) {
+        setState({
+          kind: "error",
+          message: env.error ?? "Failed to persist settings.",
+        });
+        return;
+      }
+      onSettingsChange(env.data);
+      setHasSecret(false);
+      onClose();
+    } catch (err) {
+      setState({
+        kind: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return (
+    <div className="provider-editor" role="region" aria-label={preset.displayName}>
+      <header className="provider-editor-header">
+        <h3>{preset.displayName}</h3>
+        <button
+          type="button"
+          className="settings-action"
+          onClick={onClose}
+          aria-label="Close provider editor"
+        >
+          Close
+        </button>
+      </header>
+
+      {preset.authKind === "api-key" ? (
+        <section className="provider-editor-section">
+          {state.kind === "editing" || (!hasSecret && state.kind === "idle") ? (
+            <label className="provider-editor-key-label">
+              API key
+              <input
+                type="password"
+                className="provider-editor-key-input"
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+                placeholder={preset.apiKeyPrefix ?? ""}
+                autoComplete="off"
+              />
+            </label>
+          ) : (
+            <p className="provider-editor-key-status">
+              API key: {hasSecret ? "configured ✓" : "not set"}
+              {hasSecret ? (
+                <button
+                  type="button"
+                  className="provider-editor-edit-link"
+                  onClick={() => setState({ kind: "editing" })}
+                >
+                  Edit
+                </button>
+              ) : null}
+            </p>
+          )}
+        </section>
+      ) : preset.authKind === "hf-token" ? (
+        <p className="provider-editor-info">
+          This provider needs a HuggingFace token + Gemma TOS acceptance.
+          The token modal will open inline once Image captioning is enabled
+          (Phase 2).
+        </p>
+      ) : (
+        <p className="provider-editor-info">
+          No credentials required.
+        </p>
+      )}
+
+      {state.kind === "validating" ? (
+        <p className="muted-copy">Saving…</p>
+      ) : null}
+      {state.kind === "error" ? (
+        <p className="settings-role-error" role="alert">
+          {state.message}
+        </p>
+      ) : null}
+      {state.kind === "saved" ? (
+        <p className="muted-copy">Saved ✓</p>
+      ) : null}
+
+      <div className="provider-editor-actions">
+        {preset.authKind === "api-key" &&
+        (state.kind === "editing" || (!hasSecret && state.kind === "idle")) ? (
+          <button
+            type="button"
+            className="settings-action is-primary"
+            disabled={!secret.trim()}
+            onClick={() => void handleSave()}
+          >
+            Save
+          </button>
+        ) : null}
+        {hasSecret ? (
+          <button
+            type="button"
+            className="settings-action"
+            onClick={() => void handleRemove()}
+            disabled={state.kind === "validating"}
+          >
+            Remove key
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}

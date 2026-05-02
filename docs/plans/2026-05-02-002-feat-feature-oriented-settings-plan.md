@@ -476,7 +476,7 @@ State machine for the workspace first-run banner:
 
 ---
 
-- [x] **Unit 5: Frontend SearchClient extensions + workspace banner + restart UX** — shipped in commit pending
+- [x] **Unit 5: Frontend SearchClient extensions + workspace banner + restart UX** — shipped in commit `61fac31`
 
 **Goal:** TS contracts, IPC bindings, and the always-visible workspace banner for first-run download. The banner runs the consent → download → done/failed/skipped state machine. A separate Restart confirmation modal handles provider-swap restarts triggered from Settings.
 
@@ -537,7 +537,7 @@ State machine for the workspace first-run banner:
 
 ---
 
-- [ ] **Unit 6: Settings → Features view + Providers section + provider editor slide-out**
+- [x] **Unit 6: Settings → Features view + Providers section + provider editor slide-out** — shipped in commit pending
 
 **Goal:** Replace the existing `ModelManagerStatus` card in `SettingsLayout` with the new feature-vocabulary Features list + Providers section. Build the slide-out provider editor (idle/editing/validating/error/saved states) used from both inline-in-feature-row and Providers-section entry points.
 
