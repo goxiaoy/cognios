@@ -228,7 +228,14 @@ pub fn run() {
             commands::search::start_model_download,
             commands::secrets::set_hf_token,
             commands::secrets::has_hf_token,
-            commands::secrets::delete_hf_token
+            commands::secrets::delete_hf_token,
+            commands::secrets::set_provider_secret,
+            commands::secrets::get_provider_secret_present,
+            commands::secrets::delete_provider_secret,
+            commands::search_settings::get_search_settings,
+            commands::search_settings::update_search_settings,
+            commands::search_settings::read_search_settings_fallback,
+            commands::search_settings::restart_sidecar
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri application");

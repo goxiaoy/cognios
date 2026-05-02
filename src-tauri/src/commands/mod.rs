@@ -3,6 +3,7 @@ pub mod mounts;
 pub mod nodes;
 pub mod notes;
 pub mod search;
+pub mod search_settings;
 pub mod secrets;
 pub mod thumbnails;
 pub mod urls;

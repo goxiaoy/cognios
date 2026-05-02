@@ -378,7 +378,7 @@ State machine for the workspace first-run banner:
 
 ---
 
-- [x] **Unit 3: Sidecar restart-required signaling + dispatcher rebuild from settings** — shipped in commit pending
+- [x] **Unit 3: Sidecar restart-required signaling + dispatcher rebuild from settings** — shipped in commit `1798331`
 
 **Goal:** When a settings change requires a dispatcher rebuild (provider swap), the sidecar reflects this in its `GET /settings` response. The dispatcher already rebuilds on next boot from the freshly loaded settings — this unit makes sure the boot-time wiring honors the settings file.
 
@@ -420,7 +420,7 @@ State machine for the workspace first-run banner:
 
 ---
 
-- [ ] **Unit 4: Rust IPC commands + supervisor restart + secure_storage extension + degraded-mode fallback read**
+- [x] **Unit 4: Rust IPC commands + supervisor restart + secure_storage extension + degraded-mode fallback read** — shipped in commit pending
 
 **Goal:** The frontend can read/write settings, restart the sidecar, and manage provider secrets through Tauri commands. When the sidecar fails to start, the frontend can still read `settings.json` directly through Rust for a read-only view.
 

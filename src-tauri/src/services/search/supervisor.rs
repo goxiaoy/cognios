@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::process::Command as StdCommand;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 use tauri_plugin_shell::process::{Command, CommandChild};
@@ -244,6 +244,83 @@ impl SearchSidecarSupervisor {
         }
         self.set_state(SupervisorState::Stopped);
     }
+
+    /// Stop the running sidecar (graceful SIGTERM, fall back to
+    /// SIGKILL after a grace period) and re-spawn it with the same
+    /// arguments. Used when settings change in a way that requires
+    /// the sidecar to re-wire its dispatcher (provider swap, feature
+    /// toggle, etc. — see ``Mixed-provider data corruption guard``
+    /// in the plan).
+    ///
+    /// Sequence:
+    /// 1. Read the holder PID from ``sidecar.lock`` so we can poll
+    ///    its liveness directly (the in-memory ``Stopped`` state set
+    ///    by ``kill()`` is synchronous and tells us nothing about
+    ///    the OS process).
+    /// 2. Send SIGTERM via the existing ``send_signal`` helper. The
+    ///    sidecar's ``lifecycle.py`` SIGTERM handler runs the
+    ///    ``finally`` block that drains the runner and releases the
+    ///    flock cleanly.
+    /// 3. Poll for the process to exit, up to ``ORPHAN_SIGTERM_GRACE``.
+    /// 4. If still alive, fall back to ``child.kill()`` (SIGKILL) +
+    ///    one more poll round for the kernel to reap.
+    /// 5. Spawn a new sidecar via ``start(app)``.
+    pub fn restart(self: &Arc<Self>, app: &AppHandle) -> Result<(), String> {
+        let pid_before = read_lock_holder_pid(&self.lock_path);
+
+        // Send SIGTERM if we know who's holding the lock.
+        if let Some(pid) = pid_before {
+            if process_is_alive(pid) {
+                if let Err(err) = send_signal(pid, "TERM") {
+                    log::warn!("restart: SIGTERM to pid {pid} failed: {err}");
+                }
+                // Wait for graceful exit + flock release.
+                let deadline = Instant::now() + ORPHAN_SIGTERM_GRACE;
+                while Instant::now() < deadline {
+                    if !process_is_alive(pid) {
+                        break;
+                    }
+                    sleep(ORPHAN_POLL_INTERVAL);
+                }
+            }
+        }
+
+        // Drop our handle to the child if any. This sends SIGKILL
+        // on Unix via tauri-plugin-shell — covers the case where
+        // SIGTERM didn't take.
+        if let Some(child) = self.take_child() {
+            if process_still_alive_for_child(&child) {
+                if let Err(err) = child.kill() {
+                    log::warn!("restart: child.kill() failed: {err}");
+                }
+            }
+        }
+
+        // One more poll to be sure the lock is released before we
+        // try to re-acquire it.
+        if let Some(pid) = pid_before {
+            let deadline = Instant::now() + ORPHAN_SIGTERM_GRACE;
+            while Instant::now() < deadline {
+                if !process_is_alive(pid) {
+                    break;
+                }
+                sleep(ORPHAN_POLL_INTERVAL);
+            }
+        }
+
+        self.set_state(SupervisorState::Stopped);
+        // Spawn fresh.
+        self.start(app);
+        Ok(())
+    }
+}
+
+/// Best-effort liveness check on the child handle. The
+/// ``CommandChild`` API doesn't expose ``try_wait``-equivalent in
+/// every Tauri version; we conservatively assume alive so the
+/// caller still issues kill() — kill on a dead handle is a no-op.
+fn process_still_alive_for_child(_child: &CommandChild) -> bool {
+    true
 }
 
 // ----- orphan-process cleanup ----------------------------------------------

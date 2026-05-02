@@ -255,6 +255,60 @@ pub struct LicenseAcceptResponseDto {
     pub role: String,
 }
 
+// ----- Settings DTOs -------------------------------------------------------
+//
+// Mirror the sidecar's ``SearchSettings`` Pydantic model. Optional /
+// new fields use ``#[serde(default)]`` so a payload from an older
+// sidecar still parses cleanly.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct ProviderConfigDto {
+    pub provider_id: String,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub api_key_ref: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub model_per_capability: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct FeatureConfigDto {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct SearchSettingsDto {
+    #[serde(default = "default_settings_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub providers: std::collections::HashMap<String, ProviderConfigDto>,
+    #[serde(default)]
+    pub features: std::collections::HashMap<String, FeatureConfigDto>,
+    #[serde(default)]
+    pub cloud_consent_acked: Vec<String>,
+    #[serde(default)]
+    pub first_run_skipped: bool,
+    /// Computed by the sidecar route; ``true`` means the on-disk
+    /// settings differ from what the running sidecar booted with in
+    /// some dispatcher-affecting way. The frontend uses this to
+    /// surface the "Restart sidecar to apply" banner.
+    #[serde(default)]
+    pub needs_restart: bool,
+}
+
+fn default_settings_version() -> u32 {
+    1
+}
+
 /// One indexed chunk's body — element of `NodeContentDto.chunks`.
 ///
 /// `role` describes what kind of chunk this is for the rendering
@@ -460,6 +514,38 @@ impl SearchSidecarClient {
 
     pub async fn models_status(&self) -> SidecarEnvelope<ModelsStatusDto> {
         self.get_envelope("/models/status").await
+    }
+
+    pub async fn settings_get(&self) -> SidecarEnvelope<SearchSettingsDto> {
+        self.get_envelope("/settings").await
+    }
+
+    pub async fn settings_put(
+        &self,
+        body: &SearchSettingsDto,
+    ) -> SidecarEnvelope<SearchSettingsDto> {
+        let (base, token) = match self.rendezvous() {
+            Ok(v) => v,
+            Err(SidecarEnvelopeState::Initialising) => {
+                return SidecarEnvelope::initialising();
+            }
+            Err(_) => {
+                let reason = self.supervisor_failure_reason();
+                return SidecarEnvelope::unavailable(reason);
+            }
+        };
+        let url = format!("{base}/settings");
+        match self
+            .http
+            .put(&url)
+            .bearer_auth(&token)
+            .json(body)
+            .send()
+            .await
+        {
+            Ok(resp) => parse_response(resp).await,
+            Err(err) => SidecarEnvelope::unavailable(format!("network: {err}")),
+        }
     }
 
     pub async fn node_content(
@@ -770,6 +856,80 @@ mod tests {
         }"#;
         let parsed: ModelRoleStatusDto = serde_json::from_str(legacy).expect("legacy decode");
         assert_eq!(parsed.repo, "");
+    }
+
+    #[test]
+    fn search_settings_round_trips_snake_to_camel() {
+        let from_python = r#"{
+            "version": 1,
+            "providers": {
+                "openai": {
+                    "provider_id": "openai",
+                    "enabled": true,
+                    "api_key_ref": "keychain://cognios-search/provider:openai",
+                    "base_url": null,
+                    "model_per_capability": {"embedding": "text-embedding-3-small"}
+                }
+            },
+            "features": {
+                "semantic-search": {"enabled": true, "provider_id": "openai"},
+                "result-reranking": {"enabled": false, "provider_id": null}
+            },
+            "cloud_consent_acked": ["openai"],
+            "first_run_skipped": false,
+            "needs_restart": true
+        }"#;
+        let parsed: SearchSettingsDto =
+            serde_json::from_str(from_python).expect("decode settings");
+        assert_eq!(parsed.version, 1);
+        assert_eq!(
+            parsed.providers["openai"].api_key_ref.as_deref(),
+            Some("keychain://cognios-search/provider:openai")
+        );
+        assert_eq!(
+            parsed.features["semantic-search"].provider_id.as_deref(),
+            Some("openai")
+        );
+        assert_eq!(parsed.cloud_consent_acked, vec!["openai".to_string()]);
+        assert!(parsed.needs_restart);
+
+        let to_ts = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(to_ts["version"], 1);
+        assert_eq!(
+            to_ts["providers"]["openai"]["providerId"],
+            "openai"
+        );
+        assert_eq!(
+            to_ts["providers"]["openai"]["apiKeyRef"],
+            "keychain://cognios-search/provider:openai"
+        );
+        assert_eq!(
+            to_ts["features"]["semantic-search"]["providerId"],
+            "openai"
+        );
+        assert_eq!(to_ts["needsRestart"], true);
+        assert_eq!(to_ts["firstRunSkipped"], false);
+        assert!(to_ts["providers"]["openai"]
+            .get("provider_id")
+            .is_none());
+        assert!(to_ts.get("first_run_skipped").is_none());
+        assert!(to_ts.get("needs_restart").is_none());
+    }
+
+    #[test]
+    fn search_settings_defaults_optional_fields_for_legacy_payloads() {
+        // Pre-Phase-1 sidecars (none in the wild) didn't emit
+        // ``needs_restart``; the serde default keeps the decode alive.
+        let minimal = r#"{
+            "version": 1,
+            "providers": {},
+            "features": {},
+            "cloud_consent_acked": [],
+            "first_run_skipped": false
+        }"#;
+        let parsed: SearchSettingsDto =
+            serde_json::from_str(minimal).expect("legacy decode");
+        assert!(!parsed.needs_restart);
     }
 
     #[test]
