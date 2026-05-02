@@ -105,16 +105,24 @@ def _get_store(request: Request) -> LanceDBStore | None:
 @router.post("/node")
 def post_node_event(body: NodeEvent, request: Request) -> dict:
     _validate_node_id(body.node_id)
-    _validate_kind(body.kind)
 
     queue = _get_queue(request)
     store = _get_store(request)
 
     if body.event == "node_deleted":
+        # Deletion events carry only ``node_id`` — the row is already
+        # gone in cognios.db so Rust cannot include kind/name/path.
+        # Skip the kind allowlist check (it would 400 on the empty
+        # string the forwarder sends) and clear queue + lancedb by id.
         queue.remove(body.node_id)
         if store is not None:
             store.delete_by_node_id(body.node_id)
         return {"accepted": True, "action": "deleted"}
+
+    # node_changed: kind drives processor selection + filter SQL, so
+    # validate it here (after the deletion branch so deletes aren't
+    # blocked).
+    _validate_kind(body.kind)
 
     queue.enqueue(
         node_id=body.node_id,

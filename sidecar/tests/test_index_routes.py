@@ -76,20 +76,48 @@ def test_post_node_event_deletion_drops_from_queue_and_store(stack):
         runner.process_one()
         assert store.count() == 1
 
+        # The Rust forwarder sends ``kind: ""`` and ``name: ""`` for
+        # deletes because the row is already gone from cognios.db —
+        # only the node_id is available. The route must accept this
+        # shape and not run the kind allowlist on it.
         resp = client.post(
             "/events/node",
             headers=_auth(),
             json={
                 "event": "node_deleted",
                 "node_id": UUID_A,
-                "kind": "note",
-                "name": "note.md",
+                "kind": "",
+                "name": "",
             },
         )
     assert resp.status_code == 200
     assert resp.json() == {"accepted": True, "action": "deleted"}
     assert queue.get(UUID_A) is None
     assert store.count() == 0
+
+
+def test_post_node_event_deletion_does_not_run_kind_allowlist(stack):
+    """Regression: ``kind`` validation used to run unconditionally
+    before the deleted-event branch, which 400'd every delete the
+    Rust forwarder sent (kind is always empty for deletes). Pinning
+    the contract: a deletion with any kind value — including the
+    empty string the forwarder uses — must succeed."""
+    app, queue, store, _, _ = stack
+    with TestClient(app) as client:
+        for kind_value in ("", "note", "weird-kind"):
+            resp = client.post(
+                "/events/node",
+                headers=_auth(),
+                json={
+                    "event": "node_deleted",
+                    "node_id": UUID_A,
+                    "kind": kind_value,
+                    "name": "",
+                },
+            )
+            assert resp.status_code == 200, (
+                f"delete rejected for kind={kind_value!r}: {resp.json()}"
+            )
 
 
 def test_post_node_event_rejects_bad_uuid(stack):
