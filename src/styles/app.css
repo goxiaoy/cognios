@@ -905,16 +905,23 @@ button:disabled {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  padding: 0.25rem 0.4rem;
-  border-radius: 0.25rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 6px;
   display: inline-flex;
   align-items: center;
-  gap: 0.2rem;
+  gap: 0.3rem;
+  transition: background-color 0.12s ease-out, color 0.12s ease-out;
 }
 
 .search-palette-filter-toggle:hover,
+.search-palette-filter-toggle:focus-visible {
+  background: color-mix(in srgb, var(--line) 35%, transparent 65%);
+  color: var(--text);
+  outline: none;
+}
+
 .search-palette-filter-toggle.is-open {
-  background: color-mix(in srgb, var(--line) 60%, white 40%);
+  background: color-mix(in srgb, var(--line) 50%, transparent 50%);
   color: var(--text);
 }
 
@@ -923,60 +930,47 @@ button:disabled {
 }
 
 .search-palette-filter-count {
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   font-weight: 600;
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
-  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 80%, transparent);
+  color: white;
   border-radius: 999px;
-  padding: 0 0.4rem;
-  min-width: 1rem;
+  padding: 0 0.35rem;
+  min-width: 0.95rem;
+  height: 0.95rem;
+  line-height: 0.95rem;
   text-align: center;
+  letter-spacing: 0.02em;
 }
 
 .search-palette-filters {
-  padding: 0.6rem 0.85rem;
+  padding: 0.7rem 0.95rem 0.6rem;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--line) 18%, transparent);
+  background: color-mix(in srgb, var(--line) 12%, transparent);
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
-/* Compact tweaks so the filter bar fits inside the overlay. */
-.search-palette-filters .search-filter-bar {
-  gap: 0.5rem 0.85rem;
-}
-
-.search-palette-filters .search-filter-legend {
-  font-size: 0.66rem;
-}
-
-.search-palette-filters .search-filter-chip {
-  font-size: 0.74rem;
-  padding: 0.15rem 0.55rem;
-}
-
-.search-palette-filters .search-filter-select,
-.search-palette-filters .search-filter-date {
-  font-size: 0.78rem;
-  padding: 0.18rem 0.4rem;
-}
-
 .search-palette-filter-clear {
-  align-self: flex-start;
+  align-self: flex-end;
   border: none;
   background: transparent;
   color: var(--muted);
   font: inherit;
   font-size: 0.74rem;
-  padding: 0.15rem 0.3rem;
+  padding: 0.1rem 0.4rem;
   cursor: pointer;
-  text-decoration: underline;
+  border-radius: 4px;
+  transition: color 0.12s ease-out, background-color 0.12s ease-out;
 }
 
-.search-palette-filter-clear:hover {
+.search-palette-filter-clear:hover,
+.search-palette-filter-clear:focus-visible {
   color: var(--text);
+  background: color-mix(in srgb, var(--line) 35%, transparent);
+  outline: none;
 }
 
 .search-result-row {
@@ -2749,59 +2743,148 @@ body.is-resizing-pane {
   color: var(--text);
 }
 
+/* Filter bar — Linear-style monochrome, used in the Cmd+K palette. */
+
 .search-filter-bar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem 1rem;
-  align-items: flex-end;
-}
-
-.search-filter-group {
-  display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  min-width: 0;
+  gap: 0.4rem;
+  width: 100%;
 }
 
-.search-filter-legend {
-  font-size: 0.72rem;
+.search-filter-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 1.7rem;
+}
+
+.search-filter-row-label {
+  font-size: 0.78rem;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-weight: 500;
+}
+
+.search-filter-row-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
 }
 
 .search-filter-chips {
   display: flex;
-  gap: 0.3rem;
+  gap: 0.25rem;
   flex-wrap: wrap;
 }
 
 .search-filter-chip {
-  border: 1px solid var(--line);
-  background: transparent;
+  border: none;
+  background: color-mix(in srgb, var(--line) 35%, transparent 65%);
   color: var(--text);
   border-radius: 999px;
-  padding: 0.2rem 0.65rem;
+  padding: 0.18rem 0.6rem;
   font: inherit;
   font-size: 0.78rem;
   cursor: pointer;
+  transition: background-color 0.12s ease-out, color 0.12s ease-out;
+}
+
+.search-filter-chip:hover,
+.search-filter-chip:focus-visible {
+  background: color-mix(in srgb, var(--line) 65%, transparent 35%);
+  outline: none;
 }
 
 .search-filter-chip.is-active {
-  background: color-mix(in srgb, var(--accent) 18%, transparent 82%);
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: color-mix(in srgb, var(--accent) 22%, transparent 78%);
   color: var(--text);
 }
 
-.search-filter-select,
-.search-filter-date {
-  border: 1px solid var(--line);
-  background: transparent;
+.search-filter-chip.is-active:hover,
+.search-filter-chip.is-active:focus-visible {
+  background: color-mix(in srgb, var(--accent) 32%, transparent 68%);
+}
+
+/* Custom-styled selects — match the chip aesthetic with a chevron on
+ * the right. We keep the native <select> for accessibility / keyboard
+ * support and just suppress the platform appearance. */
+.search-filter-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.search-filter-select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: color-mix(in srgb, var(--line) 35%, transparent 65%);
   color: var(--text);
   font: inherit;
-  font-size: 0.85rem;
-  padding: 0.25rem 0.45rem;
-  border-radius: 0.3rem;
+  font-size: 0.78rem;
+  padding: 0.18rem 1.5rem 0.18rem 0.6rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 0.12s ease-out;
+}
+
+.search-filter-select:hover,
+.search-filter-select:focus-visible {
+  background: color-mix(in srgb, var(--line) 65%, transparent 35%);
+  outline: none;
+}
+
+.search-filter-select-caret {
+  position: absolute;
+  right: 0.55rem;
+  pointer-events: none;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+/* Date inputs — same chip-shaped surface, with a subtle inner-shadow
+ * cue. The native picker UI (calendar dropdown) is preserved. */
+.search-filter-date {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: color-mix(in srgb, var(--line) 35%, transparent 65%);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.12s ease-out;
+}
+
+.search-filter-date:hover,
+.search-filter-date:focus-visible {
+  background: color-mix(in srgb, var(--line) 65%, transparent 35%);
+  outline: none;
+}
+
+.search-filter-date::-webkit-calendar-picker-indicator {
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.search-filter-date:hover::-webkit-calendar-picker-indicator,
+.search-filter-date:focus-visible::-webkit-calendar-picker-indicator {
+  opacity: 0.85;
+}
+
+.search-filter-date-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.search-filter-date-sep {
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
 .search-view-banner,

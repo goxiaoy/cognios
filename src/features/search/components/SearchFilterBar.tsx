@@ -32,12 +32,17 @@ export const EMPTY_FILTERS: SearchFilters = {
 };
 
 /**
- * Filter + sort controls for the dedicated search view.
+ * Filter + sort controls. Renders a stack of "rows", each with a
+ * sentence-case label column on the left and the control(s) on the
+ * right. The visual aesthetic is intentionally muted (Linear-style) —
+ * subtle backgrounds for chips, custom-styled selects/dates that
+ * match the chip shape, no SHOUTY uppercase legends. The same
+ * component services the Cmd+K palette filter panel and any future
+ * filter-rich surface.
  *
- * Filters serialise into the same inline-syntax string the Cmd+K
- * palette uses (``kind:note,file mount:<uuid> modified:>2026-01-01``)
- * so the same Rust command + sidecar parser handle both. ``sort`` is
- * a separate field on the IPC payload.
+ * Filters serialise into the inline-syntax string the sidecar parses
+ * (``kind:note,file mount:<uuid> modified:>=YYYY-MM-DD``) via
+ * :func:`buildQueryString`. ``sort`` is a separate IPC field.
  */
 export function SearchFilterBar({
   filters,
@@ -60,10 +65,13 @@ export function SearchFilterBar({
   }
 
   return (
-    <div className="search-filter-bar" role="group" aria-label="Search filters">
-      <fieldset className="search-filter-group">
-        <legend className="search-filter-legend">Kind</legend>
-        <div className="search-filter-chips">
+    <div
+      className="search-filter-bar"
+      role="group"
+      aria-label="Search filters"
+    >
+      <FilterRow label="Kind">
+        <div className="search-filter-chips" role="group" aria-label="Kind">
           {KIND_OPTIONS.map((opt) => {
             const active = filters.kinds.includes(opt.value);
             return (
@@ -79,71 +87,128 @@ export function SearchFilterBar({
             );
           })}
         </div>
-      </fieldset>
+      </FilterRow>
 
-      <label className="search-filter-group">
-        <span className="search-filter-legend">Mount</span>
-        <select
-          className="search-filter-select"
+      <FilterRow label="Mount">
+        <SelectControl
+          label="Mount"
           value={filters.mountId ?? ""}
-          onChange={(event) =>
-            onFiltersChange({
-              ...filters,
-              mountId: event.target.value || null,
-            })
+          onChange={(value) =>
+            onFiltersChange({ ...filters, mountId: value || null })
           }
-        >
-          <option value="">Any mount</option>
-          {mounts.map((mount) => (
-            <option key={mount.id} value={mount.id}>
-              {mount.name}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="search-filter-group">
-        <span className="search-filter-legend">Modified after</span>
-        <input
-          type="date"
-          className="search-filter-date"
-          value={filters.modifiedAfter ?? ""}
-          onChange={(event) =>
-            onFiltersChange({
-              ...filters,
-              modifiedAfter: event.target.value || null,
-            })
-          }
+          options={[
+            { value: "", label: "Any mount" },
+            ...mounts.map((m) => ({ value: m.id, label: m.name })),
+          ]}
         />
-      </label>
+      </FilterRow>
 
-      <label className="search-filter-group">
-        <span className="search-filter-legend">Modified before</span>
-        <input
-          type="date"
-          className="search-filter-date"
-          value={filters.modifiedBefore ?? ""}
-          onChange={(event) =>
-            onFiltersChange({
-              ...filters,
-              modifiedBefore: event.target.value || null,
-            })
-          }
-        />
-      </label>
+      <FilterRow label="Modified">
+        <div className="search-filter-date-pair">
+          <DateControl
+            ariaLabel="Modified after"
+            value={filters.modifiedAfter ?? ""}
+            onChange={(value) =>
+              onFiltersChange({ ...filters, modifiedAfter: value || null })
+            }
+          />
+          <span className="search-filter-date-sep" aria-hidden="true">
+            →
+          </span>
+          <DateControl
+            ariaLabel="Modified before"
+            value={filters.modifiedBefore ?? ""}
+            onChange={(value) =>
+              onFiltersChange({ ...filters, modifiedBefore: value || null })
+            }
+          />
+        </div>
+      </FilterRow>
 
-      <label className="search-filter-group">
-        <span className="search-filter-legend">Sort</span>
-        <select
-          className="search-filter-select"
+      <FilterRow label="Sort">
+        <SelectControl
+          label="Sort"
           value={sort}
-          onChange={(event) => onSortChange(event.target.value as SearchSort)}
-        >
-          <option value="relevance">Relevance</option>
-          <option value="modified">Modified date</option>
-        </select>
-      </label>
+          onChange={(value) => onSortChange(value as SearchSort)}
+          options={[
+            { value: "relevance", label: "Relevance" },
+            { value: "modified", label: "Modified date" },
+          ]}
+        />
+      </FilterRow>
     </div>
+  );
+}
+
+function FilterRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="search-filter-row">
+      <span className="search-filter-row-label">{label}</span>
+      <div className="search-filter-row-control">{children}</div>
+    </div>
+  );
+}
+
+interface SelectOption {
+  value: string;
+  label: string;
+}
+
+function SelectControl({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: SelectOption[];
+  onChange(value: string): void;
+}) {
+  return (
+    <span className="search-filter-select-wrap">
+      <select
+        className="search-filter-select"
+        aria-label={label}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+      <span className="search-filter-select-caret" aria-hidden="true">
+        ▾
+      </span>
+    </span>
+  );
+}
+
+function DateControl({
+  ariaLabel,
+  value,
+  onChange,
+}: {
+  ariaLabel: string;
+  value: string;
+  onChange(value: string): void;
+}) {
+  return (
+    <input
+      type="date"
+      className="search-filter-date"
+      aria-label={ariaLabel}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
   );
 }
 
