@@ -9,14 +9,18 @@ and hybrid retrieval on top of the same table.
 
 from .lancedb_store import (
     EMBEDDING_DIMENSION,
+    ROLE_VALUES,
     LanceDBStore,
     NodeChunk,
     open_store,
+    role_or_default,
 )
 
 __all__ = [
     "EMBEDDING_DIMENSION",
+    "ROLE_VALUES",
     "LanceDBStore",
     "NodeChunk",
     "open_store",
+    "role_or_default",
 ]

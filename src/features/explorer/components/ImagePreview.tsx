@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import type { NodeContentChunk } from "../../../lib/contracts/search";
 import type { SearchClient } from "../../search/types/search";
 
 /**
@@ -13,10 +14,12 @@ import type { SearchClient } from "../../search/types/search";
  *
  * Content shape:
  *
- * - The ImageProcessor stores ``"OCR: <text>\\n\\nCaption: <text>"``
- *   under each image node's chunks. We split the joined string on
- *   those prefixes so the UI can render each as its own section
- *   header. Either side missing is fine — the section is omitted.
+ * - The sidecar returns ``chunks: [{id, role, text}]`` for every
+ *   indexed node. Image nodes have ``role="body"`` rows for OCR text
+ *   and ``role="summary"`` rows for caption text. Both categories
+ *   may contain multiple chunks (long captions split through the
+ *   chunker the same way body text does); this component joins each
+ *   category in chunk-index order before rendering it as one section.
  * - When neither extractor has produced text yet (the OCR /
  *   captioner extras aren't installed, or the runner hasn't drained
  *   the queue), we render an explanatory empty state so the user
@@ -31,7 +34,7 @@ export function ImagePreview({
   nodeId: string;
   name: string;
 }) {
-  const [joined, setJoined] = useState<string | null>(null);
+  const [chunks, setChunks] = useState<NodeContentChunk[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,13 +42,13 @@ export function ImagePreview({
     let cancelled = false;
     setIsLoading(true);
     setError(null);
-    setJoined(null);
+    setChunks(null);
     void (async () => {
       try {
         const env = await searchClient.nodeContent(nodeId);
         if (cancelled) return;
         if (env.state === "ready" && env.data) {
-          setJoined(env.data.joined);
+          setChunks(env.data.chunks);
         } else if (env.state === "initialising") {
           setError("Search subsystem is still starting…");
         } else {
@@ -66,7 +69,7 @@ export function ImagePreview({
     };
   }, [searchClient, nodeId]);
 
-  const sections = useMemo(() => parseSections(joined ?? ""), [joined]);
+  const sections = buildSections(chunks ?? []);
 
   return (
     <div className="image-preview">
@@ -86,8 +89,8 @@ export function ImagePreview({
         <ImagePreviewEmptyState />
       ) : (
         <div className="image-preview-body">
-          {sections.map((section, idx) => (
-            <ImagePreviewSection key={idx} section={section} />
+          {sections.map((section) => (
+            <ImagePreviewSection key={section.label} section={section} />
           ))}
         </div>
       )}
@@ -100,36 +103,23 @@ interface PreviewSection {
   body: string;
 }
 
-/**
- * Split the joined chunks string back into ``{ OCR, Caption }``
- * sections. The format is whatever ImageProcessor emits — currently
- * ``"OCR: <text>\\n\\nCaption: <text>"`` with either side optional.
- *
- * Any text outside the recognised prefixes (e.g. a non-image node
- * routed through this surface) becomes a single "Content" section
- * so we never silently drop bytes the indexer captured.
- */
-export function parseSections(joined: string): PreviewSection[] {
-  const trimmed = joined.trim();
-  if (!trimmed) return [];
-
-  const ocrMatch = trimmed.match(/OCR:\s*([\s\S]*?)(?=\n\nCaption:|$)/);
-  const captionMatch = trimmed.match(/Caption:\s*([\s\S]*?)$/);
-
+function buildSections(chunks: NodeContentChunk[]): PreviewSection[] {
+  // Chunks arrive pre-sorted by the sidecar: body first (numeric idx
+  // ascending), summary after (also numeric idx ascending). We split
+  // by role and stitch each side back into one rendered section.
+  const body = chunks
+    .filter((c) => c.role === "body")
+    .map((c) => c.text)
+    .filter((t) => t.trim().length > 0)
+    .join("\n\n");
+  const summary = chunks
+    .filter((c) => c.role === "summary")
+    .map((c) => c.text)
+    .filter((t) => t.trim().length > 0)
+    .join("\n\n");
   const sections: PreviewSection[] = [];
-  if (ocrMatch && ocrMatch[1].trim()) {
-    sections.push({ label: "OCR", body: ocrMatch[1].trim() });
-  }
-  if (captionMatch && captionMatch[1].trim()) {
-    sections.push({ label: "Caption", body: captionMatch[1].trim() });
-  }
-
-  if (sections.length === 0) {
-    // No recognised prefix — treat the whole blob as one section so
-    // we never drop indexed text (e.g. a non-image node that ended
-    // up here, or a future format change).
-    sections.push({ label: "Content", body: trimmed });
-  }
+  if (body) sections.push({ label: "OCR", body });
+  if (summary) sections.push({ label: "Caption", body: summary });
   return sections;
 }
 

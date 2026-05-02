@@ -15,7 +15,7 @@ import pytest
 from search_sidecar.index.embedder import StubEmbedder
 from search_sidecar.index.processors.pdf import PdfProcessor
 from search_sidecar.index.queue import IndexingJob, JobState
-from search_sidecar.storage import open_store
+from search_sidecar.storage import open_store, role_or_default
 
 UUID_A = "11111111-1111-1111-1111-111111111111"
 
@@ -112,6 +112,7 @@ def test_process_extracts_text_and_writes_chunks(tmp_path: Path, proc):
     joined = "\n".join(r["text"] for r in rows)
     assert "PKCE" in joined
     assert "Refresh" in joined
+    assert {role_or_default(r) for r in rows} == {"body"}
 
 
 def test_process_replaces_previous_chunks_on_re_index(tmp_path: Path, proc):

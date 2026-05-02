@@ -243,11 +243,24 @@ pub struct LicenseAcceptResponseDto {
 }
 
 /// One indexed chunk's body — element of `NodeContentDto.chunks`.
+///
+/// `role` describes what kind of chunk this is for the rendering
+/// layer: `"body"` (literal content — text, OCR, PDF text) or
+/// `"summary"` (generated description — image captions today,
+/// document summaries in the future). Pre-2026-05 sidecar releases
+/// did not emit this field; the deserializer defaults to `"body"`
+/// so legacy responses still parse.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct NodeContentChunkDto {
     pub id: String,
+    #[serde(default = "default_chunk_role")]
+    pub role: String,
     pub text: String,
+}
+
+fn default_chunk_role() -> String {
+    "body".to_string()
 }
 
 /// Indexed text for a single node, used by the image preview surface
@@ -781,6 +794,47 @@ mod tests {
         drain_sse_frames(&mut buf, &on_event);
         // Only the well-formed frame counts; the bad one is dropped.
         assert_eq!(*count.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn node_content_round_trips_role_through_snake_camel() {
+        let from_python = r#"{
+            "node_id": "img-1",
+            "kind": "file",
+            "chunks": [
+                {"id": "img-1:0", "role": "body", "text": "OCR text"},
+                {"id": "img-1:summary:0", "role": "summary", "text": "A diagram."}
+            ],
+            "joined": "OCR text\n\nA diagram."
+        }"#;
+        let parsed: NodeContentDto =
+            serde_json::from_str(from_python).expect("decode node content");
+        assert_eq!(parsed.chunks.len(), 2);
+        assert_eq!(parsed.chunks[0].role, "body");
+        assert_eq!(parsed.chunks[1].role, "summary");
+
+        let to_ts = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(to_ts["nodeId"], "img-1");
+        assert_eq!(to_ts["chunks"][0]["role"], "body");
+        assert_eq!(to_ts["chunks"][1]["role"], "summary");
+        // ``role`` is a single word — no camelCase rename should
+        // mangle it. Asserting both spellings catches a future
+        // typo in the rename rule.
+        assert!(to_ts["chunks"][0].get("role").is_some());
+    }
+
+    #[test]
+    fn node_content_chunk_defaults_role_to_body_for_legacy_payloads() {
+        // Pre-2026-05 sidecars don't emit ``role`` at all. The
+        // serde default keeps these decodes alive.
+        let legacy = r#"{
+            "node_id": "old-node",
+            "chunks": [{"id": "old-node:0", "text": "hello"}],
+            "joined": "hello"
+        }"#;
+        let parsed: NodeContentDto =
+            serde_json::from_str(legacy).expect("legacy decode");
+        assert_eq!(parsed.chunks[0].role, "body");
     }
 
     #[test]

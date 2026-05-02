@@ -73,8 +73,18 @@ export interface NodeIndexStatus {
   attempts: number;
 }
 
+export type NodeContentChunkRole = "body" | "summary";
+
 export interface NodeContentChunk {
   id: string;
+  /**
+   * "body" for literal content (text, OCR, PDF, HTML body) or
+   * "summary" for generated descriptions (today: image captions;
+   * future: document summaries). Pre-2026-05 sidecars omit the
+   * field; the Rust DTO defaults it to "body" before reaching the
+   * frontend.
+   */
+  role: NodeContentChunkRole;
   text: string;
 }
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from ..index.queue import IndexingQueue, JobState
-from ..storage import LanceDBStore
+from ..storage import LanceDBStore, role_or_default
 
 router = APIRouter(prefix="/index", tags=["index"])
 
@@ -66,19 +66,28 @@ def get_node_status(node_id: str, request: Request) -> dict:
 
 @router.get("/node/{node_id}/content")
 def get_node_content(node_id: str, request: Request) -> dict:
-    """Indexed text for a single node. Concatenates every chunk's
-    body in chunk-index order and returns it under ``joined``; the
-    raw chunk array is also exposed for callers that want richer
-    rendering (e.g. one ``<section>`` per chunk).
+    """Indexed text for a single node.
 
-    Used by the image preview surface: the ImageProcessor stores
-    "OCR: ...\\n\\nCaption: ..." under each image node, and the
-    UI renders that as markdown in the center pane while the
-    inspector shows the raw image.
+    Returns the raw chunk array (each entry tagged with its ``role``
+    — ``"body"`` for literal content, ``"summary"`` for generated
+    descriptions like image captions) plus a ``joined`` field.
+
+    Chunks are sorted via ``_chunk_index_key``: body rows first (by
+    numeric chunk-index ascending), then summary rows (also by
+    numeric index). ``joined`` is the concatenation of every
+    non-empty chunk's text in that order, separated by ``\\n\\n``.
+    The same ``\\n\\n`` separates intra-body, intra-summary, and the
+    body/summary boundary — there is no special role-boundary
+    delimiter. Consumers that need to distinguish body from summary
+    text should iterate ``chunks`` filtered by ``role`` rather than
+    parsing ``joined``.
+
+    Used by the image preview surface, which filters ``chunks`` by
+    role to render OCR (body) and Caption (summary) sections.
 
     Returns ``{node_id, kind, chunks: [], joined: ""}`` for nodes
-    that have nothing in lancedb yet (image-only PDF, image with
-    no extractors wired, fresh node before the runner drains).
+    that have nothing in lancedb yet (image-only PDF, image with no
+    extractors wired, fresh node before the runner drains).
     """
     store = _get_store(request)
     if store is None:
@@ -91,7 +100,11 @@ def get_node_content(node_id: str, request: Request) -> dict:
     rows = store.scan(node_id)
     rows_sorted = sorted(rows, key=_chunk_index_key)
     chunks = [
-        {"id": row.get("id"), "text": row.get("text") or ""}
+        {
+            "id": row.get("id"),
+            "role": role_or_default(row),
+            "text": row.get("text") or "",
+        }
         for row in rows_sorted
     ]
     joined = "\n\n".join(c["text"] for c in chunks if c["text"].strip())
@@ -104,16 +117,28 @@ def get_node_content(node_id: str, request: Request) -> dict:
     }
 
 
-def _chunk_index_key(row: dict) -> int:
-    """Chunk ids look like ``<uuid>:<chunk_idx>``. Sort by the
-    integer suffix so a 12-chunk document doesn't end up as
-    ``[0, 1, 10, 11, 2, 3, ...]`` lexicographically."""
+def _chunk_index_key(row: dict) -> tuple[int, int, str]:
+    """Sort key for chunk rows: ``(role_rank, chunk_index, id)``.
+
+    Body chunks (rank 0) sort before summary chunks (rank 1); within
+    each role, the integer chunk-index suffix gives stable order so
+    a 12-chunk document doesn't end up as ``[0, 1, 10, 11, 2, ...]``
+    lexicographically. The role column is the primary discriminator
+    rather than parsing the id, so a node id that happens to end in
+    ``:summary`` cannot be misclassified.
+
+    The trailing ``id`` tiebreaker keeps order deterministic when
+    multiple rows fall back to ``idx=0`` (legacy or non-conforming
+    ids whose suffix doesn't parse as an integer).
+    """
     chunk_id = row.get("id") or ""
     _, _, suffix = chunk_id.rpartition(":")
     try:
-        return int(suffix)
+        idx = int(suffix)
     except ValueError:
-        return 0
+        idx = 0
+    rank = 1 if role_or_default(row) == "summary" else 0
+    return (rank, idx, chunk_id)
 
 
 @router.get("/snapshot")

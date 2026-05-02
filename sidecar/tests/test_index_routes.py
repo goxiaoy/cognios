@@ -286,9 +286,118 @@ def test_get_node_content_concatenates_chunks_in_order(stack):
     assert body["node_id"] == UUID_A
     assert body["kind"] == "note"
     assert len(body["chunks"]) >= 1
+    # Every chunk surfaces a role; text-processor output is all body.
+    assert {c["role"] for c in body["chunks"]} == {"body"}
     # Joined text must keep paragraphs in source order.
     joined = body["joined"]
     pos_2 = joined.find("Paragraph 2 ")
     pos_10 = joined.find("Paragraph 10 ")
     assert pos_2 != -1 and pos_10 != -1
     assert pos_2 < pos_10, "Paragraph 10 must appear after Paragraph 2"
+
+
+def test_get_node_content_orders_body_then_summary(stack):
+    """Body chunks sort first (by numeric idx), summary chunks sort
+    after (also by numeric idx). The ``role`` field carries through
+    to the response."""
+    from datetime import datetime, timezone
+
+    from search_sidecar.storage import EMBEDDING_DIMENSION, NodeChunk
+
+    app, _queue, store, _runner, _tmp = stack
+    now = datetime.now(timezone.utc)
+    vec = [0.0] * EMBEDDING_DIMENSION
+    # Insert intentionally out-of-order: summary first, then body
+    # 10/0/2/1/11 — the route must reorder.
+    rows = [
+        NodeChunk(
+            id=f"{UUID_A}:summary:1",
+            node_id=UUID_A,
+            kind="file",
+            name="img.png",
+            text="Caption part two.",
+            vector=vec,
+            created_at=now,
+            modified_at=now,
+            role="summary",
+        ),
+        NodeChunk(
+            id=f"{UUID_A}:summary:0",
+            node_id=UUID_A,
+            kind="file",
+            name="img.png",
+            text="Caption part one.",
+            vector=vec,
+            created_at=now,
+            modified_at=now,
+            role="summary",
+        ),
+        NodeChunk(
+            id=f"{UUID_A}:10",
+            node_id=UUID_A,
+            kind="file",
+            name="img.png",
+            text="Body line 10.",
+            vector=vec,
+            created_at=now,
+            modified_at=now,
+            role="body",
+        ),
+        NodeChunk(
+            id=f"{UUID_A}:2",
+            node_id=UUID_A,
+            kind="file",
+            name="img.png",
+            text="Body line 2.",
+            vector=vec,
+            created_at=now,
+            modified_at=now,
+            role="body",
+        ),
+        NodeChunk(
+            id=f"{UUID_A}:0",
+            node_id=UUID_A,
+            kind="file",
+            name="img.png",
+            text="Body line 0.",
+            vector=vec,
+            created_at=now,
+            modified_at=now,
+            role="body",
+        ),
+    ]
+    store.upsert(rows)
+    with TestClient(app) as client:
+        resp = client.get(f"/index/node/{UUID_A}/content", headers=_auth())
+    body = resp.json()
+    ids_in_order = [c["id"] for c in body["chunks"]]
+    assert ids_in_order == [
+        f"{UUID_A}:0",
+        f"{UUID_A}:2",
+        f"{UUID_A}:10",
+        f"{UUID_A}:summary:0",
+        f"{UUID_A}:summary:1",
+    ]
+    roles_in_order = [c["role"] for c in body["chunks"]]
+    assert roles_in_order == ["body", "body", "body", "summary", "summary"]
+    # Joined keeps the same order; summary text appears after body.
+    joined = body["joined"]
+    body_end = joined.find("Body line 10.")
+    summary_start = joined.find("Caption part one.")
+    assert body_end != -1 and summary_start != -1
+    assert body_end < summary_start
+
+
+def test_get_node_content_returns_unindexed_node_unchanged(stack):
+    """Empty stores still emit the documented shape — chunks list and
+    joined string both empty, no role chatter."""
+    app, _queue, _store, _runner, _tmp = stack
+    with TestClient(app) as client:
+        resp = client.get(f"/index/node/{UUID_B}/content", headers=_auth())
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "node_id": UUID_B,
+        "kind": None,
+        "chunks": [],
+        "joined": "",
+    }

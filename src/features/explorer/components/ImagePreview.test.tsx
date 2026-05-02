@@ -6,8 +6,9 @@ import {
   waitFor,
 } from "@testing-library/react";
 
+import type { NodeContentChunk } from "../../../lib/contracts/search";
 import type { SearchClient } from "../../search/types/search";
-import { ImagePreview, parseSections } from "./ImagePreview";
+import { ImagePreview } from "./ImagePreview";
 
 afterEach(() => cleanup());
 
@@ -27,57 +28,22 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
   };
 }
 
-describe("parseSections", () => {
-  it("splits OCR + Caption when both are present", () => {
-    const sections = parseSections(
-      "OCR: Some scanned receipt text\n\nCaption: A whiteboard diagram"
-    );
-    expect(sections).toEqual([
-      { label: "OCR", body: "Some scanned receipt text" },
-      { label: "Caption", body: "A whiteboard diagram" },
-    ]);
+function clientWithChunks(chunks: NodeContentChunk[]): SearchClient {
+  return makeClient({
+    nodeContent: vi.fn().mockResolvedValue({
+      state: "ready",
+      data: { nodeId: "img-1", kind: "file", chunks, joined: "" },
+    }),
   });
-
-  it("keeps OCR alone when only OCR is present", () => {
-    const sections = parseSections("OCR: just text from the image");
-    expect(sections).toEqual([
-      { label: "OCR", body: "just text from the image" },
-    ]);
-  });
-
-  it("keeps Caption alone when only Caption is present", () => {
-    const sections = parseSections("Caption: A photograph of a window");
-    expect(sections).toEqual([
-      { label: "Caption", body: "A photograph of a window" },
-    ]);
-  });
-
-  it("falls back to a single Content section for un-prefixed text", () => {
-    const sections = parseSections("Generic indexed body text.");
-    expect(sections).toEqual([
-      { label: "Content", body: "Generic indexed body text." },
-    ]);
-  });
-
-  it("returns an empty array for empty / whitespace input", () => {
-    expect(parseSections("")).toEqual([]);
-    expect(parseSections("   \n  ")).toEqual([]);
-  });
-});
+}
 
 describe("ImagePreview", () => {
-  it("renders a loading state, then the indexed sections from the sidecar", async () => {
-    const client = makeClient({
-      nodeContent: vi.fn().mockResolvedValue({
-        state: "ready",
-        data: {
-          nodeId: "img-1",
-          kind: "file",
-          chunks: [],
-          joined: "OCR: invoice total $42.00\n\nCaption: Photo of a receipt",
-        },
-      }),
-    });
+  it("renders OCR (body) and Caption (summary) sections from chunks", async () => {
+    const client = clientWithChunks([
+      { id: "img-1:0", role: "body", text: "invoice total $42.00" },
+      { id: "img-1:1", role: "body", text: "PKCE flow" },
+      { id: "img-1:summary:0", role: "summary", text: "Photo of a receipt" },
+    ]);
     render(
       <ImagePreview searchClient={client} nodeId="img-1" name="receipt.png" />
     );
@@ -88,22 +54,78 @@ describe("ImagePreview", () => {
       expect(screen.getByText(/^Caption$/)).toBeInTheDocument();
     });
     expect(screen.getByText(/invoice total \$42\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/PKCE flow/)).toBeInTheDocument();
     expect(screen.getByText(/Photo of a receipt/)).toBeInTheDocument();
     expect(client.nodeContent).toHaveBeenCalledWith("img-1");
   });
 
-  it("renders the explanatory empty state when no chunks have been indexed", async () => {
-    const client = makeClient({
-      nodeContent: vi.fn().mockResolvedValue({
-        state: "ready",
-        data: {
-          nodeId: "img-1",
-          kind: "file",
-          chunks: [],
-          joined: "",
-        },
-      }),
+  it("omits Caption when no summary chunks exist", async () => {
+    const client = clientWithChunks([
+      { id: "img-1:0", role: "body", text: "OCR-only image text" },
+    ]);
+    render(
+      <ImagePreview searchClient={client} nodeId="img-1" name="x.png" />
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/^OCR$/)).toBeInTheDocument();
     });
+    expect(screen.queryByText(/^Caption$/)).not.toBeInTheDocument();
+  });
+
+  it("omits OCR when no body chunks exist", async () => {
+    const client = clientWithChunks([
+      {
+        id: "img-1:summary:0",
+        role: "summary",
+        text: "Caption-only image",
+      },
+    ]);
+    render(
+      <ImagePreview searchClient={client} nodeId="img-1" name="x.png" />
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/^Caption$/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/^OCR$/)).not.toBeInTheDocument();
+  });
+
+  it("joins multi-chunk summaries in chunk order", async () => {
+    const client = clientWithChunks([
+      { id: "img-1:summary:0", role: "summary", text: "First half." },
+      { id: "img-1:summary:1", role: "summary", text: "Second half." },
+    ]);
+    render(
+      <ImagePreview searchClient={client} nodeId="img-1" name="x.png" />
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/First half\./)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Second half\./)).toBeInTheDocument();
+  });
+
+  it("renders body text containing the literal substring 'OCR:' verbatim", async () => {
+    // Edge case from the plan: a real document with the word
+    // "OCR:" in it should render under the OCR header without
+    // being double-stripped.
+    const client = clientWithChunks([
+      {
+        id: "img-1:0",
+        role: "body",
+        text: "OCR: tag literally appears in the text.",
+      },
+    ]);
+    render(
+      <ImagePreview searchClient={client} nodeId="img-1" name="x.png" />
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByText(/OCR: tag literally appears/)
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("renders the explanatory empty state when no chunks have been indexed", async () => {
+    const client = clientWithChunks([]);
     render(
       <ImagePreview searchClient={client} nodeId="img-1" name="x.png" />
     );

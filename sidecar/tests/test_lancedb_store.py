@@ -4,16 +4,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import lancedb
+import pyarrow as pa
 import pytest
 
 from search_sidecar.storage import (
     EMBEDDING_DIMENSION,
     NodeChunk,
     open_store,
+    role_or_default,
 )
+from search_sidecar.storage.lancedb_store import TABLE_NAME
 
 
-def _make_chunk(node_id: str, idx: int = 0, text: str = "hello") -> NodeChunk:
+def _make_chunk(
+    node_id: str,
+    idx: int = 0,
+    text: str = "hello",
+    *,
+    role: str = "body",
+) -> NodeChunk:
     return NodeChunk(
         id=f"{node_id}:{idx}",
         node_id=node_id,
@@ -21,6 +31,7 @@ def _make_chunk(node_id: str, idx: int = 0, text: str = "hello") -> NodeChunk:
         name="A note",
         text=text,
         vector=[0.0] * EMBEDDING_DIMENSION,
+        role=role,
     )
 
 
@@ -185,3 +196,141 @@ def test_open_store_is_idempotent(tmp_path: Path):
     open_store(path).upsert([_make_chunk("node-a")])
     reopened = open_store(path)
     assert reopened.count() == 1
+
+
+def test_open_store_includes_role_column(tmp_path: Path):
+    """Schema includes the role column on a fresh store."""
+    store = open_store(tmp_path / "index.lance")
+    assert "role" in store.table.schema.names
+
+
+def test_upsert_round_trips_role(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    store.upsert(
+        [
+            _make_chunk("node-a", idx=0, text="body chunk", role="body"),
+            NodeChunk(
+                id="node-a:summary:0",
+                node_id="node-a",
+                kind="file",
+                name="img",
+                text="caption",
+                vector=[0.0] * EMBEDDING_DIMENSION,
+                role="summary",
+            ),
+        ]
+    )
+    rows = store.scan("node-a")
+    by_id = {row["id"]: row for row in rows}
+    assert by_id["node-a:0"]["role"] == "body"
+    assert by_id["node-a:summary:0"]["role"] == "summary"
+
+
+def test_node_chunk_rejects_unknown_role():
+    with pytest.raises(ValueError, match="role"):
+        NodeChunk(
+            id="x:0",
+            node_id="x",
+            kind="note",
+            name="x",
+            text="x",
+            vector=[0.0] * EMBEDDING_DIMENSION,
+            role="caption",
+        )
+
+
+def test_role_or_default_handles_missing_and_null():
+    assert role_or_default({}) == "body"
+    assert role_or_default({"role": None}) == "body"
+    assert role_or_default({"role": ""}) == "body"
+    assert role_or_default({"role": "body"}) == "body"
+    assert role_or_default({"role": "summary"}) == "summary"
+
+
+def _legacy_schema() -> pa.Schema:
+    """The pre-2026-05 schema — no ``role`` column."""
+    return pa.schema(
+        [
+            ("id", pa.string()),
+            ("node_id", pa.string()),
+            ("kind", pa.string()),
+            ("name", pa.string()),
+            ("text", pa.string()),
+            ("vector", pa.list_(pa.float32(), EMBEDDING_DIMENSION)),
+            ("mount_id", pa.string()),
+            ("created_at", pa.timestamp("ms", tz="UTC")),
+            ("modified_at", pa.timestamp("ms", tz="UTC")),
+        ]
+    )
+
+
+def test_open_store_migrates_legacy_table_in_place(tmp_path: Path):
+    """A table created without ``role`` gets the column on next open;
+    existing rows survive the migration and read as ``role="body"``."""
+    from datetime import datetime, timezone
+
+    path = tmp_path / "index.lance"
+    path.mkdir(parents=True, exist_ok=True)
+    db = lancedb.connect(str(path))
+    legacy_table = db.create_table(TABLE_NAME, schema=_legacy_schema())
+    now = datetime.now(timezone.utc)
+    legacy_table.add(
+        [
+            {
+                "id": "legacy-a:0",
+                "node_id": "legacy-a",
+                "kind": "note",
+                "name": "old note",
+                "text": "pre-schema content",
+                "vector": [0.0] * EMBEDDING_DIMENSION,
+                "mount_id": None,
+                "created_at": now,
+                "modified_at": now,
+            }
+        ]
+    )
+
+    store = open_store(path)
+    assert "role" in store.table.schema.names
+    rows = store.scan("legacy-a")
+    assert len(rows) == 1
+    # NULL on disk; role_or_default coerces to "body".
+    assert role_or_default(rows[0]) == "body"
+
+
+def test_open_store_migration_is_idempotent(tmp_path: Path):
+    """Calling open_store twice doesn't raise on the second add_columns."""
+    path = tmp_path / "index.lance"
+    open_store(path)
+    # Should not raise even though role already exists.
+    store = open_store(path)
+    assert "role" in store.table.schema.names
+
+
+def test_replace_rows_preserves_role(tmp_path: Path):
+    """find_stale_chunks → replace_rows round-trip keeps the role
+    column intact (re-embed sweep contract)."""
+    store = open_store(tmp_path / "index.lance")
+    store.upsert(
+        [
+            _make_chunk("node-a", idx=0, text="body", role="body"),
+            NodeChunk(
+                id="node-a:summary:0",
+                node_id="node-a",
+                kind="file",
+                name="img",
+                text="caption",
+                vector=[0.0] * EMBEDDING_DIMENSION,
+                role="summary",
+            ),
+        ]
+    )
+    stale = store.find_stale_chunks()
+    new_vec = [0.0] * (EMBEDDING_DIMENSION - 1) + [1.0]
+    updated = [{**row, "vector": new_vec} for row in stale]
+    store.replace_rows(updated)
+
+    rows = store.scan("node-a")
+    by_id = {row["id"]: row for row in rows}
+    assert role_or_default(by_id["node-a:0"]) == "body"
+    assert role_or_default(by_id["node-a:summary:0"]) == "summary"

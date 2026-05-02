@@ -105,6 +105,7 @@ class PdfProcessor:
                 mount_id=job.mount_id,
                 created_at=job.created_at,
                 modified_at=job.modified_at or now,
+                role="body",
             )
             for i, (chunk, vec) in enumerate(zip(chunks, vectors))
         ]

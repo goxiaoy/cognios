@@ -11,7 +11,7 @@ from search_sidecar.index.chunking import chunk_text as _chunk
 from search_sidecar.index.embedder import StubEmbedder
 from search_sidecar.index.processors.text import TextProcessor
 from search_sidecar.index.queue import IndexingJob, JobState
-from search_sidecar.storage import open_store
+from search_sidecar.storage import open_store, role_or_default
 
 
 def _make_job(path: Path, *, kind: str = "note", node_id: str = "11111111-1111-1111-1111-111111111111") -> IndexingJob:
@@ -63,6 +63,8 @@ def test_process_writes_chunks_to_store(tmp_path: Path):
     written = proc.process(_make_job(note))
     assert written == 3  # heading, first para, second para
     assert store.count() == 3
+    rows = store.scan(_make_job(note).node_id)
+    assert {role_or_default(r) for r in rows} == {"body"}
 
 
 def test_process_replaces_previous_chunks_on_re_index(tmp_path: Path):

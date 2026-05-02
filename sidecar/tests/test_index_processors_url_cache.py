@@ -13,7 +13,7 @@ from search_sidecar.index.processors.url_cache import (
     extract_readable_text,
 )
 from search_sidecar.index.queue import IndexingJob, JobState
-from search_sidecar.storage import open_store
+from search_sidecar.storage import open_store, role_or_default
 
 
 def _make_job(
@@ -171,6 +171,7 @@ def test_process_writes_chunks_from_html_body(tmp_path: Path):
     assert "First paragraph" in joined
     assert "tracker" not in joined
     assert "body{}" not in joined
+    assert {role_or_default(r) for r in rows} == {"body"}
 
 
 def test_process_replaces_previous_chunks_on_re_index(tmp_path: Path):

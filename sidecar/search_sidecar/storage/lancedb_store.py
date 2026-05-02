@@ -2,7 +2,7 @@
 
 Schema (single table named ``nodes``)::
 
-    id            string   PRIMARY KEY  -- "<node_id>:<chunk_idx>"
+    id            string   PRIMARY KEY  -- "<node_id>:<chunk_idx>" or "<node_id>:summary:<chunk_idx>"
     node_id       string                -- the parent node
     kind          string                -- note | file | url | folder | mount | directory
     name          string                -- display name (also indexed for keyword path)
@@ -11,9 +11,26 @@ Schema (single table named ``nodes``)::
     mount_id      string  nullable
     created_at    timestamp[ms]
     modified_at   timestamp[ms]
+    role          string  nullable      -- "body" | "summary"; legacy rows are NULL
 
-The chunk-id format ``"<node_id>:<chunk_idx>"`` lets us delete every
-chunk for a node with one ``DELETE WHERE node_id = ?`` predicate.
+Chunk-id formats:
+
+- ``"<node_id>:<int>"`` for ``role=body`` chunks (``int`` is the chunk
+  index in the original document).
+- ``"<node_id>:summary:<int>"`` for ``role=summary`` chunks (same int
+  index convention as body). Today's image captions typically fit in
+  a single row; the chunker may split longer future summaries (D6)
+  into multiple rows without further schema work.
+
+Both share the same ``node_id`` column so a single
+``DELETE WHERE node_id = ?`` predicate still removes every chunk for
+a node, regardless of role.
+
+The ``role`` column is nullable because the table existed before the
+column was added — pre-schema rows read as ``NULL`` and are coerced
+to ``"body"`` via :func:`role_or_default`. Every reader of this
+column should go through that helper, not access the field directly.
+The allowed value set lives in :data:`ROLE_VALUES`.
 
 Indexes (FTS, vector ANN, scalar) are NOT built here — they land in
 Unit 6 once retrieval ships. This module only exposes the persistence
@@ -27,21 +44,44 @@ that machinery is Unit 6 territory.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Literal
 
 import lancedb
 import pyarrow as pa
 
+LOG = logging.getLogger("search_sidecar.storage.lancedb_store")
+
 EMBEDDING_DIMENSION = 768
 TABLE_NAME = "nodes"
+
+# Allowed values for the ``role`` column. Adding a new role is a code
+# change — kept as a frozenset so processors can assert membership at
+# the boundary without duplicating the typing.Literal definition on NodeChunk.role.
+ROLE_VALUES: frozenset[str] = frozenset({"body", "summary"})
 
 
 @dataclass(frozen=True)
 class NodeChunk:
-    """One row in the ``nodes`` table — a single chunk of one node's content."""
+    """One row in the ``nodes`` table — a single chunk of one node's content.
+
+    ``role`` describes the kind of chunk for the UI/retrieval layer:
+
+    - ``"body"`` — literal content (text chunks, OCR text, PDF text,
+      stripped HTML body). The default; this is what every processor
+      emitted before the role column existed.
+    - ``"summary"`` — a generated description attached to a node
+      (today: image captions; reserved for future doc summaries).
+      Summary text is chunked through the same ``chunk_text`` helper
+      as body text, with ids ``"<node_id>:summary:<int>"``. Captions
+      typically fit in a single row today.
+
+    Modality (image / audio / text) is intentionally *not* encoded
+    here; if it is ever needed it goes in a separate column.
+    """
 
     id: str
     node_id: str
@@ -52,11 +92,16 @@ class NodeChunk:
     mount_id: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     modified_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    role: Literal["body", "summary"] = "body"
 
     def __post_init__(self) -> None:
         if len(self.vector) != EMBEDDING_DIMENSION:
             raise ValueError(
                 f"vector length {len(self.vector)} != {EMBEDDING_DIMENSION}"
+            )
+        if self.role not in ROLE_VALUES:
+            raise ValueError(
+                f"role {self.role!r} not in {sorted(ROLE_VALUES)!r}"
             )
 
     def to_arrow_dict(self) -> dict:
@@ -70,6 +115,7 @@ class NodeChunk:
             "mount_id": self.mount_id,
             "created_at": self.created_at,
             "modified_at": self.modified_at,
+            "role": self.role,
         }
 
 
@@ -85,8 +131,23 @@ def _schema() -> pa.Schema:
             ("mount_id", pa.string()),
             ("created_at", pa.timestamp("ms", tz="UTC")),
             ("modified_at", pa.timestamp("ms", tz="UTC")),
+            ("role", pa.string()),
         ]
     )
+
+
+def role_or_default(row: dict) -> Literal["body", "summary"]:
+    """Return ``row['role']`` or ``"body"`` if the column is missing/null.
+
+    Single source of truth for reading the ``role`` column. Pre-schema
+    rows (written before the column existed) read as ``None`` here;
+    every other layer should call this rather than poking the dict
+    directly so the legacy fallback stays consistent.
+    """
+    value = row.get("role")
+    if value in ROLE_VALUES:
+        return value  # type: ignore[return-value]
+    return "body"
 
 
 class LanceDBStore:
@@ -328,8 +389,10 @@ def open_store(path: Path) -> LanceDBStore:
 
     The first call creates an empty ``nodes`` table with the schema
     declared at module level. Subsequent calls open the existing
-    table; if its schema diverges from ours, lancedb raises (caller
-    should treat that as a re-index trigger — Unit 6 wires that flow).
+    table and run any additive column migrations (currently: the
+    ``role`` column added in 2026-05). Schema migrations beyond
+    additive column adds — type changes, vector dimension swaps —
+    require a re-index (Unit 6 territory).
     """
     path.mkdir(parents=True, exist_ok=True)
     db = lancedb.connect(str(path))
@@ -340,7 +403,38 @@ def open_store(path: Path) -> LanceDBStore:
         table = db.open_table(TABLE_NAME)
     except Exception:
         table = db.create_table(TABLE_NAME, schema=_schema(), exist_ok=True)
+    _migrate_schema(table)
     return LanceDBStore(db, table)
+
+
+def _migrate_schema(table: lancedb.Table) -> None:
+    """Add columns the current schema declares but the on-disk table
+    is missing.
+
+    lancedb 0.30's ``add_columns`` is the supported additive path —
+    it backfills the column with NULLs in place, no rebuild. Calling
+    it for a column that already exists raises (the exact exception
+    type varies across patch versions); we treat any failure here as
+    "already present" and let the next read surface a real schema
+    mismatch via ``role_or_default``'s NULL fallback.
+    """
+    existing = set(table.schema.names)
+    for new_field in (pa.field("role", pa.string()),):
+        if new_field.name in existing:
+            continue
+        try:
+            table.add_columns(new_field)
+        except Exception as err:
+            # Idempotent: another process may have added it between
+            # the schema read and the call. Legacy reads stay safe
+            # because every consumer uses ``role_or_default``. Log
+            # so a real failure (disk full, permissions) surfaces in
+            # operator logs rather than disappearing silently.
+            LOG.warning(
+                "_migrate_schema: add_columns(%s) failed: %s",
+                new_field.name,
+                err,
+            )
 
 
 def _quote(value: str) -> str:

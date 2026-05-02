@@ -19,7 +19,7 @@ from search_sidecar.index.dispatch import Dispatcher
 from search_sidecar.index.embedder import StubEmbedder
 from search_sidecar.index.processors.image import ImageProcessor
 from search_sidecar.index.queue import IndexingJob, JobState
-from search_sidecar.storage import open_store
+from search_sidecar.storage import open_store, role_or_default
 
 UUID_A = "11111111-1111-1111-1111-111111111111"
 
@@ -90,9 +90,7 @@ def test_process_with_no_extractors_returns_zero_chunks(
     assert store.count() == 0
 
 
-def test_process_indexes_ocr_text_when_extractor_provided(
-    store, tmp_path: Path
-):
+def test_process_indexes_ocr_text_as_body_chunks(store, tmp_path: Path):
     captured: list[Path] = []
 
     def fake_ocr(path: Path) -> str:
@@ -104,17 +102,21 @@ def test_process_indexes_ocr_text_when_extractor_provided(
     img.write_bytes(b"")
     written = proc.process(_make_job(img))
 
-    assert written >= 1
+    # Single short sentence fits in one chunk under MAX_CHUNK_CHARS.
+    assert written == 1
     assert captured == [img]
     rows = store.scan(UUID_A)
-    joined = "\n".join(r["text"] for r in rows)
-    assert "OCR:" in joined
+    assert {role_or_default(r) for r in rows} == {"body"}
+    joined = " ".join(r["text"] for r in rows)
     assert "PKCE" in joined
+    # No literal "OCR:" prefix bled into the indexed text.
+    assert "OCR:" not in joined
+    # All body row ids are <node>:<int>, no ":summary:" segment.
+    for row in rows:
+        assert ":summary:" not in row["id"]
 
 
-def test_process_indexes_caption_when_extractor_provided(
-    store, tmp_path: Path
-):
+def test_process_indexes_caption_as_summary_chunks(store, tmp_path: Path):
     proc = ImageProcessor(
         store,
         StubEmbedder(),
@@ -123,14 +125,17 @@ def test_process_indexes_caption_when_extractor_provided(
     img = tmp_path / "diagram.png"
     img.write_bytes(b"")
     written = proc.process(_make_job(img))
-    assert written >= 1
+    assert written == 1
     rows = store.scan(UUID_A)
-    joined = "\n".join(r["text"] for r in rows)
-    assert "Caption:" in joined
+    assert {role_or_default(r) for r in rows} == {"summary"}
+    summary_ids = sorted(r["id"] for r in rows)
+    assert summary_ids == [f"{UUID_A}:summary:0"]
+    joined = " ".join(r["text"] for r in rows)
     assert "diagram" in joined.lower()
+    assert "Caption:" not in joined
 
 
-def test_process_concatenates_ocr_and_caption_when_both_succeed(
+def test_process_emits_body_and_summary_when_both_extractors_succeed(
     store, tmp_path: Path
 ):
     proc = ImageProcessor(
@@ -143,9 +148,13 @@ def test_process_concatenates_ocr_and_caption_when_both_succeed(
     img.write_bytes(b"")
     proc.process(_make_job(img))
     rows = store.scan(UUID_A)
-    joined = "\n".join(r["text"] for r in rows)
-    assert "OCR:" in joined and "Caption:" in joined
-    assert "rotation" in joined and "Whiteboard" in joined
+    by_role: dict[str, list[dict]] = {"body": [], "summary": []}
+    for row in rows:
+        by_role[role_or_default(row)].append(row)
+    body_text = " ".join(r["text"] for r in by_role["body"])
+    summary_text = " ".join(r["text"] for r in by_role["summary"])
+    assert "rotation" in body_text and "OCR:" not in body_text
+    assert "Whiteboard" in summary_text and "Caption:" not in summary_text
 
 
 def test_process_continues_when_ocr_extractor_raises(store, tmp_path: Path):
@@ -163,10 +172,97 @@ def test_process_continues_when_ocr_extractor_raises(store, tmp_path: Path):
     img = tmp_path / "x.png"
     img.write_bytes(b"")
     written = proc.process(_make_job(img))
-    assert written >= 1
-    joined = "\n".join(r["text"] for r in store.scan(UUID_A))
-    assert "OCR:" not in joined
+    assert written == 1
+    rows = store.scan(UUID_A)
+    assert {role_or_default(r) for r in rows} == {"summary"}
+    joined = " ".join(r["text"] for r in rows)
     assert "Whiteboard" in joined
+
+
+def test_process_continues_when_caption_extractor_raises(
+    store, tmp_path: Path
+):
+    """Symmetric to OCR-raises: a failing captioner doesn't block OCR."""
+
+    def boom(_p: Path) -> str:
+        raise RuntimeError("llama-server crashed")
+
+    proc = ImageProcessor(
+        store,
+        StubEmbedder(),
+        ocr_extract=lambda _p: "Token rotation flow",
+        caption_extract=boom,
+    )
+    img = tmp_path / "x.png"
+    img.write_bytes(b"")
+    written = proc.process(_make_job(img))
+    assert written == 1
+    rows = store.scan(UUID_A)
+    assert {role_or_default(r) for r in rows} == {"body"}
+    joined = " ".join(r["text"] for r in rows)
+    assert "Token rotation" in joined
+
+
+def test_re_index_without_caption_removes_orphaned_summary_rows(
+    store, tmp_path: Path
+):
+    """First index produces body+summary; second index (OCR-only) must
+    leave zero summary rows. This verifies the delete-then-upsert
+    atomicity claim across roles, not just within body chunks."""
+    img = tmp_path / "x.png"
+    img.write_bytes(b"")
+
+    proc_v1 = ImageProcessor(
+        store,
+        StubEmbedder(),
+        ocr_extract=lambda _p: "First OCR text",
+        caption_extract=lambda _p: "First caption text",
+    )
+    proc_v1.process(_make_job(img))
+    rows_v1 = store.scan(UUID_A)
+    assert {role_or_default(r) for r in rows_v1} == {"body", "summary"}
+
+    proc_v2 = ImageProcessor(
+        store,
+        StubEmbedder(),
+        ocr_extract=lambda _p: "Second OCR text",
+        # caption_extract intentionally None — captioner unwired now.
+    )
+    proc_v2.process(_make_job(img))
+    rows_v2 = store.scan(UUID_A)
+    assert {role_or_default(r) for r in rows_v2} == {"body"}, (
+        "summary rows from v1 must be cleaned up by v2's "
+        "delete_by_node_id, not orphaned"
+    )
+    joined = " ".join(r["text"] for r in rows_v2)
+    assert "First" not in joined
+    assert "Second OCR text" in joined
+
+
+def test_process_chunks_long_caption_into_multiple_summary_rows(
+    store, tmp_path: Path
+):
+    """A future-D6-style long summary splits via the same chunker as
+    body text — proves the schema absorbs longer summaries without
+    further work. 800-char paragraph splits to 2 rows under the
+    512-char chunker cap."""
+    long_caption = "lorem ipsum dolor sit amet " * 40  # ~ 1080 chars
+    proc = ImageProcessor(
+        store,
+        StubEmbedder(),
+        caption_extract=lambda _p: long_caption,
+    )
+    img = tmp_path / "long.png"
+    img.write_bytes(b"")
+    proc.process(_make_job(img))
+    rows = store.scan(UUID_A)
+    summary_rows = [r for r in rows if role_or_default(r) == "summary"]
+    assert len(summary_rows) >= 2
+    # Every summary row id follows the <node>:summary:<int> convention.
+    for row in summary_rows:
+        prefix, _, idx = row["id"].rpartition(":")
+        assert prefix.endswith(":summary")
+        assert idx.isdigit()
 
 
 def test_process_returns_zero_when_all_extractors_yield_empty(
@@ -212,6 +308,66 @@ def test_process_raises_on_missing_file(store, tmp_path: Path):
     proc = ImageProcessor(store, StubEmbedder())
     with pytest.raises(FileNotFoundError):
         proc.process(_make_job(tmp_path / "nonexistent.png"))
+
+
+# ---- cross-layer regression -----------------------------------------------
+
+
+def test_image_processor_writes_flow_through_content_endpoint(
+    store, tmp_path: Path
+):
+    """End-to-end: ImageProcessor writes → /index/node/{id}/content
+    serves the rows in the documented body-then-summary order with
+    role tags carrying through; no ``OCR:``/``Caption:`` prefix
+    leaks anywhere along the chain."""
+    from fastapi.testclient import TestClient
+
+    from search_sidecar.app import build_app
+
+    proc = ImageProcessor(
+        store,
+        StubEmbedder(),
+        ocr_extract=lambda _p: (
+            "PKCE 1.0 specifies refresh tokens "
+            "should rotate on every grant exchange."
+        ),
+        caption_extract=lambda _p: "A cropped screenshot of the spec.",
+    )
+    img = tmp_path / "spec.png"
+    img.write_bytes(b"")
+    proc.process(_make_job(img))
+
+    token = "0123456789abcdef" * 4
+    app = build_app(token=token, lancedb_store=store)
+    with TestClient(app) as client:
+        resp = client.get(
+            f"/index/node/{UUID_A}/content",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["node_id"] == UUID_A
+    assert body["kind"] == "file"
+
+    # Every chunk has a role; body chunks come before summary chunks.
+    roles = [c["role"] for c in body["chunks"]]
+    assert roles, "expected at least one chunk"
+    first_summary = next(
+        (i for i, r in enumerate(roles) if r == "summary"), len(roles)
+    )
+    assert all(r == "body" for r in roles[:first_summary])
+    assert all(r == "summary" for r in roles[first_summary:])
+
+    # Joined string preserves the same body-then-summary ordering and
+    # contains no prefix leakage.
+    joined = body["joined"]
+    assert "PKCE" in joined
+    assert "cropped screenshot" in joined
+    assert "OCR:" not in joined
+    assert "Caption:" not in joined
+    pos_body = joined.find("PKCE")
+    pos_summary = joined.find("cropped screenshot")
+    assert pos_body < pos_summary
 
 
 # ---- dispatcher integration ------------------------------------------------

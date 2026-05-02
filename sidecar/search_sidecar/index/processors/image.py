@@ -9,17 +9,19 @@ stays cheap to import and easy to test against mocks.
 Architecture:
 
 - ``ocr_extract: Callable[[Path], str]`` — runs OCR on the image and
-  returns a single text string. ``None`` disables the OCR path; the
-  processor returns 0 chunks.
+  returns a single text string. Chunked through ``chunk_text(...)``
+  and stored as ``role="body"`` rows with ids ``<node_id>:<int>``.
 - ``caption_extract: Callable[[Path], str]`` — calls the local
-  ``llama-server`` for an image caption. ``None`` disables the
-  caption path. Lands in a follow-up commit once the Rust
-  supervisor is ready; stubbed today.
+  ``llama-server`` for an image caption. Chunked the same way and
+  stored as ``role="summary"`` rows with ids
+  ``<node_id>:summary:<int>``. Captions today fit in a single row;
+  the schema absorbs longer future summaries without further work.
 
-If both extractors are ``None`` the processor still records the
-image as "indexed" (0 chunks). That matches the contract used by
-TextProcessor for empty files: the runner records the job as
-``indexed`` rather than ``error`` so retries don't pile up.
+The two extractors run independently — one failing or returning
+empty does not block the other from contributing. If both return
+nothing, the processor records the image as "indexed" with 0
+chunks (matches TextProcessor's empty-file contract; the runner
+won't retry).
 """
 
 from __future__ import annotations
@@ -93,80 +95,95 @@ class ImageProcessor:
             raise FileNotFoundError(f"missing image: {path}")
 
         # Always replace previous chunks for this node — same contract
-        # TextProcessor + PdfProcessor follow.
+        # TextProcessor + PdfProcessor follow. Runs first so a partial
+        # re-index where one extractor fails doesn't leave a stale
+        # row from the *other* role behind.
         self._store.delete_by_node_id(job.node_id)
 
-        document = _build_document(
-            path,
-            ocr_extract=self._ocr_extract,
-            caption_extract=self._caption_extract,
+        body_text = _safe_extract(
+            self._ocr_extract, path, label="OCR"
         )
-        if not document.strip():
+        summary_text = _safe_extract(
+            self._caption_extract, path, label="Caption"
+        )
+        body_chunks = chunk_text(body_text) if body_text else []
+        summary_chunks = chunk_text(summary_text) if summary_text else []
+        if not body_chunks and not summary_chunks:
             # No extractor yielded usable text. Record as indexed
             # with zero chunks; the runner doesn't retry zero-chunk
             # results because they're a valid steady state.
             return 0
 
-        chunks = chunk_text(document)
-        if not chunks:
-            return 0
+        now = datetime.now(timezone.utc)
+        modified_at = job.modified_at or now
+        rows: list[NodeChunk] = []
+        if body_chunks:
+            body_vectors = self._embed(body_chunks)
+            rows.extend(
+                NodeChunk(
+                    id=f"{job.node_id}:{i}",
+                    node_id=job.node_id,
+                    kind=job.kind,
+                    name=job.name,
+                    text=chunk,
+                    vector=vec,
+                    mount_id=job.mount_id,
+                    created_at=job.created_at,
+                    modified_at=modified_at,
+                    role="body",
+                )
+                for i, (chunk, vec) in enumerate(
+                    zip(body_chunks, body_vectors)
+                )
+            )
+        if summary_chunks:
+            summary_vectors = self._embed(summary_chunks)
+            rows.extend(
+                NodeChunk(
+                    id=f"{job.node_id}:summary:{i}",
+                    node_id=job.node_id,
+                    kind=job.kind,
+                    name=job.name,
+                    text=chunk,
+                    vector=vec,
+                    mount_id=job.mount_id,
+                    created_at=job.created_at,
+                    modified_at=modified_at,
+                    role="summary",
+                )
+                for i, (chunk, vec) in enumerate(
+                    zip(summary_chunks, summary_vectors)
+                )
+            )
+        self._store.upsert(rows)
+        return len(rows)
 
+    def _embed(self, chunks: list[str]) -> list[list[float]]:
         vectors = self._embedder.embed(chunks)
         if len(vectors) != len(chunks):
             raise ValueError(
                 f"embedder returned {len(vectors)} vectors for {len(chunks)} chunks"
             )
-
-        now = datetime.now(timezone.utc)
-        rows = [
-            NodeChunk(
-                id=f"{job.node_id}:{i}",
-                node_id=job.node_id,
-                kind=job.kind,
-                name=job.name,
-                text=chunk,
-                vector=vec,
-                mount_id=job.mount_id,
-                created_at=job.created_at,
-                modified_at=job.modified_at or now,
-            )
-            for i, (chunk, vec) in enumerate(zip(chunks, vectors))
-        ]
-        self._store.upsert(rows)
-        return len(rows)
+        return vectors
 
 
-def _build_document(
+def _safe_extract(
+    extractor: Callable[[Path], str] | None,
     path: Path,
     *,
-    ocr_extract: OcrExtract | None,
-    caption_extract: CaptionExtract | None,
+    label: str,
 ) -> str:
-    """Concatenate OCR text and caption with stable section labels.
+    """Run ``extractor`` and return its stripped text. Returns ``""``
+    if the extractor is ``None``, raises, or yields empty/blank.
 
-    Both extractors run independently; if one fails the other still
-    contributes. Empty results from either side are skipped — no
-    "OCR: \\n" placeholder rows that would dilute FTS scoring.
+    The label is purely for the warning log line so the operator can
+    tell OCR failures from caption failures.
     """
-    parts: list[str] = []
-    if ocr_extract is not None:
-        try:
-            ocr_text = ocr_extract(path) or ""
-        except Exception as err:
-            LOG.warning("OCR extractor failed for %s: %s", path.name, err)
-            ocr_text = ""
-        ocr_text = ocr_text.strip()
-        if ocr_text:
-            parts.append(f"OCR: {ocr_text}")
-    if caption_extract is not None:
-        try:
-            caption_text = caption_extract(path) or ""
-        except Exception as err:
-            LOG.warning(
-                "Caption extractor failed for %s: %s", path.name, err
-            )
-            caption_text = ""
-        caption_text = caption_text.strip()
-        if caption_text:
-            parts.append(f"Caption: {caption_text}")
-    return "\n\n".join(parts)
+    if extractor is None:
+        return ""
+    try:
+        text = extractor(path) or ""
+    except Exception as err:
+        LOG.warning("%s extractor failed for %s: %s", label, path.name, err)
+        return ""
+    return text.strip()
