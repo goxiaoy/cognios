@@ -39,6 +39,7 @@ pub fn create_folder(
     (state.emitter)(VfsChangeEvent {
         mount_id: created.node_id,
         reason: "node-created".to_string(),
+        ..Default::default()
     });
     Ok(created.snapshot)
 }

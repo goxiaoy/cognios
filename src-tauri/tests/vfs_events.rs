@@ -175,6 +175,120 @@ fn failed_mutation_fires_zero_events() {
 }
 
 #[test]
+fn delete_folder_with_cascade_carries_descendant_ids_in_event() {
+    // Regression: deleting a Mount or Folder used to forward only
+    // the parent's id to the sidecar — but ON DELETE CASCADE
+    // silently nuked the children sqlite-side, leaving their
+    // lancedb chunks orphaned. The event now carries every
+    // descendant id so the forwarder can fan out a delete per row.
+    let (_app_dir, db_path, notes_dir) = setup();
+    let mut conn = open_database(&db_path).expect("database");
+    let (events, emitter) = capturing_emitter();
+
+    // Build: parent folder → child folder → leaf note.
+    let parent = create_folder(
+        &conn,
+        &CreateFolderInput {
+            name: "parent".into(),
+            parent_id: None,
+        },
+    )
+    .expect("create parent");
+    let child = create_folder(
+        &conn,
+        &CreateFolderInput {
+            name: "child".into(),
+            parent_id: Some(parent.node_id.clone()),
+        },
+    )
+    .expect("create child");
+    let note = create_note(
+        &mut conn,
+        &CreateNoteInput {
+            parent_id: Some(child.node_id.clone()),
+        },
+        &notes_dir,
+        &emitter,
+    )
+    .expect("create note");
+
+    // Cascade delete the parent.
+    delete_node(
+        &mut conn,
+        &DeleteNodeInput {
+            node_id: parent.node_id.clone(),
+            cascade: Some(true),
+        },
+        &notes_dir,
+        &emitter,
+    )
+    .expect("delete parent with cascade");
+
+    let log = events.lock().expect("log");
+    let last = log.last().expect("at least one event");
+    assert_eq!(last.reason, "node-deleted");
+    assert_eq!(last.mount_id, parent.node_id);
+
+    // The descendant_ids list must include the child folder + the
+    // note (every row sqlite cascaded out), but not the parent
+    // itself (the parent id rides in `mount_id`).
+    let descendants: std::collections::HashSet<&String> =
+        last.descendant_ids.iter().collect();
+    assert!(
+        descendants.contains(&child.node_id),
+        "child folder id missing from descendant_ids: {:?}",
+        last.descendant_ids
+    );
+    assert!(
+        descendants.contains(&note.node_id),
+        "note id missing from descendant_ids: {:?}",
+        last.descendant_ids
+    );
+    assert!(
+        !descendants.contains(&parent.node_id),
+        "parent id leaked into descendant_ids"
+    );
+}
+
+
+#[test]
+fn delete_leaf_note_emits_no_descendant_ids() {
+    // Sanity check: leaf nodes carry an empty descendant list so
+    // the forwarder's batch path is a no-op for the common case.
+    let (_app_dir, db_path, notes_dir) = setup();
+    let mut conn = open_database(&db_path).expect("database");
+    let (events, emitter) = capturing_emitter();
+
+    let created = create_note(
+        &mut conn,
+        &CreateNoteInput { parent_id: None },
+        &notes_dir,
+        &emitter,
+    )
+    .expect("create note");
+
+    delete_node(
+        &mut conn,
+        &DeleteNodeInput {
+            node_id: created.node_id.clone(),
+            cascade: None,
+        },
+        &notes_dir,
+        &emitter,
+    )
+    .expect("delete leaf note");
+
+    let log = events.lock().expect("log");
+    let last = log.last().expect("at least one event");
+    assert_eq!(last.reason, "node-deleted");
+    assert!(
+        last.descendant_ids.is_empty(),
+        "leaf delete should not carry descendants: {:?}",
+        last.descendant_ids
+    );
+}
+
+#[test]
 fn delete_unknown_node_fires_zero_events() {
     let (_app_dir, db_path, notes_dir) = setup();
     let mut conn = open_database(&db_path).expect("database");

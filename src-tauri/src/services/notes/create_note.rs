@@ -60,6 +60,7 @@ pub fn create_note(
     emitter(VfsChangeEvent {
         mount_id: node_id.clone(),
         reason: "node-created".to_string(),
+        ..Default::default()
     });
     Ok(CreatedNote { node_id, snapshot })
 }

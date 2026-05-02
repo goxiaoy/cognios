@@ -14,11 +14,18 @@ const WATCHER_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const WATCHER_DEBOUNCE_WINDOW: Duration = Duration::from_millis(350);
 const WATCHER_HEALTH_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VfsChangeEvent {
     pub mount_id: String,
     pub reason: String,
+    /// Populated only for cascading deletes (a Mount or Folder with
+    /// children): the ids of every descendant node that was removed
+    /// alongside ``mount_id``. The forwarder uses this to clean up
+    /// lancedb chunks for every cascaded id, not just the parent.
+    /// Empty for non-cascade events.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub descendant_ids: Vec<String>,
 }
 
 pub struct MountWatcherRegistry {
@@ -195,5 +202,6 @@ fn reconcile_and_emit(
     emitter(VfsChangeEvent {
         mount_id: mount_id.to_string(),
         reason: reason.to_string(),
+        ..Default::default()
     });
 }

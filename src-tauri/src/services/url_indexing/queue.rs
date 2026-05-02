@@ -73,6 +73,7 @@ impl UrlJobRunner {
             emitter(VfsChangeEvent {
                 mount_id: node_id.clone(),
                 reason,
+                ..Default::default()
             });
 
             if let Ok(mut active_jobs) = active_jobs.lock() {
@@ -99,6 +100,7 @@ fn process_job(
     emitter(VfsChangeEvent {
         mount_id: node_id.to_string(),
         reason: "url-indexing".into(),
+        ..Default::default()
     });
 
     let output = run_pipeline(&job.url)?;

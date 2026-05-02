@@ -47,6 +47,35 @@ fn is_node_reason(reason: &str) -> bool {
     )
 }
 
+/// Fan-out delete forwarding for cascading mutations. The sqlite
+/// nodes table uses ``ON DELETE CASCADE`` on ``parent_id``; deleting
+/// a Mount or non-empty Folder silently removes every descendant
+/// row, but lancedb only knows about the parent's id from the
+/// primary ``node-deleted`` event. This pushes a delete payload for
+/// each descendant so lancedb stays in sync.
+///
+/// Fire-and-forget: per-node failures are logged inside
+/// ``forward_node_event`` and the resync ping is the longer-term
+/// safety net for any miss.
+pub async fn forward_descendant_deletes(
+    client: &Arc<SearchSidecarClient>,
+    descendant_ids: &[String],
+) {
+    for id in descendant_ids {
+        let payload = NodeEvent {
+            event: NodeEventKind::NodeDeleted,
+            node_id: id.clone(),
+            kind: String::new(),
+            name: String::new(),
+            absolute_content_path: None,
+            mount_id: None,
+            created_at: None,
+            updated_at: None,
+        };
+        client.forward_node_event(&payload).await;
+    }
+}
+
 /// Translate a VFS change into a sidecar payload, or ``None`` if this
 /// event isn't one we forward (mount-level events, unknown reasons,
 /// or DB lookup failures for non-deletion paths).
@@ -312,6 +341,7 @@ pub async fn resync_all_nodes(
         let event = VfsChangeEvent {
             mount_id: node_id.clone(),
             reason: "node-created".to_string(),
+            ..Default::default()
         };
         if let Some(payload) = build_payload(&event, db, storage_dir) {
             client.forward_node_event(&payload).await;
@@ -422,6 +452,7 @@ mod tests {
         let event = VfsChangeEvent {
             mount_id: "anything".into(),
             reason: "mount-sync".into(),
+            ..Default::default()
         };
         assert!(build_payload(&event, &db, dir.path()).is_none());
     }
@@ -435,6 +466,7 @@ mod tests {
         let event = VfsChangeEvent {
             mount_id: "abc-123".into(),
             reason: "node-deleted".into(),
+            ..Default::default()
         };
         let payload = build_payload(&event, &db, dir.path()).expect("payload");
         assert!(matches!(payload.event, NodeEventKind::NodeDeleted));
@@ -452,6 +484,7 @@ mod tests {
         let event = VfsChangeEvent {
             mount_id: "ghost".into(),
             reason: "node-created".into(),
+            ..Default::default()
         };
         // Row not in DB → skip silently.
         assert!(build_payload(&event, &db, dir.path()).is_none());

@@ -70,6 +70,7 @@ pub fn rename_node(
     emitter(VfsChangeEvent {
         mount_id: input.node_id.clone(),
         reason: "node-renamed".to_string(),
+        ..Default::default()
     });
     Ok(snapshot)
 }

@@ -24,6 +24,7 @@ pub fn save_note_content(
     emitter(VfsChangeEvent {
         mount_id: note_id.to_string(),
         reason: "node-saved".to_string(),
+        ..Default::default()
     });
     Ok(())
 }

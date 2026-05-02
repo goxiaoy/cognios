@@ -112,6 +112,17 @@ pub fn run() {
                     {
                         client.forward_node_event(&payload).await;
                     }
+                    // Cascading deletes (Mount or Folder with children)
+                    // also need every descendant id cleaned up in
+                    // lancedb. The forwarder above sends the parent's
+                    // single payload; this fans out the rest.
+                    if event.reason == "node-deleted" && !event.descendant_ids.is_empty() {
+                        services::search::forwarder::forward_descendant_deletes(
+                            &client,
+                            &event.descendant_ids,
+                        )
+                        .await;
+                    }
                 });
             });
 

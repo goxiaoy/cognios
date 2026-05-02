@@ -26,6 +26,13 @@ pub fn delete_node(
 ) -> Result<ExplorerSnapshotDto, String> {
     let node = load_node(conn, &input.node_id)?.ok_or_else(|| "node not found".to_string())?;
 
+    // Walk the descendants up front so the sidecar can clean up its
+    // index for every cascaded id, not just the parent.
+    // ``ON DELETE CASCADE`` on the nodes table silently removes the
+    // children sqlite-side; without this list, lancedb keeps every
+    // chunk under those children's ids forever.
+    let descendant_ids = collect_descendant_ids(conn, &input.node_id)?;
+
     match node.kind {
         NodeKind::Folder => {
             let child_count = child_count(conn, &input.node_id)?;
@@ -84,8 +91,38 @@ pub fn delete_node(
     emitter(VfsChangeEvent {
         mount_id: input.node_id.clone(),
         reason: "node-deleted".to_string(),
+        descendant_ids,
     });
     Ok(snapshot)
+}
+
+/// Recursively collect every descendant id of `root_id`, excluding
+/// the root itself. Empty for leaf nodes (notes, urls, files).
+fn collect_descendant_ids(
+    conn: &Connection,
+    root_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "
+            WITH RECURSIVE descendants(id) AS (
+                SELECT id FROM nodes WHERE parent_id = ?1
+                UNION ALL
+                SELECT n.id FROM nodes n
+                INNER JOIN descendants d ON n.parent_id = d.id
+            )
+            SELECT id FROM descendants
+            ",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = stmt
+        .query_map([root_id], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row.map_err(|error| error.to_string())?);
+    }
+    Ok(ids)
 }
 
 #[derive(Debug)]
