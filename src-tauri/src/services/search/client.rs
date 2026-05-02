@@ -242,6 +242,26 @@ pub struct LicenseAcceptResponseDto {
     pub role: String,
 }
 
+/// One frame of the ``POST /models/download/{role}`` SSE stream.
+///
+/// The sidecar emits these as ``data: {json}\n\n`` lines; the client
+/// re-emits each as a Tauri ``models/progress`` event so the
+/// frontend can drive a progress indicator without polling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct ModelDownloadEvent {
+    pub role: String,
+    pub state: String, // "downloading" | "verifying" | "ready" | "error"
+    #[serde(default)]
+    pub file: Option<String>,
+    #[serde(default)]
+    pub bytes_downloaded: u64,
+    #[serde(default)]
+    pub bytes_total: Option<u64>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 // ----- client ------------------------------------------------------------
 
 /// Async HTTP wrapper. One instance is shared across all Tauri commands
@@ -403,6 +423,113 @@ impl SearchSidecarClient {
         // the route's body-required contract.
         self.post_envelope(&path, &serde_json::json!({})).await
     }
+
+    /// Subscribe to the SSE stream from `POST /models/download/{role}`.
+    ///
+    /// `on_event` fires for each parsed `ModelDownloadEvent` (one per
+    /// `data: {...}\n\n` SSE frame) and runs to completion when the
+    /// stream closes. `Err` is returned for setup-time failures
+    /// (sidecar not running, non-2xx HTTP response, network); per-
+    /// event errors arrive via the `state: "error"` payload so the
+    /// frontend can react with finer granularity than a `Result`.
+    ///
+    /// The download timeout is intentionally long — multi-GB models
+    /// over a slow connection can run for many minutes. The supervisor
+    /// is the backstop for a stuck sidecar; this client just streams.
+    pub async fn start_model_download<F>(
+        &self,
+        role: &str,
+        hf_token: Option<&str>,
+        on_event: F,
+    ) -> Result<(), String>
+    where
+        F: Fn(ModelDownloadEvent) + Send + Sync + 'static,
+    {
+        const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+        let (base, token) = self.rendezvous().map_err(|state| match state {
+            SidecarEnvelopeState::Initialising => {
+                "sidecar still initialising".to_string()
+            }
+            _ => self.supervisor_failure_reason(),
+        })?;
+        let url = format!("{base}/models/download/{}", urlencoded(role));
+        let body = serde_json::json!({ "hf_token": hf_token });
+
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&token)
+            .timeout(DOWNLOAD_TIMEOUT)
+            .header("accept", "text/event-stream")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|err| format!("network: {err}"))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            let trimmed: String = body.chars().take(200).collect();
+            return Err(format!("HTTP {status}: {trimmed}"));
+        }
+
+        let mut resp = resp;
+        let mut buf: Vec<u8> = Vec::new();
+        loop {
+            match resp.chunk().await {
+                Ok(Some(chunk)) => {
+                    buf.extend_from_slice(&chunk);
+                    drain_sse_frames(&mut buf, &on_event);
+                }
+                Ok(None) => break,
+                Err(err) => return Err(format!("stream: {err}")),
+            }
+        }
+        // Drain a trailing partial frame (in case the stream ended
+        // without a terminating ``\n\n``). The standard sidecar always
+        // appends one, but be defensive.
+        if !buf.is_empty() {
+            buf.extend_from_slice(b"\n\n");
+            drain_sse_frames(&mut buf, &on_event);
+        }
+        Ok(())
+    }
+}
+
+/// Pull every complete ``data: {...}\n\n`` frame out of `buf`, parse
+/// each as a `ModelDownloadEvent`, and invoke `on_event`. Leaves any
+/// partial trailing frame in place for the next chunk.
+fn drain_sse_frames<F>(buf: &mut Vec<u8>, on_event: &F)
+where
+    F: Fn(ModelDownloadEvent),
+{
+    while let Some(end) = find_double_newline(buf) {
+        let frame = buf[..end].to_vec();
+        buf.drain(..end + 2);
+        let frame_text = match std::str::from_utf8(&frame) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        // SSE frame may have multiple lines; we only consume "data:".
+        for line in frame_text.split('\n') {
+            let payload = match line.strip_prefix("data:") {
+                Some(rest) => rest.trim_start(),
+                None => continue,
+            };
+            match serde_json::from_str::<ModelDownloadEvent>(payload) {
+                Ok(event) => on_event(event),
+                Err(err) => {
+                    log::warn!(
+                        "models/progress: dropping malformed SSE frame: {err}; payload={payload:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn find_double_newline(buf: &[u8]) -> Option<usize> {
+    buf.windows(2).position(|w| w == b"\n\n")
 }
 
 async fn parse_response<T: for<'de> Deserialize<'de>>(
@@ -569,6 +696,81 @@ mod tests {
         assert_eq!(to_ts["licenseAccepted"], false);
         assert_eq!(to_ts["requiresAcceptance"], true);
         assert!(to_ts.get("license_accepted").is_none());
+    }
+
+    #[test]
+    fn drain_sse_frames_emits_each_complete_frame() {
+        let collected = std::sync::Arc::new(std::sync::Mutex::new(
+            Vec::<ModelDownloadEvent>::new(),
+        ));
+        let store = std::sync::Arc::clone(&collected);
+        let on_event = move |ev: ModelDownloadEvent| {
+            store.lock().unwrap().push(ev);
+        };
+        let mut buf: Vec<u8> = Vec::new();
+        // Two complete frames.
+        buf.extend_from_slice(
+            br#"data: {"role":"embedding","state":"downloading","file":"a","bytes_downloaded":1024,"bytes_total":2048}
+"#,
+        );
+        buf.push(b'\n');
+        buf.extend_from_slice(
+            br#"data: {"role":"embedding","state":"verifying","bytes_downloaded":2048,"bytes_total":2048}
+"#,
+        );
+        buf.push(b'\n');
+        // A partial trailing frame — must remain in the buffer.
+        buf.extend_from_slice(b"data: {\"role\":\"embedding");
+
+        drain_sse_frames(&mut buf, &on_event);
+
+        let collected = collected.lock().unwrap();
+        assert_eq!(collected.len(), 2);
+        assert_eq!(collected[0].state, "downloading");
+        assert_eq!(collected[0].bytes_downloaded, 1024);
+        assert_eq!(collected[0].bytes_total, Some(2048));
+        assert_eq!(collected[1].state, "verifying");
+        // Partial frame stayed in buf for the next chunk to complete.
+        assert!(buf.starts_with(b"data: {"));
+    }
+
+    #[test]
+    fn drain_sse_frames_skips_malformed_payloads() {
+        let count = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let n = std::sync::Arc::clone(&count);
+        let on_event = move |_ev: ModelDownloadEvent| {
+            *n.lock().unwrap() += 1;
+        };
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"data: {garbage json\n\n");
+        buf.extend_from_slice(
+            br#"data: {"role":"embedding","state":"downloading"}
+"#,
+        );
+        buf.push(b'\n');
+        drain_sse_frames(&mut buf, &on_event);
+        // Only the well-formed frame counts; the bad one is dropped.
+        assert_eq!(*count.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn model_download_event_round_trips_snake_to_camel() {
+        let from_python = r#"{
+            "role": "embedding",
+            "state": "downloading",
+            "file": "onnx/model_int8.onnx",
+            "bytes_downloaded": 12345,
+            "bytes_total": 100000,
+            "error": null
+        }"#;
+        let parsed: ModelDownloadEvent =
+            serde_json::from_str(from_python).expect("decode");
+        assert_eq!(parsed.role, "embedding");
+        assert_eq!(parsed.bytes_downloaded, 12345);
+        let to_ts = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(to_ts["bytesDownloaded"], 12345);
+        assert_eq!(to_ts["bytesTotal"], 100000);
+        assert!(to_ts.get("bytes_downloaded").is_none());
     }
 
     #[test]

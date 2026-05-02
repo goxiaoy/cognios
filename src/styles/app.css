@@ -2955,6 +2955,80 @@ body.is-resizing-pane {
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
+.settings-role-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-top: 0.35rem;
+}
+
+.settings-action {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+}
+
+.settings-action:hover:not(:disabled),
+.settings-action:focus-visible {
+  background: color-mix(in srgb, var(--accent) 14%, transparent 86%);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  outline: none;
+}
+
+.settings-action:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.settings-role-progress {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.settings-role-progress-track {
+  height: 6px;
+  background: color-mix(in srgb, var(--line) 60%, white 40%);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.settings-role-progress-fill {
+  height: 100%;
+  background: var(--accent, #4c8bf5);
+  transition: width 0.2s ease-out;
+}
+
+.settings-role-progress-fill.is-indeterminate {
+  width: 35%;
+  animation: settings-progress-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes settings-progress-indeterminate {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(360%); }
+}
+
+.settings-role-progress-meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.settings-role-progress-file {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.7rem;
+}
+
 .settings-stat-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

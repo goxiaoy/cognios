@@ -1,16 +1,38 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 
 import type {
   ModelsStatus,
   SidecarEnvelope,
 } from "../../../lib/contracts/search";
+import type { SearchClient } from "../../search/types/search";
 import { ModelManagerStatus } from "./ModelManagerStatus";
 
 afterEach(() => cleanup());
 
 function readyEnvelope(roles: ModelsStatus["roles"]): SidecarEnvelope<ModelsStatus> {
   return { state: "ready", data: { roles } };
+}
+
+function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
+  return {
+    search: vi.fn(),
+    indexStatus: vi.fn(),
+    nodeIndexStatus: vi.fn(),
+    modelsStatus: vi.fn(),
+    acceptModelLicense: vi.fn().mockResolvedValue({
+      state: "ready",
+      data: { accepted: true, role: "captioner" },
+    }),
+    startModelDownload: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
 }
 
 describe("ModelManagerStatus", () => {
@@ -86,5 +108,175 @@ describe("ModelManagerStatus", () => {
       />
     );
     expect(screen.getByText(/checksum mismatch/i)).toBeInTheDocument();
+  });
+
+  it("renders no action buttons without a client (read-only mode)", () => {
+    render(
+      <ModelManagerStatus
+        envelope={readyEnvelope({
+          embedding: {
+            role: "embedding",
+            state: "missing",
+            licenseAccepted: true,
+            requiresAcceptance: false,
+          },
+        })}
+      />
+    );
+    expect(
+      screen.queryByRole("button", { name: /download/i })
+    ).toBeNull();
+  });
+
+  it("renders a Download button for missing roles when a client is provided", async () => {
+    const client = makeClient();
+    render(
+      <ModelManagerStatus
+        client={client}
+        envelope={readyEnvelope({
+          embedding: {
+            role: "embedding",
+            state: "missing",
+            licenseAccepted: true,
+            requiresAcceptance: false,
+          },
+        })}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /download/i }));
+    await waitFor(() => {
+      expect(client.startModelDownload).toHaveBeenCalledWith({
+        role: "embedding",
+      });
+    });
+  });
+
+  it("blocks Download for license-gated roles until license is accepted", async () => {
+    const client = makeClient();
+    render(
+      <ModelManagerStatus
+        client={client}
+        envelope={readyEnvelope({
+          captioner: {
+            role: "captioner",
+            state: "missing",
+            licenseAccepted: false,
+            requiresAcceptance: true,
+          },
+        })}
+      />
+    );
+    expect(screen.queryByRole("button", { name: /^Download$/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /accept license/i }));
+    await waitFor(() => {
+      expect(client.acceptModelLicense).toHaveBeenCalledWith("captioner");
+    });
+  });
+
+  it("surfaces a Retry button for errored roles", async () => {
+    const client = makeClient();
+    render(
+      <ModelManagerStatus
+        client={client}
+        envelope={readyEnvelope({
+          embedding: {
+            role: "embedding",
+            state: "error",
+            licenseAccepted: false,
+            requiresAcceptance: false,
+            error: "checksum mismatch",
+          },
+        })}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+    await waitFor(() => {
+      expect(client.startModelDownload).toHaveBeenCalledWith({
+        role: "embedding",
+      });
+    });
+  });
+
+  it("renders a determinate progress bar from a downloading event", () => {
+    const client = makeClient();
+    render(
+      <ModelManagerStatus
+        client={client}
+        envelope={readyEnvelope({
+          embedding: {
+            role: "embedding",
+            state: "missing",
+            licenseAccepted: false,
+            requiresAcceptance: false,
+          },
+        })}
+        progress={{
+          embedding: {
+            role: "embedding",
+            state: "downloading",
+            file: "onnx/model_int8.onnx",
+            bytesDownloaded: 25_000_000,
+            bytesTotal: 100_000_000,
+          },
+        }}
+      />
+    );
+    const progressbar = screen.getByRole("progressbar");
+    expect(progressbar).toHaveAttribute("aria-valuenow", "25");
+    expect(screen.getByText("onnx/model_int8.onnx")).toBeInTheDocument();
+  });
+
+  it("renders the indeterminate variant when bytesTotal is unknown", () => {
+    const client = makeClient();
+    render(
+      <ModelManagerStatus
+        client={client}
+        envelope={readyEnvelope({
+          embedding: {
+            role: "embedding",
+            state: "missing",
+            licenseAccepted: false,
+            requiresAcceptance: false,
+          },
+        })}
+        progress={{
+          embedding: {
+            role: "embedding",
+            state: "downloading",
+            bytesDownloaded: 0,
+            bytesTotal: null,
+          },
+        }}
+      />
+    );
+    const progressbar = screen.getByRole("progressbar");
+    expect(progressbar).not.toHaveAttribute("aria-valuenow");
+    expect(screen.getByText(/connecting/i)).toBeInTheDocument();
+  });
+
+  it("hides the Download button while a download is in flight for that role", () => {
+    const client = makeClient();
+    render(
+      <ModelManagerStatus
+        client={client}
+        envelope={readyEnvelope({
+          embedding: {
+            role: "embedding",
+            state: "missing",
+            licenseAccepted: false,
+            requiresAcceptance: false,
+          },
+        })}
+        progress={{
+          embedding: {
+            role: "embedding",
+            state: "downloading",
+            bytesDownloaded: 1024,
+            bytesTotal: 100_000,
+          },
+        }}
+      />
+    );
+    expect(screen.queryByRole("button", { name: /^Download$/i })).toBeNull();
   });
 });

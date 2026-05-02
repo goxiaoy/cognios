@@ -212,7 +212,8 @@ pub fn run() {
             commands::search::get_indexing_status,
             commands::search::get_node_indexing_status,
             commands::search::get_models_status,
-            commands::search::accept_model_license
+            commands::search::accept_model_license,
+            commands::search::start_model_download
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri application");

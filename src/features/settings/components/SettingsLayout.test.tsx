@@ -9,6 +9,12 @@ import {
 import { SettingsLayout } from "./SettingsLayout";
 import type { SearchClient } from "../../search/types/search";
 
+// SettingsLayout subscribes to Tauri's models/progress event via
+// useModelDownloadProgress; provide a no-op listener in JSDOM.
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn().mockResolvedValue(() => Promise.resolve()),
+}));
+
 function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
   return {
     search: vi.fn().mockResolvedValue({ state: "initialising" }),
@@ -32,6 +38,7 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
       },
     }),
     acceptModelLicense: vi.fn().mockResolvedValue({ state: "initialising" }),
+    startModelDownload: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }

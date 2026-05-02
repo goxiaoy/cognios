@@ -1,6 +1,7 @@
 import type {
   IndexStatus,
   LicenseAcceptResponse,
+  ModelDownloadEvent,
   ModelsStatus,
   NodeIndexStatus,
   SearchQueryInput,
@@ -8,11 +9,13 @@ import type {
   SearchResult,
   SearchSort,
   SidecarEnvelope,
+  StartModelDownloadInput,
 } from "../../../lib/contracts/search";
 
 export type {
   IndexStatus,
   LicenseAcceptResponse,
+  ModelDownloadEvent,
   ModelsStatus,
   NodeIndexStatus,
   SearchQueryInput,
@@ -20,6 +23,7 @@ export type {
   SearchResult,
   SearchSort,
   SidecarEnvelope,
+  StartModelDownloadInput,
 };
 
 /**
@@ -35,4 +39,5 @@ export interface SearchClient {
   acceptModelLicense(
     role: string
   ): Promise<SidecarEnvelope<LicenseAcceptResponse>>;
+  startModelDownload(input: StartModelDownloadInput): Promise<void>;
 }

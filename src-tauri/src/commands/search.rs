@@ -8,11 +8,11 @@
 //! error display.
 
 use serde::Deserialize;
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::services::search::{
-    IndexStatusDto, LicenseAcceptResponseDto, ModelsStatusDto, NodeIndexStatusDto,
-    SearchInput, SearchResponseDto, SidecarEnvelope,
+    IndexStatusDto, LicenseAcceptResponseDto, ModelDownloadEvent, ModelsStatusDto,
+    NodeIndexStatusDto, SearchInput, SearchResponseDto, SidecarEnvelope,
 };
 use crate::AppState;
 
@@ -39,6 +39,19 @@ pub struct GetNodeIndexingStatusInput {
 pub struct AcceptModelLicenseInput {
     pub role: String,
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartModelDownloadInput {
+    pub role: String,
+    #[serde(default)]
+    pub hf_token: Option<String>,
+}
+
+/// Tauri event channel the frontend listens on for download progress.
+/// One event per parsed SSE frame from the sidecar; frontends drive a
+/// progress indicator by aggregating events keyed on ``role``.
+pub const MODELS_PROGRESS_EVENT: &str = "models/progress";
 
 // Wrap a `SidecarEnvelope` in a `Result::Ok` for the Tauri-command
 // signature. The envelope already carries `state` and `error` fields,
@@ -88,6 +101,33 @@ pub async fn accept_model_license(
     input: AcceptModelLicenseInput,
 ) -> EnvelopeResult<LicenseAcceptResponseDto> {
     Ok(state.search_client.accept_model_license(&input.role).await)
+}
+
+#[tauri::command]
+pub async fn start_model_download(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    input: StartModelDownloadInput,
+) -> Result<(), String> {
+    // Each parsed SSE frame from the sidecar becomes a Tauri event the
+    // frontend listens on. The closure captures the AppHandle by move
+    // and re-uses it for every emit; AppHandle is Clone-able and
+    // Send + Sync, satisfying the Fn bound.
+    let app = app.clone();
+    state
+        .search_client
+        .start_model_download(
+            &input.role,
+            input.hf_token.as_deref(),
+            move |event: ModelDownloadEvent| {
+                if let Err(err) = app.emit(MODELS_PROGRESS_EVENT, event) {
+                    log::warn!(
+                        "failed to emit {MODELS_PROGRESS_EVENT}: {err}"
+                    );
+                }
+            },
+        )
+        .await
 }
 
 // Re-export the envelope type so a consumer of `commands::search`

@@ -7,6 +7,7 @@ import type {
   SearchQueryInput,
   SearchResponse,
   SidecarEnvelope,
+  StartModelDownloadInput,
 } from "../contracts/search";
 import type {
   CreateFolderInput,
@@ -129,6 +130,19 @@ export async function acceptModelLicense(
   return invoke<SidecarEnvelope<LicenseAcceptResponse>>("accept_model_license", {
     input: { role },
   });
+}
+
+/**
+ * Kick off a sidecar-side model download. The Rust command
+ * subscribes to the SSE stream and re-emits each frame as a Tauri
+ * event named `models/progress` (use `useModelDownloadProgress` to
+ * subscribe). Resolves when the stream closes; rejects on setup-time
+ * failures (sidecar offline, license not accepted).
+ */
+export async function startModelDownload(
+  input: StartModelDownloadInput
+): Promise<void> {
+  return invoke<void>("start_model_download", { input });
 }
 
 function isDuplicateMountError(error: unknown): error is DuplicateMountError {

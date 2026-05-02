@@ -100,6 +100,31 @@ export interface LicenseAcceptResponse {
   role: string;
 }
 
+export type ModelDownloadStateName =
+  | "downloading"
+  | "verifying"
+  | "ready"
+  | "error";
+
+/**
+ * One frame from the sidecar's `/models/download/{role}` SSE stream.
+ * Rust subscribes, parses each frame, and re-emits it as a Tauri
+ * event named `models/progress`.
+ */
+export interface ModelDownloadEvent {
+  role: string;
+  state: ModelDownloadStateName | string;
+  file?: string | null;
+  bytesDownloaded: number;
+  bytesTotal?: number | null;
+  error?: string | null;
+}
+
+export interface StartModelDownloadInput {
+  role: string;
+  hfToken?: string;
+}
+
 /**
  * Helper to narrow an envelope to its `ready` variant. Returns the
  * inner `data` if present; otherwise `null`. Use this when the caller
