@@ -10,6 +10,7 @@ from typing import Protocol
 
 from ..storage import LanceDBStore
 from .embedder import Embedder
+from .processors.image import ImageProcessor
 from .processors.pdf import PdfProcessor
 from .processors.text import TextProcessor
 from .processors.url_cache import URLCacheProcessor
@@ -29,9 +30,15 @@ class Dispatcher:
     """
 
     def __init__(self, *, store: LanceDBStore, embedder: Embedder) -> None:
+        # ImageProcessor is wired without OCR / caption extractors for
+        # now — the dispatcher routes images through it (so the queue
+        # records them as indexed-with-zero-chunks rather than parking
+        # in pending forever) and the real OCR + caption integrations
+        # land as injected extractors in follow-up commits.
         self._processors: list[Processor] = [
             TextProcessor(store, embedder),
             PdfProcessor(store, embedder),
+            ImageProcessor(store, embedder),
             URLCacheProcessor(store, embedder),
         ]
 
