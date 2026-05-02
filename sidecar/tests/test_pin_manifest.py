@@ -1,0 +1,131 @@
+"""Pure-transform tests for the pin_manifest patcher.
+
+The network-touching paths (`_fetch_head_commit`, `_download_and_hash`)
+are deliberately not exercised here — they're tiny adapters around
+httpx and a SHA-256 hasher whose value comes from running them
+against the live HF API, not from mocked tests.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from search_sidecar.scripts.pin_manifest import (
+    _find_role_block,
+    patch_manifest_text,
+)
+
+# A miniature manifest fixture that mirrors the real shape — same
+# sentinel constants, same ModelSpec/FileSpec syntax, two roles that
+# share a filename so we can verify cross-role isolation.
+_FIXTURE_MANIFEST = '''\
+PLACEHOLDER_COMMIT = "<pinned>"
+PLACEHOLDER_SHA256 = "<pinned>"
+
+DEFAULTS: dict[str, ModelSpec] = {
+    "embedding": ModelSpec(
+        role="embedding",
+        repo="onnx-community/gte-multilingual-base",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("onnx/model_int8.onnx", PLACEHOLDER_SHA256),
+            FileSpec("tokenizer.json", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "reranker": ModelSpec(
+        role="reranker",
+        repo="onnx-community/gte-multilingual-reranker-base",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("onnx/model_int8.onnx", PLACEHOLDER_SHA256),
+            FileSpec("tokenizer.json", PLACEHOLDER_SHA256),
+        ),
+    ),
+}
+'''
+
+
+def test_find_role_block_locates_balanced_parens():
+    start, end = _find_role_block(_FIXTURE_MANIFEST, "embedding")
+    block = _FIXTURE_MANIFEST[start:end]
+    assert block.startswith('"embedding": ModelSpec(')
+    assert block.endswith(")")
+    # Block should include the nested files=(...) tuple.
+    assert "files=(" in block
+    # Should NOT include the reranker entry.
+    assert "reranker" not in block
+
+
+def test_find_role_block_raises_for_unknown_role():
+    with pytest.raises(ValueError, match="ocr"):
+        _find_role_block(_FIXTURE_MANIFEST, "ocr")
+
+
+def test_patch_manifest_text_pins_one_role_only():
+    """Pinning embedding must not touch reranker, even though the two
+    roles share filenames (onnx/model_int8.onnx, tokenizer.json)."""
+    commit = "abcdef0123456789abcdef0123456789abcdef01"
+    file_shas = {
+        "onnx/model_int8.onnx": "1111" * 16,
+        "tokenizer.json": "2222" * 16,
+    }
+    patched = patch_manifest_text(
+        _FIXTURE_MANIFEST, "embedding", commit, file_shas
+    )
+
+    # embedding's commit is now the real SHA.
+    embed_start, embed_end = _find_role_block(patched, "embedding")
+    embed_block = patched[embed_start:embed_end]
+    assert f'commit="{commit}"' in embed_block
+    assert "PLACEHOLDER_COMMIT" not in embed_block
+    assert f'FileSpec("onnx/model_int8.onnx", "{"1111" * 16}")' in embed_block
+    assert f'FileSpec("tokenizer.json", "{"2222" * 16}")' in embed_block
+    assert "PLACEHOLDER_SHA256" not in embed_block
+
+    # reranker is untouched — same shared filenames, still placeholder.
+    rerank_start, rerank_end = _find_role_block(patched, "reranker")
+    rerank_block = patched[rerank_start:rerank_end]
+    assert "commit=PLACEHOLDER_COMMIT" in rerank_block
+    assert (
+        'FileSpec("onnx/model_int8.onnx", PLACEHOLDER_SHA256)'
+        in rerank_block
+    )
+
+    # Module-level constant assignments must survive untouched —
+    # the patcher must not rewrite the placeholder definitions.
+    assert 'PLACEHOLDER_COMMIT = "<pinned>"' in patched
+    assert 'PLACEHOLDER_SHA256 = "<pinned>"' in patched
+
+
+def test_patch_manifest_text_raises_on_missing_commit_placeholder():
+    already_pinned = _FIXTURE_MANIFEST.replace(
+        'commit=PLACEHOLDER_COMMIT',
+        'commit="aaaa"',
+        1,  # only patch embedding
+    )
+    with pytest.raises(ValueError, match="commit=PLACEHOLDER_COMMIT"):
+        patch_manifest_text(
+            already_pinned, "embedding", "bbbb", {"onnx/model_int8.onnx": "x"}
+        )
+
+
+def test_patch_manifest_text_raises_on_unknown_filename():
+    with pytest.raises(ValueError, match="config.json"):
+        patch_manifest_text(
+            _FIXTURE_MANIFEST,
+            "embedding",
+            "abc",
+            {"config.json": "ffff" * 16},  # not in fixture
+        )
+
+
+def test_patch_manifest_text_handles_idempotent_partial_state():
+    """If a previous run pinned commit but crashed before pinning files,
+    re-running should refuse rather than silently leaving placeholders."""
+    half = _FIXTURE_MANIFEST.replace(
+        'commit=PLACEHOLDER_COMMIT', 'commit="abc"', 1
+    )
+    with pytest.raises(ValueError, match="commit=PLACEHOLDER_COMMIT"):
+        patch_manifest_text(
+            half, "embedding", "abc", {"onnx/model_int8.onnx": "1234"}
+        )
