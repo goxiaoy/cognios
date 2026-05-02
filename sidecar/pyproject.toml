@@ -11,6 +11,11 @@ dependencies = [
   "pyarrow==18.1.0",
   "pymupdf>=1.24,<2.0",
   "selectolax==0.3.27",
+  # Pydantic v2 — declared explicitly because settings.py uses
+  # ``model_validate_json`` / ``model_dump`` which are v2-only. FastAPI
+  # 0.115 already pulls v2 transitively, but we don't want a future
+  # FastAPI floor change to silently drop us back to v1.
+  "pydantic>=2.0,<3.0",
 ]
 
 # The semantic-search ONNX path is opt-in: dev installs default to the

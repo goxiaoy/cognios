@@ -3,11 +3,13 @@
 Phase 1 / Unit 3 added ``GET /healthz``. Phase 2 / Unit 4 mounted the
 ``/models/*`` router. Phase 2 / Unit 5 mounts ``/events/*`` and
 ``/index/*`` and threads the IndexingQueue + LanceDBStore onto
-``app.state``. Unit 6 adds ``/search``.
+``app.state``. Unit 6 adds ``/search``. Phase 1 of the
+feature-oriented Settings plan adds ``/settings``.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
@@ -17,6 +19,7 @@ from .routes import events as events_routes
 from .routes import index as index_routes
 from .routes import models as models_routes
 from .routes import search as search_routes
+from .routes import settings as settings_routes
 
 if TYPE_CHECKING:
     from .index.queue import IndexingQueue
@@ -32,6 +35,7 @@ def build_app(
     indexing_queue: "IndexingQueue | None" = None,
     lancedb_store: "LanceDBStore | None" = None,
     search_orchestrator: "SearchOrchestrator | None" = None,
+    settings_path: Path | None = None,
 ) -> FastAPI:
     """Construct a FastAPI app with bearer-auth + the Phase-2 routers.
 
@@ -63,6 +67,7 @@ def build_app(
     app.include_router(events_routes.router)
     app.include_router(index_routes.router)
     app.include_router(search_routes.router)
+    app.include_router(settings_routes.router)
 
     if model_manager is not None:
         app.state.model_manager = model_manager
@@ -72,5 +77,7 @@ def build_app(
         app.state.lancedb_store = lancedb_store
     if search_orchestrator is not None:
         app.state.search_orchestrator = search_orchestrator
+    if settings_path is not None:
+        app.state.settings_path = settings_path
 
     return app

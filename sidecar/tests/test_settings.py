@@ -1,0 +1,191 @@
+"""Pure-module tests for the settings persistence layer."""
+
+from __future__ import annotations
+
+import json
+import os
+import stat
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from search_sidecar.settings import (
+    CURRENT_VERSION,
+    FeatureConfig,
+    ProviderConfig,
+    SearchSettings,
+    SettingsVersionError,
+    default_settings,
+    load_settings,
+    save_settings,
+)
+
+
+def test_default_settings_seeds_local_gte_and_semantic_search():
+    s = default_settings()
+    assert s.version == CURRENT_VERSION
+    assert "local-gte" in s.providers
+    assert s.providers["local-gte"].provider_id == "local-gte"
+    assert s.providers["local-gte"].enabled is True
+    assert s.features["semantic-search"].enabled is True
+    assert s.features["semantic-search"].provider_id == "local-gte"
+    # Optional features default off and unbound.
+    for fid in ("result-reranking", "image-ocr", "image-captioning"):
+        assert s.features[fid].enabled is False
+        assert s.features[fid].provider_id is None
+    # No cloud providers consented to on first install.
+    assert s.cloud_consent_acked == []
+    assert s.first_run_skipped is False
+
+
+def test_load_settings_returns_defaults_when_file_missing(tmp_path: Path):
+    s = load_settings(tmp_path / "absent.json")
+    assert s == default_settings()
+
+
+def test_save_then_load_round_trips(tmp_path: Path):
+    path = tmp_path / "settings.json"
+    s = default_settings()
+    s.cloud_consent_acked = ["openai"]
+    s.providers["openai"] = ProviderConfig(
+        provider_id="openai",
+        api_key_ref="keychain://cognios-search/provider:openai",
+    )
+    save_settings(path, s)
+    loaded = load_settings(path)
+    assert loaded == s
+    assert loaded.providers["openai"].api_key_ref == (
+        "keychain://cognios-search/provider:openai"
+    )
+
+
+def test_save_settings_writes_mode_0600(tmp_path: Path):
+    path = tmp_path / "settings.json"
+    save_settings(path, default_settings())
+    mode = stat.S_IMODE(os.stat(path).st_mode)
+    # On POSIX the mode is enforced; on Windows os.open ignores the
+    # bits and we'd have to do something else. Skip the assertion on
+    # Windows where the test is meaningless.
+    if os.name == "posix":
+        assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+
+
+def test_save_settings_atomic_no_partial_file_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """If os.replace raises every retry, the final file must not exist
+    (the tmp file is cleaned up; nothing was committed)."""
+    path = tmp_path / "settings.json"
+
+    def always_fails(_src: str, _dst: str) -> None:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr("search_sidecar.settings.os.replace", always_fails)
+    with pytest.raises(OSError, match="simulated replace failure"):
+        save_settings(path, default_settings())
+    assert not path.exists()
+    # Tmp file should also be cleaned up — no orphan.
+    assert not (path.with_name(path.name + ".tmp")).exists()
+
+
+def test_save_settings_retries_transient_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Transient OSError on first attempt → retry succeeds on second."""
+    path = tmp_path / "settings.json"
+    real_replace = os.replace
+    call_count = {"n": 0}
+
+    def flaky_replace(src: str, dst: str) -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise OSError("transient — gone next time")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("search_sidecar.settings.os.replace", flaky_replace)
+    save_settings(path, default_settings())
+    assert path.exists()
+    assert call_count["n"] == 2
+
+
+def test_load_settings_rejects_future_version(tmp_path: Path):
+    path = tmp_path / "settings.json"
+    payload = {
+        "version": CURRENT_VERSION + 1,
+        "providers": {},
+        "features": {},
+        "cloud_consent_acked": [],
+        "first_run_skipped": False,
+    }
+    path.write_text(json.dumps(payload))
+    with pytest.raises(SettingsVersionError, match="version"):
+        load_settings(path)
+
+
+def test_load_settings_drops_unknown_fields_silently(tmp_path: Path):
+    """Forward-compat: a future sidecar may add fields. Older sidecars
+    must not crash on them."""
+    path = tmp_path / "settings.json"
+    payload = {
+        "version": CURRENT_VERSION,
+        "providers": {},
+        "features": {},
+        "cloud_consent_acked": [],
+        "first_run_skipped": False,
+        "future_field_we_do_not_understand": {"complex": "value"},
+    }
+    path.write_text(json.dumps(payload))
+    loaded = load_settings(path)
+    # Unknown field is dropped, not raised.
+    assert loaded.version == CURRENT_VERSION
+    # Re-saving doesn't preserve it (intentional — caller cannot
+    # round-trip data the model doesn't know about).
+    save_settings(path, loaded)
+    on_disk = json.loads(path.read_text())
+    assert "future_field_we_do_not_understand" not in on_disk
+
+
+def test_load_settings_propagates_validation_error_on_bad_json(tmp_path: Path):
+    path = tmp_path / "settings.json"
+    path.write_text("{not valid json")
+    with pytest.raises(ValidationError):
+        load_settings(path)
+
+
+def test_load_settings_propagates_validation_error_on_wrong_shape(
+    tmp_path: Path,
+):
+    path = tmp_path / "settings.json"
+    # version present but providers is a list, not a dict — should fail
+    # validation, not silently coerce.
+    path.write_text(
+        json.dumps({"version": 1, "providers": [], "features": {}})
+    )
+    with pytest.raises(ValidationError):
+        load_settings(path)
+
+
+def test_provider_config_requires_non_empty_provider_id():
+    with pytest.raises(ValidationError):
+        ProviderConfig(provider_id="")
+
+
+def test_feature_config_default_state():
+    f = FeatureConfig()
+    assert f.enabled is False
+    assert f.provider_id is None
+
+
+def test_save_settings_idempotent_repeat(tmp_path: Path):
+    """Saving the same content twice produces an identical file
+    (no growing file from an append bug, no permission drift)."""
+    path = tmp_path / "settings.json"
+    save_settings(path, default_settings())
+    first_bytes = path.read_bytes()
+    first_mode = stat.S_IMODE(os.stat(path).st_mode)
+    save_settings(path, default_settings())
+    second_bytes = path.read_bytes()
+    second_mode = stat.S_IMODE(os.stat(path).st_mode)
+    assert first_bytes == second_bytes
+    assert first_mode == second_mode

@@ -41,6 +41,7 @@ from .runtime_file import (
     remove_runtime_file,
     write_runtime_file,
 )
+from .settings import load_settings, save_settings
 from .storage import open_store
 
 LOG = logging.getLogger("search_sidecar.lifecycle")
@@ -74,6 +75,11 @@ def serve(storage_dir: Path) -> int:
         return 1
 
     token = generate_token()
+    settings_path = search_dir / "settings.json"
+    # Materialize defaults on first launch so the file mode is fixed
+    # at 0600 from the start; subsequent runs no-op via the load path.
+    if not settings_path.exists():
+        save_settings(settings_path, load_settings(settings_path))
     model_manager = ModelManager(storage_dir=storage_dir, manifest=DEFAULTS)
     lancedb_store = open_store(search_dir / "index.lance")
     indexing_queue = open_queue(search_dir / "queue.db")
@@ -110,6 +116,7 @@ def serve(storage_dir: Path) -> int:
         indexing_queue=indexing_queue,
         lancedb_store=lancedb_store,
         search_orchestrator=search_orchestrator,
+        settings_path=settings_path,
     )
     config = uvicorn.Config(
         app,
