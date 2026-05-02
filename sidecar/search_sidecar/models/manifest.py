@@ -59,23 +59,23 @@ DEFAULTS: dict[str, ModelSpec] = {
     "embedding": ModelSpec(
         role="embedding",
         repo="onnx-community/gte-multilingual-base",
-        commit=PLACEHOLDER_COMMIT,
+        commit="2edbf5e672aab465f9ed4c154a8b61791c082c69",
         files=(
-            FileSpec("onnx/model_int8.onnx", PLACEHOLDER_SHA256),
-            FileSpec("tokenizer.json", PLACEHOLDER_SHA256),
-            FileSpec("tokenizer_config.json", PLACEHOLDER_SHA256),
-            FileSpec("config.json", PLACEHOLDER_SHA256),
+            FileSpec("onnx/model_int8.onnx", "ab2bd164ebd8ca9003dc49a981b611e849b5d326f504c8873ba76e07fa6c0082"),
+            FileSpec("tokenizer.json", "3a56def25aa40facc030ea8b0b87f3688e4b3c39eb8b45d5702b3a1300fe2a20"),
+            FileSpec("tokenizer_config.json", "24cebbf2ef20fc317256e03e52ac7b2ca326586f946a8427ecac036332bf0933"),
+            FileSpec("config.json", "6ef2538d4286a7cd18d05225f659d8a1bceca7adb01c186868e53dbd4f822e17"),
         ),
     ),
     "reranker": ModelSpec(
         role="reranker",
         repo="onnx-community/gte-multilingual-reranker-base",
-        commit=PLACEHOLDER_COMMIT,
+        commit="ee64367e35a2db0da46bb6497e13a18f8bd585cb",
         files=(
-            FileSpec("onnx/model_int8.onnx", PLACEHOLDER_SHA256),
-            FileSpec("tokenizer.json", PLACEHOLDER_SHA256),
-            FileSpec("tokenizer_config.json", PLACEHOLDER_SHA256),
-            FileSpec("config.json", PLACEHOLDER_SHA256),
+            FileSpec("onnx/model_int8.onnx", "ccf51dba7f8aa9205753761cfaa68c55f741792501463a3bf25d7e5bcdac7c35"),
+            FileSpec("tokenizer.json", "3ffb37461c391f096759f4a9bbbc329da0f36952f88bab061fcf84940c022e98"),
+            FileSpec("tokenizer_config.json", "6f00514620aff01ba8b7291b2394e98daca5be264cb743805232d9ae27494b2a"),
+            FileSpec("config.json", "dfa5713436ecb4616eaa576795c8d3efd1f03122031a1ad4973d0b6b7e7edfd3"),
         ),
     ),
     "ocr": ModelSpec(

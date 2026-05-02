@@ -6,6 +6,8 @@ from search_sidecar.models.manifest import (
     DEFAULTS,
     PLACEHOLDER_COMMIT,
     PLACEHOLDER_SHA256,
+    FileSpec,
+    ModelSpec,
     is_pinned,
 )
 
@@ -30,20 +32,51 @@ def test_captioner_carries_license_tag():
     assert DEFAULTS["captioner"].license == "gemma"
 
 
-def test_defaults_are_unpinned_until_release():
-    """Until release-build CI pins commits and SHA-256s, ``is_pinned``
-    must return False so a release build with placeholder values fails
-    its CI gate."""
-    for role, spec in DEFAULTS.items():
-        assert not is_pinned(spec), f"{role!r} should still be unpinned"
+def test_is_pinned_detects_placeholder_state():
+    """``is_pinned`` returns False when either the commit or any file
+    SHA is still the placeholder string. Used by release-build CI to
+    refuse shipping with unresolved manifests, and by the pin script
+    to skip already-pinned roles."""
+    unpinned = ModelSpec(
+        role="test",
+        repo="owner/repo",
+        commit=PLACEHOLDER_COMMIT,
+        files=(FileSpec("a.bin", PLACEHOLDER_SHA256),),
+    )
+    assert not is_pinned(unpinned)
+
+    pinned_commit_only = ModelSpec(
+        role="test",
+        repo="owner/repo",
+        commit="abc123",
+        files=(FileSpec("a.bin", PLACEHOLDER_SHA256),),
+    )
+    assert not is_pinned(pinned_commit_only)
+
+    fully_pinned = ModelSpec(
+        role="test",
+        repo="owner/repo",
+        commit="abc123",
+        files=(FileSpec("a.bin", "deadbeef" * 8),),
+    )
+    assert is_pinned(fully_pinned)
 
 
 def test_hf_url_format():
-    spec = DEFAULTS["embedding"]
+    """``hf_url`` builds the canonical HuggingFace resolve URL from
+    the spec's repo + commit + file name. Tested against a fixture
+    spec so the assertion doesn't break when DEFAULTS roles get
+    pinned (or unpinned) over the release lifecycle."""
+    spec = ModelSpec(
+        role="test",
+        repo="owner/repo",
+        commit="abc123def456",
+        files=(FileSpec("path/to/file.bin", "deadbeef"),),
+    )
     file = spec.files[0]
     url = spec.hf_url(file)
     assert url == (
-        f"https://huggingface.co/{spec.repo}/resolve/{PLACEHOLDER_COMMIT}/{file.name}"
+        f"https://huggingface.co/owner/repo/resolve/abc123def456/path/to/file.bin"
     )
 
 

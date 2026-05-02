@@ -52,6 +52,7 @@ import hashlib
 import os
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import httpx
 
@@ -145,18 +146,109 @@ def _resolve_role(
     Returns ``(commit, {file_name: sha256_hex})``. Raises ``_PinError``
     on fatal HTTP errors so the caller can stop before mutating the
     manifest.
+
+    Strategy: fetch the HF tree API for the resolved commit; for files
+    stored in LFS (every model weight blob — `.onnx`, `.gguf`,
+    `.safetensors`, etc.) read sha256 directly from the API metadata
+    so we never download the bytes. Only non-LFS files (small JSON
+    config / tokenizer files) fall back to download-and-hash.
     """
     print(f"[{spec.role}] resolving {spec.repo}")
     commit = _fetch_head_commit(spec.repo, hf_token=hf_token)
     print(f"[{spec.role}]   commit: {commit}")
+    tree = _fetch_tree(spec.repo, commit, hf_token=hf_token)
     file_shas: dict[str, str] = {}
     for file_spec in spec.files:
-        digest = _download_and_hash(
-            spec.repo, commit, file_spec.name, hf_token=hf_token
+        meta = tree.get(file_spec.name)
+        if meta is None:
+            raise _PinError(
+                f"file {file_spec.name!r} not present in {spec.repo}@{commit[:8]} tree"
+            )
+        digest, source = _sha_from_metadata_or_download(
+            spec.repo, commit, file_spec.name, meta, hf_token=hf_token
         )
-        print(f"[{spec.role}]   {file_spec.name}  →  {digest}")
+        print(f"[{spec.role}]   {file_spec.name}  →  {digest} ({source})")
         file_shas[file_spec.name] = digest
     return commit, file_shas
+
+
+def _fetch_tree(
+    repo: str,
+    commit: str,
+    *,
+    hf_token: str | None,
+) -> dict[str, dict[str, Any]]:
+    """Return ``{path: metadata}`` for every file in ``repo`` at ``commit``.
+
+    The HF tree API includes ``lfs.oid`` as ``"sha256:<hex>"`` for
+    every LFS-stored file, which lets us avoid downloading multi-GB
+    weight blobs just to compute their digest.
+    """
+    url = f"https://huggingface.co/api/models/{repo}/tree/{commit}?recursive=true"
+    try:
+        resp = httpx.get(
+            url, headers=_auth_headers(hf_token), timeout=_API_TIMEOUT
+        )
+    except httpx.HTTPError as err:
+        raise _PinError(f"GET {url}: {err}") from err
+    if resp.status_code in (401, 403):
+        raise _PinError(
+            f"GET {url} returned {resp.status_code} — set HF_TOKEN if "
+            f"the repo is gated (e.g. Gemma)."
+        )
+    if resp.status_code >= 400:
+        raise _PinError(f"GET {url} returned {resp.status_code}: {resp.text[:200]}")
+    payload: Any = resp.json()
+    if not isinstance(payload, list):
+        raise _PinError(
+            f"GET {url}: expected list, got {type(payload).__name__}"
+        )
+    raw_entries = cast(list[Any], payload)
+    out: dict[str, dict[str, Any]] = {}
+    for raw in raw_entries:
+        if not isinstance(raw, dict):
+            continue
+        entry = cast(dict[str, Any], raw)
+        if entry.get("type") != "file":
+            continue
+        path = entry.get("path")
+        if isinstance(path, str):
+            out[path] = entry
+    return out
+
+
+def _sha_from_metadata_or_download(
+    repo: str,
+    commit: str,
+    file_name: str,
+    meta: dict[str, Any],
+    *,
+    hf_token: str | None,
+) -> tuple[str, str]:
+    """Resolve the sha256 for one file, preferring API metadata.
+
+    Returns ``(sha256_hex, source)`` where ``source`` is ``"lfs"`` or
+    ``"download"`` so the caller can log the path it took. The HF
+    tree API exposes ``lfs.oid`` for LFS-stored files as a 64-char
+    SHA-256 hex digest (no ``"sha256:"`` prefix — that prefix is the
+    git-LFS pointer-file spec, not what the HTTP API returns). Both
+    forms are accepted defensively. Regular git-stored files have
+    no LFS section, so we download them (they're small — config.json
+    / tokenizer.json sizes only).
+    """
+    lfs_raw = meta.get("lfs")
+    if isinstance(lfs_raw, dict):
+        lfs = cast(dict[str, Any], lfs_raw)
+        raw = lfs.get("oid")
+        if isinstance(raw, str):
+            sha = raw[len("sha256:") :] if raw.startswith("sha256:") else raw
+            # Defensive: HF currently returns a 64-char hex digest;
+            # if someone hands us anything weirder, fall through to
+            # the download path rather than write garbage.
+            if len(sha) == 64 and all(c in "0123456789abcdef" for c in sha):
+                return sha, "lfs"
+    digest = _download_and_hash(repo, commit, file_name, hf_token=hf_token)
+    return digest, "download"
 
 
 def _fetch_head_commit(repo: str, *, hf_token: str | None) -> str:

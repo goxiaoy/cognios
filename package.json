@@ -10,7 +10,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "pin-models": "cd sidecar && uv run python -m search_sidecar.scripts.pin_manifest --all",
+    "pin-models:role": "cd sidecar && uv run python -m search_sidecar.scripts.pin_manifest"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",

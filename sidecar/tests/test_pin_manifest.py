@@ -12,6 +12,7 @@ import pytest
 
 from search_sidecar.scripts.pin_manifest import (
     _find_role_block,
+    _sha_from_metadata_or_download,
     patch_manifest_text,
 )
 
@@ -117,6 +118,106 @@ def test_patch_manifest_text_raises_on_unknown_filename():
             "abc",
             {"config.json": "ffff" * 16},  # not in fixture
         )
+
+
+def test_sha_resolver_reads_raw_hex_oid_from_hf_tree_api(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """HF's tree API returns ``lfs.oid`` as a raw 64-char hex digest
+    (NOT prefixed with ``sha256:``). The resolver must accept this
+    form without downloading the file."""
+    download_called = {"n": 0}
+
+    def boom(*_args, **_kwargs):
+        download_called["n"] += 1
+        raise AssertionError("download_and_hash must not run for LFS files")
+
+    monkeypatch.setattr(
+        "search_sidecar.scripts.pin_manifest._download_and_hash", boom
+    )
+    expected_sha = "abcd" * 16  # 64-char hex
+    # Shape mirrors the actual HF tree API response — bare hex oid.
+    meta = {
+        "type": "file",
+        "path": "onnx/model_int8.onnx",
+        "lfs": {"oid": expected_sha, "size": 75_000_000},
+    }
+    digest, source = _sha_from_metadata_or_download(
+        "owner/repo", "commit_sha", "onnx/model_int8.onnx", meta, hf_token=None
+    )
+    assert digest == expected_sha
+    assert source == "lfs"
+    assert download_called["n"] == 0
+
+
+def test_sha_resolver_also_accepts_sha256_prefixed_oid(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Defensive: the git-LFS pointer-file spec uses ``sha256:<hex>``;
+    accept that form too in case HF or another consumer ever returns
+    it."""
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("download must not run when LFS oid is valid")
+
+    monkeypatch.setattr(
+        "search_sidecar.scripts.pin_manifest._download_and_hash", boom
+    )
+    expected_sha = "1234" * 16
+    meta = {
+        "type": "file",
+        "path": "onnx/m.onnx",
+        "lfs": {"oid": f"sha256:{expected_sha}", "size": 1},
+    }
+    digest, source = _sha_from_metadata_or_download(
+        "owner/repo", "c", "onnx/m.onnx", meta, hf_token=None
+    )
+    assert digest == expected_sha
+    assert source == "lfs"
+
+
+def test_sha_resolver_falls_back_to_download_for_non_lfs(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Small git-stored files (config.json / tokenizer.json) have no
+    LFS metadata; the resolver downloads them to compute sha256."""
+
+    def fake_download(_repo, _commit, _file_name, *, hf_token):
+        return "deadbeef" * 8
+
+    monkeypatch.setattr(
+        "search_sidecar.scripts.pin_manifest._download_and_hash", fake_download
+    )
+    meta = {"type": "file", "path": "config.json", "size": 1234}
+    digest, source = _sha_from_metadata_or_download(
+        "owner/repo", "commit_sha", "config.json", meta, hf_token=None
+    )
+    assert digest == "deadbeef" * 8
+    assert source == "download"
+
+
+def test_sha_resolver_treats_malformed_lfs_as_non_lfs(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """If lfs.oid is missing or doesn't carry the sha256: prefix,
+    fall back to download rather than guess."""
+    download_called = {"n": 0}
+
+    def fake_download(_repo, _commit, _file_name, *, hf_token):
+        download_called["n"] += 1
+        return "fallback" * 8
+
+    monkeypatch.setattr(
+        "search_sidecar.scripts.pin_manifest._download_and_hash", fake_download
+    )
+    # Missing oid entirely.
+    meta = {"type": "file", "path": "weird.bin", "lfs": {"size": 100}}
+    digest, source = _sha_from_metadata_or_download(
+        "owner/repo", "c", "weird.bin", meta, hf_token=None
+    )
+    assert source == "download"
+    assert digest == "fallback" * 8
+    assert download_called["n"] == 1
 
 
 def test_patch_manifest_text_handles_idempotent_partial_state():
