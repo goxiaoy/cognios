@@ -40,6 +40,7 @@ parsing the URL.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -194,6 +195,57 @@ def save_settings(path: Path, settings: SearchSettings) -> None:
     raise OSError(
         f"save_settings: failed after {_WRITE_RETRY_COUNT} attempts: {last_err}"
     ) from last_err
+
+
+def boot_signature(settings: SearchSettings) -> str:
+    """Hash of the dispatcher-affecting fields of ``settings``.
+
+    Two settings with the same boot signature wire the dispatcher
+    identically; two with different signatures need a sidecar restart
+    before the change takes effect. Used by the ``needs_restart`` flag
+    on ``GET /settings``.
+
+    Affecting fields, kept narrow on purpose:
+
+    - Each feature's ``enabled`` flag and bound ``provider_id`` —
+      changing either reshapes which extractors / embedders the
+      dispatcher wires.
+    - Each provider's ``model_per_capability`` — changing the model
+      a provider serves changes what the cloud Embedder sends.
+    - Each provider's ``base_url`` — same reasoning (custom endpoint
+      changes traffic destination).
+
+    Explicitly NOT affecting (so changing them doesn't surface a
+    spurious restart prompt):
+
+    - ``cloud_consent_acked`` — pure UI gate state.
+    - ``first_run_skipped`` — pure UI banner state.
+    - ``api_key_ref`` — the cloud Embedder reads keys lazily from
+      the keychain, so a key rotation is picked up on next embed.
+    - Provider ``enabled`` flag — currently advisory only; the
+      feature binding is the load-bearing field.
+
+    A SHA-256 truncated to 16 hex chars; collision probability is
+    cosmetic since the comparison is local-only and a single user
+    will never see 2^32 distinct signatures in their lifetime.
+    """
+    inputs: dict = {
+        "features": {
+            fid: {"enabled": cfg.enabled, "provider_id": cfg.provider_id}
+            for fid, cfg in sorted(settings.features.items())
+        },
+        "providers": {
+            pid: {
+                "model_per_capability": dict(
+                    sorted(cfg.model_per_capability.items())
+                ),
+                "base_url": cfg.base_url,
+            }
+            for pid, cfg in sorted(settings.providers.items())
+        },
+    }
+    blob = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
 def _atomic_write_json(tmp_path: Path, final_path: Path, payload: dict) -> None:

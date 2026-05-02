@@ -39,10 +39,27 @@ class IndexingRunner:
         self._dispatcher = dispatcher
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        # When True, the runner stops claiming new jobs but keeps
+        # the loop alive (so set_paused(False) resumes immediately).
+        # Used to prevent mixed-provider corruption when settings
+        # have changed and the user hasn't restarted yet — see
+        # plan Key Decision "Mixed-provider data corruption guard".
+        self._paused = threading.Event()
 
     @property
     def running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def paused(self) -> bool:
+        return self._paused.is_set()
+
+    def set_paused(self, paused: bool) -> None:
+        """Pause / resume new job claims without stopping the loop."""
+        if paused:
+            self._paused.set()
+        else:
+            self._paused.clear()
 
     def start(self) -> None:
         if self.running:
@@ -64,10 +81,13 @@ class IndexingRunner:
 
     def process_one(self) -> bool:
         """Run a single dispatch tick. Returns ``True`` if a job was
-        processed, ``False`` if the queue was empty.
+        processed, ``False`` if the queue was empty *or* the runner
+        is paused.
 
         Used by tests; the polling loop calls the same logic.
         """
+        if self._paused.is_set():
+            return False
         job = self._queue.claim_next()
         if job is None:
             return False

@@ -23,6 +23,7 @@ from .routes import settings as settings_routes
 
 if TYPE_CHECKING:
     from .index.queue import IndexingQueue
+    from .index.runner import IndexingRunner
     from .models.manager import ModelManager
     from .retrieval import SearchOrchestrator
     from .storage import LanceDBStore
@@ -33,9 +34,11 @@ def build_app(
     token: str,
     model_manager: "ModelManager | None" = None,
     indexing_queue: "IndexingQueue | None" = None,
+    indexing_runner: "IndexingRunner | None" = None,
     lancedb_store: "LanceDBStore | None" = None,
     search_orchestrator: "SearchOrchestrator | None" = None,
     settings_path: Path | None = None,
+    boot_settings_signature: str | None = None,
 ) -> FastAPI:
     """Construct a FastAPI app with bearer-auth + the Phase-2 routers.
 
@@ -73,11 +76,15 @@ def build_app(
         app.state.model_manager = model_manager
     if indexing_queue is not None:
         app.state.indexing_queue = indexing_queue
+    if indexing_runner is not None:
+        app.state.indexing_runner = indexing_runner
     if lancedb_store is not None:
         app.state.lancedb_store = lancedb_store
     if search_orchestrator is not None:
         app.state.search_orchestrator = search_orchestrator
     if settings_path is not None:
         app.state.settings_path = settings_path
+    if boot_settings_signature is not None:
+        app.state.boot_settings_signature = boot_settings_signature
 
     return app

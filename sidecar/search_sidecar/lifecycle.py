@@ -41,7 +41,7 @@ from .runtime_file import (
     remove_runtime_file,
     write_runtime_file,
 )
-from .settings import load_settings, save_settings
+from .settings import boot_signature, load_settings, save_settings
 from .storage import open_store
 
 LOG = logging.getLogger("search_sidecar.lifecycle")
@@ -118,9 +118,11 @@ def serve(storage_dir: Path) -> int:
         token=token,
         model_manager=model_manager,
         indexing_queue=indexing_queue,
+        indexing_runner=indexing_runner,
         lancedb_store=lancedb_store,
         search_orchestrator=search_orchestrator,
         settings_path=settings_path,
+        boot_settings_signature=boot_signature(settings),
     )
     config = uvicorn.Config(
         app,

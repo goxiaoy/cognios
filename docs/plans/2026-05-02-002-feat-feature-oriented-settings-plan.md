@@ -327,7 +327,7 @@ State machine for the workspace first-run banner:
 
 ---
 
-- [x] **Unit 2: Provider registry + cloud embedder + Python keyring access** — shipped in commit pending
+- [x] **Unit 2: Provider registry + cloud embedder + Python keyring access** — shipped in commit `ab8adb5`
 
 **Goal:** Sidecar knows what providers exist (preset table), can read API keys from the OS keychain, and can call OpenAI's `/v1/embeddings` to produce 768-dim vectors. Cloud embedding works end-to-end at the sidecar level.
 
@@ -378,7 +378,7 @@ State machine for the workspace first-run banner:
 
 ---
 
-- [ ] **Unit 3: Sidecar restart-required signaling + dispatcher rebuild from settings**
+- [x] **Unit 3: Sidecar restart-required signaling + dispatcher rebuild from settings** — shipped in commit pending
 
 **Goal:** When a settings change requires a dispatcher rebuild (provider swap), the sidecar reflects this in its `GET /settings` response. The dispatcher already rebuilds on next boot from the freshly loaded settings — this unit makes sure the boot-time wiring honors the settings file.
 
