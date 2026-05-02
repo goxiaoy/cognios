@@ -1,7 +1,7 @@
 ---
 title: Feature-oriented Settings with provider routing (Phase 1)
 type: feat
-status: active
+status: completed
 date: 2026-05-02
 origin: docs/brainstorms/2026-05-02-feature-oriented-settings-requirements.md
 ---
@@ -50,6 +50,8 @@ Mapped to the brainstorm's success criteria:
 - Diagnostics relocation of the existing `ModelManagerStatus` card
 - Cloud egress consent gate (one-shot per cloud provider)
 - Rust-side fallback read of `settings.json` for degraded mode
+
+**TODO for Phase 2 brainstorm — granular capability vocabulary.** PaddleOCR's PDF pipeline isn't one model; it's 13+ sub-models (detection, recognition, layout, region, table classification, formula recognition, etc.). Same pattern likely repeats for future captioner / chat / vision providers. The Phase 2 brainstorm should: define a granular `Capability` vocabulary (e.g. `ocr-detection` / `pdf-layout` / `pdf-tables` / `pdf-formulas` / `vision-caption` / `chat` / etc.) so each sub-model maps to its own slot; decide UX shape (recommendation: coarse "Image OCR" / "PDF parsing" features with an "Advanced sub-features" disclosure that exposes per-sub-model toggles with sensible defaults — common ones on, specialty ones off). The current Phase 1 `Capability = "embedding" | "reranking" | "vision" | "ocr"` is intentionally narrow; extending it is a coordinated change in `presets.py` (sidecar), `client.rs` (Rust DTOs), `providerPresets.ts` (frontend mirror), and `FEATURE_CATALOG`.
 
 **Out of scope (deferred to Phase 2 plan):**
 - paddleocr extractor wiring → Image OCR feature actually working
@@ -537,7 +539,7 @@ State machine for the workspace first-run banner:
 
 ---
 
-- [x] **Unit 6: Settings → Features view + Providers section + provider editor slide-out** — shipped in commit pending
+- [x] **Unit 6: Settings → Features view + Providers section + provider editor slide-out** — shipped in commit `beb6fc7`
 
 **Goal:** Replace the existing `ModelManagerStatus` card in `SettingsLayout` with the new feature-vocabulary Features list + Providers section. Build the slide-out provider editor (idle/editing/validating/error/saved states) used from both inline-in-feature-row and Providers-section entry points.
 
@@ -603,7 +605,7 @@ State machine for the workspace first-run banner:
 
 ---
 
-- [ ] **Unit 7: Diagnostics relocation + cloud egress consent gate + final cleanup**
+- [x] **Unit 7: Diagnostics relocation + cloud egress consent gate + final cleanup** — shipped in commit pending
 
 **Goal:** Old `ModelManagerStatus` card is reachable but no longer the primary view; cloud egress consent gate prevents silent first-time data send; final wiring cleanup.
 

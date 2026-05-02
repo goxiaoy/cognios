@@ -11,6 +11,7 @@ import {
   presetsWithCapability,
   ProviderPreset,
 } from "../data/providerPresets";
+import { CloudEgressConsentDialog } from "./CloudEgressConsentDialog";
 import { ProviderEditor } from "./ProviderEditor";
 
 /**
@@ -37,6 +38,9 @@ export function FeatureRow({
   onSettingsChange: (next: SearchSettings) => void;
 }) {
   const [editorOpenFor, setEditorOpenFor] = useState<string | null>(null);
+  const [pendingConsentFor, setPendingConsentFor] = useState<
+    ProviderPreset | null
+  >(null);
   const compatible = presetsWithCapability(meta.capability);
   const enabled = config?.enabled ?? meta.mandatory;
   const boundProviderId = config?.providerId ?? null;
@@ -60,6 +64,26 @@ export function FeatureRow({
 
   async function handleProviderChange(nextId: string) {
     const next = nextId === "" ? null : nextId;
+    // Cloud-egress consent gate: first time the user binds *any*
+    // feature to a cloud provider, intercept and prompt before the
+    // PUT lands. Already-acked providers pass through silently.
+    if (next) {
+      const preset = presetById(next);
+      if (
+        preset?.providerType === "cloud" &&
+        !settings.cloudConsentAcked.includes(next)
+      ) {
+        setPendingConsentFor(preset);
+        return;
+      }
+    }
+    await commitProviderChange(next, settings.cloudConsentAcked);
+  }
+
+  async function commitProviderChange(
+    next: string | null,
+    cloudConsentAcked: string[]
+  ) {
     const nextFeatures: SearchSettings["features"] = {
       ...settings.features,
       [meta.featureId]: {
@@ -70,6 +94,7 @@ export function FeatureRow({
     const env = await client.updateSettings({
       ...settings,
       features: nextFeatures,
+      cloudConsentAcked,
     });
     if (env.state === "ready" && env.data) onSettingsChange(env.data);
   }
@@ -149,6 +174,21 @@ export function FeatureRow({
           client={client}
           onSettingsChange={onSettingsChange}
           onClose={() => setEditorOpenFor(null)}
+        />
+      ) : null}
+
+      {pendingConsentFor ? (
+        <CloudEgressConsentDialog
+          preset={pendingConsentFor}
+          onAccept={() => {
+            const acked = pendingConsentFor.providerId;
+            const nextAcked = settings.cloudConsentAcked.includes(acked)
+              ? settings.cloudConsentAcked
+              : [...settings.cloudConsentAcked, acked];
+            void commitProviderChange(acked, nextAcked);
+            setPendingConsentFor(null);
+          }}
+          onCancel={() => setPendingConsentFor(null)}
         />
       ) : null}
     </li>

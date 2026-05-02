@@ -113,11 +113,16 @@ describe("FeatureRow", () => {
       state: "ready",
       data: baseSettings(),
     });
+    // Pre-ack OpenAI's consent so the picker change doesn't get
+    // intercepted by the cloud-egress dialog (covered by its own
+    // dedicated tests).
+    const settings = baseSettings();
+    settings.cloudConsentAcked = ["openai"];
     render(
       <FeatureRow
         meta={SEMANTIC}
         config={{ enabled: true, providerId: "local-gte" }}
-        settings={baseSettings()}
+        settings={settings}
         client={makeStubSearchClient({ updateSettings })}
         onSettingsChange={onSettingsChange}
       />

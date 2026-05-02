@@ -6,6 +6,7 @@ import type {
 } from "../../../lib/contracts/search";
 import type { SearchClient } from "../../search/types/search";
 import type { ProviderPreset } from "../data/providerPresets";
+import { CloudEgressConsentDialog } from "./CloudEgressConsentDialog";
 
 /**
  * Per-provider editor — used both inline from a feature row and from
@@ -38,6 +39,9 @@ export function ProviderEditor({
   const [state, setState] = useState<EditorState>({ kind: "idle" });
   const [secret, setSecret] = useState("");
   const [hasSecret, setHasSecret] = useState<boolean>(false);
+  const [pendingSecretForConsent, setPendingSecretForConsent] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     if (preset.authKind !== "api-key") {
@@ -58,16 +62,28 @@ export function ProviderEditor({
     };
   }, [client, preset.authKind, preset.providerId]);
 
-  async function handleSave() {
+  function handleSave() {
+    // Cloud-egress consent gate: if this is a cloud provider the
+    // user hasn't acked yet, prompt before any keychain or settings
+    // mutation. Already-acked providers (or local providers) skip
+    // the dialog and persist immediately.
+    if (
+      preset.providerType === "cloud" &&
+      !settings.cloudConsentAcked.includes(preset.providerId)
+    ) {
+      setPendingSecretForConsent(secret);
+      return;
+    }
+    void persistKey(secret, settings.cloudConsentAcked);
+  }
+
+  async function persistKey(theSecret: string, cloudConsentAcked: string[]) {
     setState({ kind: "validating" });
     try {
-      // Persist key first; if validation fails we leave it stored but
-      // surface the error so the user can rotate it.
       await client.setProviderSecret({
         providerId: preset.providerId,
-        secret,
+        secret: theSecret,
       });
-      // Optimistic config write — adds the provider entry if missing.
       const nextProviders: SearchSettings["providers"] = {
         ...settings.providers,
         [preset.providerId]: {
@@ -81,6 +97,7 @@ export function ProviderEditor({
       const env = await client.updateSettings({
         ...settings,
         providers: nextProviders,
+        cloudConsentAcked,
       });
       if (env.state !== "ready" || !env.data) {
         setState({
@@ -218,6 +235,21 @@ export function ProviderEditor({
           </button>
         ) : null}
       </div>
+
+      {pendingSecretForConsent !== null ? (
+        <CloudEgressConsentDialog
+          preset={preset}
+          onAccept={() => {
+            const acked = preset.providerId;
+            const nextAcked = settings.cloudConsentAcked.includes(acked)
+              ? settings.cloudConsentAcked
+              : [...settings.cloudConsentAcked, acked];
+            void persistKey(pendingSecretForConsent, nextAcked);
+            setPendingSecretForConsent(null);
+          }}
+          onCancel={() => setPendingSecretForConsent(null)}
+        />
+      ) : null}
     </div>
   );
 }

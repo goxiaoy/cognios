@@ -22,7 +22,10 @@ function baseSettings(): SearchSettings {
     version: 1,
     providers: {},
     features: {},
-    cloudConsentAcked: [],
+    // Pre-ack OpenAI so the editor's save flow tests don't all need
+    // to click through the cloud-egress dialog (CloudEgressConsentDialog
+    // has its own dedicated test suite covering the gating behavior).
+    cloudConsentAcked: ["openai"],
     firstRunSkipped: false,
     needsRestart: false,
   };
