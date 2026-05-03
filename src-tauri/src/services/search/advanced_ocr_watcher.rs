@@ -211,8 +211,6 @@ mod tests {
             state: state.to_string(),
             repo: String::new(),
             commit: None,
-            license_accepted: false,
-            requires_acceptance: false,
             error: None,
         }
     }

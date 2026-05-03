@@ -11,10 +11,9 @@ use serde::Deserialize;
 use tauri::{Emitter, State};
 
 use crate::services::search::{
-    IndexStatusDto, LicenseAcceptResponseDto, ModelDownloadEvent, ModelsStatusDto,
-    NodeContentDto, NodeIndexStatusDto, SearchInput, SearchResponseDto, SidecarEnvelope,
+    IndexStatusDto, ModelDownloadEvent, ModelsStatusDto, NodeContentDto, NodeIndexStatusDto,
+    SearchInput, SearchResponseDto, SidecarEnvelope,
 };
-use crate::services::secure_storage;
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -37,16 +36,8 @@ pub struct GetNodeIndexingStatusInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AcceptModelLicenseInput {
-    pub role: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct StartModelDownloadInput {
     pub role: String,
-    #[serde(default)]
-    pub hf_token: Option<String>,
 }
 
 /// Tauri event channel the frontend listens on for download progress.
@@ -105,35 +96,16 @@ pub async fn get_models_status(
 }
 
 #[tauri::command]
-pub async fn accept_model_license(
-    state: State<'_, AppState>,
-    input: AcceptModelLicenseInput,
-) -> EnvelopeResult<LicenseAcceptResponseDto> {
-    Ok(state.search_client.accept_model_license(&input.role).await)
-}
-
-#[tauri::command]
 pub async fn start_model_download(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     input: StartModelDownloadInput,
 ) -> Result<(), String> {
-    // If the caller didn't supply an explicit token, fall back to the
-    // one stashed in the OS keychain (set via the LicenseAcceptanceModal
-    // for gated repos like Gemma). Renderer never sees the value —
-    // only a presence flag via `has_hf_token`.
-    let resolved_token = match input.hf_token {
-        Some(t) => Some(t),
-        None => secure_storage::get_secret(secure_storage::HF_TOKEN_ACCOUNT)
-            .unwrap_or(None),
-    };
-
     let app = app.clone();
     state
         .search_client
         .start_model_download(
             &input.role,
-            resolved_token.as_deref(),
             move |event: ModelDownloadEvent| {
                 if let Err(err) = app.emit(MODELS_PROGRESS_EVENT, event) {
                     log::warn!(

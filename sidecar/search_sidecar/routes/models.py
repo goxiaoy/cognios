@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ..models.manager import LicenseRequired, ModelManager, ProgressEvent
+from ..models.manager import ModelManager, ProgressEvent
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -32,15 +32,10 @@ def _get_manager(request: Request) -> ModelManager:
 class DownloadRequest(BaseModel):
     """Body of ``POST /models/download/{role}``.
 
-    ``hf_token`` is required for gated repos (currently only the
-    captioner role); Rust pulls it from OS keychain (Unit 10) and
-    forwards on each request. Unit 4 is HF-token-aware but does not
-    enforce its presence — the manager will simply 401 from HuggingFace
-    if a gated download is attempted without one, surfacing as a
-    DownloadFailed event.
+    Empty in v1 — no shipping role is gated. Kept as a body model so
+    a future gated path (signed-URL provider, scoped credential) can
+    extend this without breaking the route signature.
     """
-
-    hf_token: str | None = None
 
 
 @router.get("/status")
@@ -50,15 +45,6 @@ def get_status(request: Request) -> dict:
     return {"roles": statuses}
 
 
-@router.post("/accept-license/{role}")
-def accept_license(role: str, request: Request) -> dict:
-    manager = _get_manager(request)
-    if role not in manager.manifest:
-        raise HTTPException(status_code=404, detail=f"unknown role: {role!r}")
-    manager.accept_license(role)
-    return {"accepted": True, "role": role}
-
-
 @router.post("/download/{role}")
 async def download(role: str, body: DownloadRequest, request: Request):
     manager = _get_manager(request)
@@ -66,28 +52,10 @@ async def download(role: str, body: DownloadRequest, request: Request):
     if spec is None:
         raise HTTPException(status_code=404, detail=f"unknown role: {role!r}")
 
-    # Pre-check the license gate so a missing acceptance returns a typed
-    # 409 *before* opening the SSE stream. Without this, the LicenseRequired
-    # would fire inside the async generator body on first __anext__ and
-    # show up as just an SSE error event with status 200.
-    if spec.requires_acceptance and not manager.is_license_accepted(role):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "license_not_accepted",
-                "message": f"role {role!r} requires license acceptance",
-            },
-        )
-
     async def stream():
         try:
-            async for event in manager.download(role, hf_token=body.hf_token):
+            async for event in manager.download(role):
                 yield _sse_event(event)
-        except LicenseRequired as err:
-            # Race: license was revoked between the pre-check and now.
-            yield _sse_event(
-                ProgressEvent(role=role, state="error", error=f"license_required: {err}")
-            )
         except RuntimeError as err:
             # e.g. "already downloading"
             yield _sse_event(

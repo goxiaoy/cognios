@@ -183,12 +183,6 @@ export function ProviderEditor({
             </p>
           )}
         </section>
-      ) : preset.authKind === "hf-token" ? (
-        <p className="provider-editor-info">
-          This provider needs a HuggingFace token + Gemma TOS acceptance.
-          The token modal will open inline once Image captioning is enabled
-          (Phase 2).
-        </p>
       ) : (
         <p className="provider-editor-info">
           No credentials required.

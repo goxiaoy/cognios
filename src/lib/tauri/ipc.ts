@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   IndexStatus,
-  LicenseAcceptResponse,
   ModelsStatus,
   NodeContent,
   NodeIndexStatus,
@@ -153,43 +152,17 @@ export async function getModelsStatus(): Promise<SidecarEnvelope<ModelsStatus>> 
   return invoke<SidecarEnvelope<ModelsStatus>>("get_models_status");
 }
 
-export async function acceptModelLicense(
-  role: string
-): Promise<SidecarEnvelope<LicenseAcceptResponse>> {
-  return invoke<SidecarEnvelope<LicenseAcceptResponse>>("accept_model_license", {
-    input: { role },
-  });
-}
-
 /**
  * Kick off a sidecar-side model download. The Rust command
  * subscribes to the SSE stream and re-emits each frame as a Tauri
  * event named `models/progress` (use `useModelDownloadProgress` to
  * subscribe). Resolves when the stream closes; rejects on setup-time
- * failures (sidecar offline, license not accepted).
+ * failures (sidecar offline).
  */
 export async function startModelDownload(
   input: StartModelDownloadInput
 ): Promise<void> {
   return invoke<void>("start_model_download", { input });
-}
-
-// ---- Secure storage (HuggingFace token for gated repos) -------------------
-//
-// The renderer never sees the actual token. `setHfToken` stores it in
-// the OS keychain via `keyring`; `hasHfToken` returns a presence flag
-// for UI gating; `deleteHfToken` removes it.
-
-export async function setHfToken(token: string): Promise<void> {
-  return invoke<void>("set_hf_token", { input: { token } });
-}
-
-export async function hasHfToken(): Promise<boolean> {
-  return invoke<boolean>("has_hf_token");
-}
-
-export async function deleteHfToken(): Promise<void> {
-  return invoke<void>("delete_hf_token");
 }
 
 export async function getSearchSettings(): Promise<

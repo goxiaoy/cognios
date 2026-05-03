@@ -100,8 +100,6 @@ describe("searchClient.modelsStatus", () => {
             state: "missing",
             repo: "",
             commit: null,
-            licenseAccepted: false,
-            requiresAcceptance: false,
             error: null,
           },
         },
@@ -111,19 +109,6 @@ describe("searchClient.modelsStatus", () => {
 
     const result = await searchClient.modelsStatus();
     expect(result.data?.roles.embedding.state).toBe("missing");
-  });
-});
-
-describe("searchClient.acceptModelLicense", () => {
-  it("forwards the role under input.role", async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      state: "ready",
-      data: { accepted: true, role: "captioner" },
-    });
-    await searchClient.acceptModelLicense("captioner");
-    expect(mockedInvoke).toHaveBeenCalledWith("accept_model_license", {
-      input: { role: "captioner" },
-    });
   });
 });
 

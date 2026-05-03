@@ -25,17 +25,9 @@ def _make_manager(tmp_path: Path) -> ModelManager:
         commit="abc123",
         files=(FileSpec("a.bin", "0" * 64),),
     )
-    captioner = ModelSpec(
-        role="captioner",
-        repo="fixture/repo",
-        commit="def456",
-        files=(FileSpec("b.gguf", "0" * 64),),
-        license="gemma",
-        requires_acceptance=True,
-    )
     return ModelManager(
         storage_dir=tmp_path,
-        manifest={"embedding": spec, "captioner": captioner},
+        manifest={"embedding": spec},
     )
 
 
@@ -48,13 +40,9 @@ def test_status_returns_initial_state(tmp_path: Path):
     body = resp.json()
     assert "roles" in body
     assert body["roles"]["embedding"]["state"] == "missing"
-    assert body["roles"]["embedding"]["requires_acceptance"] is False
-    assert body["roles"]["captioner"]["requires_acceptance"] is True
-    assert body["roles"]["captioner"]["license_accepted"] is False
     # repo flows through from manifest so the frontend can render
     # which upstream model backs each role.
     assert body["roles"]["embedding"]["repo"] == "fixture/repo"
-    assert body["roles"]["captioner"]["repo"] == "fixture/repo"
 
 
 def test_status_requires_bearer_auth(tmp_path: Path):
@@ -63,42 +51,6 @@ def test_status_requires_bearer_auth(tmp_path: Path):
     with TestClient(app) as client:
         resp = client.get("/models/status")
     assert resp.status_code == 401
-
-
-def test_accept_license_sets_flag(tmp_path: Path):
-    manager = _make_manager(tmp_path)
-    app = build_app(token=TOKEN, model_manager=manager)
-    with TestClient(app) as client:
-        resp = client.post(
-            "/models/accept-license/captioner", headers=_auth_headers()
-        )
-        assert resp.status_code == 200
-        assert resp.json() == {"accepted": True, "role": "captioner"}
-
-        status = client.get("/models/status", headers=_auth_headers()).json()
-        assert status["roles"]["captioner"]["license_accepted"] is True
-
-
-def test_accept_license_unknown_role_returns_404(tmp_path: Path):
-    manager = _make_manager(tmp_path)
-    app = build_app(token=TOKEN, model_manager=manager)
-    with TestClient(app) as client:
-        resp = client.post(
-            "/models/accept-license/nonexistent", headers=_auth_headers()
-        )
-    assert resp.status_code == 404
-
-
-def test_download_for_captioner_without_license_returns_409(tmp_path: Path):
-    manager = _make_manager(tmp_path)
-    app = build_app(token=TOKEN, model_manager=manager)
-    with TestClient(app) as client:
-        resp = client.post(
-            "/models/download/captioner", json={}, headers=_auth_headers()
-        )
-    assert resp.status_code == 409
-    detail = resp.json()["detail"]
-    assert detail["code"] == "license_not_accepted"
 
 
 def test_download_unknown_role_returns_404(tmp_path: Path):
@@ -121,7 +73,7 @@ def test_healthz_includes_model_states_when_manager_attached(tmp_path: Path):
         resp = client.get("/healthz", headers=_auth_headers())
     body = resp.json()
     assert body["state"] == "initialising"
-    assert body["models"] == {"embedding": "missing", "captioner": "missing"}
+    assert body["models"] == {"embedding": "missing"}
 
 
 def test_download_emits_sse_error_when_url_unreachable(tmp_path: Path):

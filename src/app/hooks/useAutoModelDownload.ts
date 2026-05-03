@@ -1,31 +1,32 @@
 import { useEffect, useRef } from "react";
 
+import {
+  presetById,
+  presetOwnsRole,
+} from "../../features/settings/data/providerPresets";
 import type { SearchClient } from "../../features/search/types/search";
 
 const POLL_INTERVAL_MS = 500;
 const POLL_TIMEOUT_MS = 30_000;
 
 /**
- * Headless first-run model bootstrap. Replaces the Unit-13
- * WorkspaceBanner — the visible setup banner is gone (the sidebar
- * DownloadDock surfaces progress instead), but we still need to
- * actually kick off the missing local-model downloads when the
- * user's mandatory features are bound to local-* presets and the
- * weights aren't on disk yet.
+ * Headless model bootstrap. Walks every feature in settings and,
+ * for each enabled feature bound to a local provider, fires
+ * ``startModelDownload`` for any owned role whose model isn't
+ * already on disk.
+ *
+ * Generic over the feature catalog rather than hardcoding
+ * ``embedding`` / ``reranker``: when the user enables advanced
+ * OCR with the local PP-StructureV3 provider, all 13 stages are
+ * picked up here on the next app launch (FeatureRow fires the
+ * same logic on the *bind* event; this hook covers cold-starts
+ * where the binding was set in a prior session).
  *
  * One-shot per app session: polls ``client.settings()`` until the
- * sidecar reports ``ready``, reads the bound providers, and fires
- * ``startModelDownload`` for each role whose model is still
- * missing — unless the on-disk ``firstRunSkipped`` flag is set
- * (legacy installs that explicitly cancelled the old banner).
- *
- * Skips roles whose model is already on disk (state = ``ready``).
- * Why: every ``startModelDownload`` invocation has the Rust
- * supervisor read the HF token from the macOS keychain, which
- * fires a Security Agent prompt on the first read after each
- * binary rebuild. Calling it for already-downloaded models meant
- * 2+ prompts on every launch in dev. Now we only ask for a token
- * when there's actually something to fetch.
+ * sidecar reports ``ready``, then reads ``modelsStatus`` once and
+ * fires the necessary downloads. Skips roles whose state is
+ * already ``ready`` (or already ``downloading``) so re-launches
+ * don't re-issue work the supervisor would just no-op anyway.
  *
  * Quiet on failure: thrown IPC errors are swallowed; the user
  * still sees diagnostics on the Settings page if anything's off.
@@ -57,19 +58,18 @@ export function useAutoModelDownload(client: SearchClient): void {
           firedRef.current = true;
           return;
         }
-        const semantic = env.data.features["semantic-search"];
-        const reranking = env.data.features["result-reranking"];
-        const candidateRoles: string[] = [];
-        if (semantic?.providerId === "local-gte") {
-          candidateRoles.push("embedding");
+        // Collect the set of provider ids any enabled feature is
+        // bound to. Using a Set avoids re-issuing downloads when
+        // multiple features share a provider.
+        const boundLocalProviderIds = new Set<string>();
+        for (const feature of Object.values(env.data.features)) {
+          if (!feature?.enabled || !feature.providerId) continue;
+          const preset = presetById(feature.providerId);
+          if (!preset || preset.providerType !== "local") continue;
+          if (!preset.localRoleId) continue; // e.g. local-paddleocr (bundled)
+          boundLocalProviderIds.add(preset.providerId);
         }
-        if (
-          reranking?.enabled &&
-          reranking?.providerId === "local-gte-reranker"
-        ) {
-          candidateRoles.push("reranker");
-        }
-        if (candidateRoles.length === 0) {
+        if (boundLocalProviderIds.size === 0) {
           firedRef.current = true;
           return;
         }
@@ -85,10 +85,19 @@ export function useAutoModelDownload(client: SearchClient): void {
           }
           return;
         }
-        const pendingRoles = candidateRoles.filter((role) => {
-          const r = statusEnv.data?.roles[role];
-          return !r || r.state !== "ready";
-        });
+        const allRoles = statusEnv.data.roles;
+        const pendingRoles: string[] = [];
+        for (const providerId of boundLocalProviderIds) {
+          const preset = presetById(providerId);
+          if (!preset) continue;
+          for (const [roleId, status] of Object.entries(allRoles)) {
+            if (!presetOwnsRole(preset, roleId)) continue;
+            if (status.state === "ready" || status.state === "downloading") {
+              continue;
+            }
+            pendingRoles.push(roleId);
+          }
+        }
         firedRef.current = true;
         for (const role of pendingRoles) {
           try {

@@ -1,23 +1,19 @@
 //! OS-keychain-backed secret store.
 //!
 //! Wraps the `keyring` crate so the rest of the app talks to a
-//! single, testable surface for storing/retrieving secrets:
-//! HuggingFace tokens, OpenAI-compatible API keys, and any other
-//! per-role credential the search subsystem needs.
+//! single, testable surface for storing/retrieving cloud-provider
+//! API keys.
 //!
 //! The service name is fixed at `cognios-search`; the *account* is
-//! the secret's identifier (e.g. `"hf-token"` or
-//! `"provider:embedding"`). All errors flatten to `String` so they
-//! cross the Tauri command boundary cleanly.
+//! the secret's identifier (e.g. `"provider:openai"`). All errors
+//! flatten to `String` so they cross the Tauri command boundary
+//! cleanly.
 
 use keyring::Entry;
 
 /// Service name used as the keychain group identifier. Bumping this
 /// orphans existing keychain entries — be deliberate.
 const SERVICE_NAME: &str = "cognios-search";
-
-/// HuggingFace token (gated repos like Gemma require it).
-pub const HF_TOKEN_ACCOUNT: &str = "hf-token";
 
 /// Set or replace a secret. `account` selects the slot.
 pub fn set_secret(account: &str, value: &str) -> Result<(), String> {

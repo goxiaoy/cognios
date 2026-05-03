@@ -1,6 +1,5 @@
 import type {
   IndexStatus,
-  LicenseAcceptResponse,
   ModelDownloadEvent,
   ModelsStatus,
   NodeContent,
@@ -19,7 +18,6 @@ import type {
 
 export type {
   IndexStatus,
-  LicenseAcceptResponse,
   ModelDownloadEvent,
   ModelsStatus,
   NodeContent,
@@ -47,9 +45,6 @@ export interface SearchClient {
   nodeIndexStatus(nodeId: string): Promise<SidecarEnvelope<NodeIndexStatus>>;
   nodeContent(nodeId: string): Promise<SidecarEnvelope<NodeContent>>;
   modelsStatus(): Promise<SidecarEnvelope<ModelsStatus>>;
-  acceptModelLicense(
-    role: string
-  ): Promise<SidecarEnvelope<LicenseAcceptResponse>>;
   startModelDownload(input: StartModelDownloadInput): Promise<void>;
   /** Fetch the persisted search settings + needsRestart flag. */
   settings(): Promise<SidecarEnvelope<SearchSettings>>;

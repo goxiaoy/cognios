@@ -16,7 +16,7 @@ Usage
     cd sidecar
     uv run python -m search_sidecar.scripts.pin_manifest embedding
 
-    # All four roles in one go:
+    # Pin every role in one go:
     uv run python -m search_sidecar.scripts.pin_manifest --all
 
 What it does
@@ -25,9 +25,9 @@ For each requested role:
 
 1. Fetch the current ``HEAD`` commit SHA from the HuggingFace model
    API (``GET /api/models/{repo}``).
-2. Download every file declared in the role's ``ModelSpec.files``
-   from the resolved commit, streaming through a SHA-256 hasher so
-   memory stays bounded for large blobs (the captioner GGUF is ~3 GB).
+2. For every file declared in the role's ``ModelSpec.files``: read
+   the SHA-256 from the HF tree API metadata when the file is in
+   LFS (most weight blobs); otherwise stream-download and hash.
 3. Patch ``manifest.py`` in place — replace ``commit=PLACEHOLDER_COMMIT``
    inside the role's ``ModelSpec(...)`` block with the resolved SHA,
    and replace each ``FileSpec("name", PLACEHOLDER_SHA256)`` with the
@@ -37,20 +37,17 @@ The patcher operates on the role's parenthesis-balanced block only,
 so two roles that share a filename (embedding + reranker both list
 ``onnx/model_int8.onnx``) get independent SHAs without crosstalk.
 
-Auth
-----
-Gated repos (currently ``unsloth/gemma-3n-E2B-it-GGUF`` for the
-captioner) require a HuggingFace token. The script reads it from the
-``HF_TOKEN`` environment variable; without it, the captioner download
-will surface a 401 and the script aborts before patching.
+v1 ships no gated repos, so this script does not authenticate to
+HuggingFace. If a future role binds a gated repo, restore the
+``HF_TOKEN`` env-var read + Authorization header at the call sites.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -112,15 +109,13 @@ def main(argv: list[str] | None = None) -> int:
         print("error: pass at least one role name or --all", file=sys.stderr)
         return 2
 
-    hf_token = os.environ.get("HF_TOKEN")
-
     for role in roles_to_pin:
         spec = DEFAULTS[role]
         if is_pinned(spec):
             print(f"[{role}] already pinned (commit {spec.commit[:8]}); skipping")
             continue
         try:
-            commit, file_shas = _resolve_role(spec, hf_token=hf_token)
+            commit, file_shas = _resolve_role(spec)
         except _PinError as err:
             print(f"[{role}] pin failed: {err}", file=sys.stderr)
             return 1
@@ -136,11 +131,7 @@ class _PinError(RuntimeError):
     """Raised when a HuggingFace fetch or hash step fails fatally."""
 
 
-def _resolve_role(
-    spec: ModelSpec,
-    *,
-    hf_token: str | None,
-) -> tuple[str, dict[str, str]]:
+def _resolve_role(spec: ModelSpec) -> tuple[str, dict[str, str]]:
     """Fetch the current commit SHA and per-file SHA-256 for ``spec``.
 
     Returns ``(commit, {file_name: sha256_hex})``. Raises ``_PinError``
@@ -154,9 +145,9 @@ def _resolve_role(
     config / tokenizer files) fall back to download-and-hash.
     """
     print(f"[{spec.role}] resolving {spec.repo}")
-    commit = _fetch_head_commit(spec.repo, hf_token=hf_token)
+    commit = _fetch_head_commit(spec.repo)
     print(f"[{spec.role}]   commit: {commit}")
-    tree = _fetch_tree(spec.repo, commit, hf_token=hf_token)
+    tree = _fetch_tree(spec.repo, commit)
     file_shas: dict[str, str] = {}
     for file_spec in spec.files:
         meta = tree.get(file_spec.name)
@@ -165,19 +156,14 @@ def _resolve_role(
                 f"file {file_spec.name!r} not present in {spec.repo}@{commit[:8]} tree"
             )
         digest, source = _sha_from_metadata_or_download(
-            spec.repo, commit, file_spec.name, meta, hf_token=hf_token
+            spec.repo, commit, file_spec.name, meta
         )
         print(f"[{spec.role}]   {file_spec.name}  →  {digest} ({source})")
         file_shas[file_spec.name] = digest
     return commit, file_shas
 
 
-def _fetch_tree(
-    repo: str,
-    commit: str,
-    *,
-    hf_token: str | None,
-) -> dict[str, dict[str, Any]]:
+def _fetch_tree(repo: str, commit: str) -> dict[str, dict[str, Any]]:
     """Return ``{path: metadata}`` for every file in ``repo`` at ``commit``.
 
     The HF tree API includes ``lfs.oid`` as ``"sha256:<hex>"`` for
@@ -187,14 +173,14 @@ def _fetch_tree(
     url = f"https://huggingface.co/api/models/{repo}/tree/{commit}?recursive=true"
     try:
         resp = httpx.get(
-            url, headers=_auth_headers(hf_token), timeout=_API_TIMEOUT
+            url, headers=_auth_headers(), timeout=_API_TIMEOUT
         )
     except httpx.HTTPError as err:
         raise _PinError(f"GET {url}: {err}") from err
     if resp.status_code in (401, 403):
         raise _PinError(
-            f"GET {url} returned {resp.status_code} — set HF_TOKEN if "
-            f"the repo is gated (e.g. Gemma)."
+            f"GET {url} returned {resp.status_code} — repo gated and v1 "
+            "no longer authenticates to HuggingFace."
         )
     if resp.status_code >= 400:
         raise _PinError(f"GET {url} returned {resp.status_code}: {resp.text[:200]}")
@@ -222,8 +208,6 @@ def _sha_from_metadata_or_download(
     commit: str,
     file_name: str,
     meta: dict[str, Any],
-    *,
-    hf_token: str | None,
 ) -> tuple[str, str]:
     """Resolve the sha256 for one file, preferring API metadata.
 
@@ -247,22 +231,22 @@ def _sha_from_metadata_or_download(
             # the download path rather than write garbage.
             if len(sha) == 64 and all(c in "0123456789abcdef" for c in sha):
                 return sha, "lfs"
-    digest = _download_and_hash(repo, commit, file_name, hf_token=hf_token)
+    digest = _download_and_hash(repo, commit, file_name)
     return digest, "download"
 
 
-def _fetch_head_commit(repo: str, *, hf_token: str | None) -> str:
+def _fetch_head_commit(repo: str) -> str:
     """Return the HEAD commit SHA of ``repo`` on its default branch."""
     url = f"https://huggingface.co/api/models/{repo}"
-    headers = _auth_headers(hf_token)
+    headers = _auth_headers()
     try:
         resp = httpx.get(url, headers=headers, timeout=_API_TIMEOUT)
     except httpx.HTTPError as err:
         raise _PinError(f"GET {url}: {err}") from err
     if resp.status_code == 401 or resp.status_code == 403:
         raise _PinError(
-            f"GET {url} returned {resp.status_code} — set HF_TOKEN if "
-            f"the repo is gated (e.g. Gemma)."
+            f"GET {url} returned {resp.status_code} — repo gated and v1 "
+            "no longer authenticates to HuggingFace."
         )
     if resp.status_code >= 400:
         raise _PinError(f"GET {url} returned {resp.status_code}: {resp.text[:200]}")
@@ -273,41 +257,65 @@ def _fetch_head_commit(repo: str, *, hf_token: str | None) -> str:
     return sha
 
 
-def _download_and_hash(
-    repo: str,
-    commit: str,
-    file_name: str,
-    *,
-    hf_token: str | None,
-) -> str:
-    """Stream-download the resolved file and return its SHA-256 hex digest."""
+_DOWNLOAD_RETRIES = 4
+_RETRY_BACKOFF_SECONDS = (1.0, 3.0, 7.0, 15.0)
+
+
+def _download_and_hash(repo: str, commit: str, file_name: str) -> str:
+    """Stream-download the resolved file and return its SHA-256 hex digest.
+
+    Retries on transient ``httpx.HTTPError`` (SSL ``UNEXPECTED_EOF``,
+    connection resets, intermittent 5xx) — HuggingFace's CDN drops a
+    fraction of long downloads under load and a clean retry resolves
+    most. Gated-repo / hard-error cases raise immediately so the
+    operator sees the right diagnostic.
+    """
     url = f"https://huggingface.co/{repo}/resolve/{commit}/{file_name}"
-    hasher = hashlib.sha256()
-    try:
-        with httpx.stream(
-            "GET",
-            url,
-            headers=_auth_headers(hf_token),
-            timeout=_DOWNLOAD_TIMEOUT,
-            follow_redirects=True,
-        ) as resp:
-            if resp.status_code == 401 or resp.status_code == 403:
-                raise _PinError(
-                    f"GET {url} returned {resp.status_code} — set HF_TOKEN if "
-                    f"the repo is gated."
-                )
-            if resp.status_code >= 400:
-                raise _PinError(f"GET {url} returned {resp.status_code}")
-            for chunk in resp.iter_bytes(chunk_size=_CHUNK_BYTES):
-                hasher.update(chunk)
-    except httpx.HTTPError as err:
-        raise _PinError(f"GET {url}: {err}") from err
-    return hasher.hexdigest()
+    last_error: Exception | None = None
+    for attempt in range(_DOWNLOAD_RETRIES):
+        hasher = hashlib.sha256()
+        try:
+            with httpx.stream(
+                "GET",
+                url,
+                headers=_auth_headers(),
+                timeout=_DOWNLOAD_TIMEOUT,
+                follow_redirects=True,
+            ) as resp:
+                if resp.status_code == 401 or resp.status_code == 403:
+                    raise _PinError(
+                        f"GET {url} returned {resp.status_code} — repo "
+                        "gated and v1 no longer authenticates to HF."
+                    )
+                if resp.status_code == 404:
+                    raise _PinError(
+                        f"GET {url} returned 404 — file not present at this commit."
+                    )
+                if resp.status_code >= 400:
+                    raise _PinError(f"GET {url} returned {resp.status_code}")
+                for chunk in resp.iter_bytes(chunk_size=_CHUNK_BYTES):
+                    hasher.update(chunk)
+            return hasher.hexdigest()
+        except httpx.HTTPError as err:
+            last_error = err
+            if attempt + 1 >= _DOWNLOAD_RETRIES:
+                break
+            backoff = _RETRY_BACKOFF_SECONDS[
+                min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)
+            ]
+            print(
+                f"  retry {attempt + 1}/{_DOWNLOAD_RETRIES - 1} for {file_name}: "
+                f"{err} (sleep {backoff:.0f}s)",
+                flush=True,
+            )
+            time.sleep(backoff)
+    raise _PinError(f"GET {url}: {last_error}") from last_error
 
 
-def _auth_headers(hf_token: str | None) -> dict[str, str]:
-    if hf_token:
-        return {"Authorization": f"Bearer {hf_token}"}
+def _auth_headers() -> dict[str, str]:
+    """No-auth headers stub — kept as a single-source helper so the
+    HTTP call sites stay consistent if a future signed-URL provider
+    needs to inject credentials again."""
     return {}
 
 

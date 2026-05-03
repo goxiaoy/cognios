@@ -26,7 +26,6 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
       data: { nodeId: "x", kind: "file", chunks: [], joined: "" },
     }),
     modelsStatus: vi.fn(),
-    acceptModelLicense: vi.fn(),
     startModelDownload: vi.fn(),
     settings: vi.fn().mockResolvedValue({ state: "initialising" }),
     updateSettings: vi.fn().mockResolvedValue({ state: "initialising" }),

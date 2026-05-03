@@ -38,7 +38,7 @@ def test_each_preset_is_well_formed():
         "advanced-ocr",
     }
     valid_types: set[ProviderType] = {"local", "cloud"}
-    valid_auth: set[AuthKind] = {"none", "hf-token", "api-key"}
+    valid_auth: set[AuthKind] = {"none", "api-key"}
     for provider_id, preset in PRESETS.items():
         assert isinstance(preset, ProviderPreset)
         assert preset.provider_id == provider_id
@@ -67,14 +67,6 @@ def test_local_providers_have_no_base_url():
     for preset in PRESETS.values():
         if preset.provider_type == "local":
             assert preset.base_url is None, preset.provider_id
-
-
-def test_no_v1_preset_requires_hf_token():
-    """The only ``hf-token`` provider in the original brainstorm was
-    Gemma, which is deferred. Until a gated-repo provider lands again,
-    no preset advertises this auth kind."""
-    for preset in PRESETS.values():
-        assert preset.auth_kind != "hf-token", preset.provider_id
 
 
 def test_capability_matrix_matches_v1_decision():

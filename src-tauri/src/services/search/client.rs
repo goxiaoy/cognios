@@ -271,16 +271,8 @@ pub struct ModelRoleStatusDto {
     pub repo: String,
     #[serde(default)]
     pub commit: Option<String>,
-    pub license_accepted: bool,
-    pub requires_acceptance: bool,
     #[serde(default)]
     pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LicenseAcceptResponseDto {
-    pub accepted: bool,
-    pub role: String,
 }
 
 // ----- Settings DTOs -------------------------------------------------------
@@ -605,16 +597,6 @@ impl SearchSidecarClient {
         self.get_envelope(&path).await
     }
 
-    pub async fn accept_model_license(
-        &self,
-        role: &str,
-    ) -> SidecarEnvelope<LicenseAcceptResponseDto> {
-        let path = format!("/models/accept-license/{}", urlencoded(role));
-        // The endpoint takes no body; an empty JSON object satisfies
-        // the route's body-required contract.
-        self.post_envelope(&path, &serde_json::json!({})).await
-    }
-
     /// Subscribe to the SSE stream from `POST /models/download/{role}`.
     ///
     /// `on_event` fires for each parsed `ModelDownloadEvent` (one per
@@ -630,7 +612,6 @@ impl SearchSidecarClient {
     pub async fn start_model_download<F>(
         &self,
         role: &str,
-        hf_token: Option<&str>,
         on_event: F,
     ) -> Result<(), String>
     where
@@ -645,7 +626,7 @@ impl SearchSidecarClient {
             _ => self.supervisor_failure_reason(),
         })?;
         let url = format!("{base}/models/download/{}", urlencoded(role));
-        let body = serde_json::json!({ "hf_token": hf_token });
+        let body = serde_json::json!({});
 
         let resp = self
             .http
@@ -873,23 +854,22 @@ mod tests {
     #[test]
     fn model_role_status_round_trips_snake_to_camel() {
         let from_python = r#"{
-            "role": "captioner",
+            "role": "embedding",
             "state": "missing",
-            "repo": "unsloth/gemma-3n-E2B-it-GGUF",
+            "repo": "onnx-community/gte-multilingual-base",
             "commit": null,
-            "license_accepted": false,
-            "requires_acceptance": true,
             "error": null
         }"#;
         let parsed: ModelRoleStatusDto = serde_json::from_str(from_python).expect("decode");
-        assert!(!parsed.license_accepted);
-        assert!(parsed.requires_acceptance);
-        assert_eq!(parsed.repo, "unsloth/gemma-3n-E2B-it-GGUF");
+        assert_eq!(parsed.role, "embedding");
+        assert_eq!(parsed.repo, "onnx-community/gte-multilingual-base");
         let to_ts = serde_json::to_value(&parsed).unwrap();
-        assert_eq!(to_ts["licenseAccepted"], false);
-        assert_eq!(to_ts["requiresAcceptance"], true);
-        assert_eq!(to_ts["repo"], "unsloth/gemma-3n-E2B-it-GGUF");
-        assert!(to_ts.get("license_accepted").is_none());
+        assert_eq!(to_ts["repo"], "onnx-community/gte-multilingual-base");
+        // Legacy ``license_accepted`` / ``requires_acceptance`` keys
+        // were dropped when the gated-repo path went away — neither
+        // serializes anymore.
+        assert!(to_ts.get("licenseAccepted").is_none());
+        assert!(to_ts.get("requiresAcceptance").is_none());
     }
 
     #[test]
@@ -899,9 +879,7 @@ mod tests {
         // empty string as a missing repo (no link).
         let legacy = r#"{
             "role": "embedding",
-            "state": "missing",
-            "license_accepted": false,
-            "requires_acceptance": false
+            "state": "missing"
         }"#;
         let parsed: ModelRoleStatusDto = serde_json::from_str(legacy).expect("legacy decode");
         assert_eq!(parsed.repo, "");

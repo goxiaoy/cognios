@@ -235,6 +235,21 @@ pub fn run() {
                 });
             }
 
+            // Dev-only Python source watcher: in ``npm run tauri:dev``,
+            // ``.py`` edits don't currently trigger anything (Vite
+            // handles the frontend, cargo handles Rust, the sidecar's
+            // a separate process). Adds a debounced watcher that
+            // calls supervisor.restart() on any Python source change
+            // under ``sidecar/search_sidecar``. Compiled out of
+            // release builds via ``#[cfg(debug_assertions)]``.
+            #[cfg(debug_assertions)]
+            {
+                services::search::python_dev_watcher::spawn_python_dev_watcher(
+                    Arc::clone(&search_sidecar),
+                    app.handle().clone(),
+                );
+            }
+
             app.manage(AppState {
                 db,
                 storage_dir: app_data_dir,
@@ -268,11 +283,7 @@ pub fn run() {
             commands::search::get_node_indexing_status,
             commands::search::get_node_content,
             commands::search::get_models_status,
-            commands::search::accept_model_license,
             commands::search::start_model_download,
-            commands::secrets::set_hf_token,
-            commands::secrets::has_hf_token,
-            commands::secrets::delete_hf_token,
             commands::secrets::set_provider_secret,
             commands::secrets::get_provider_secret_present,
             commands::secrets::delete_provider_secret,

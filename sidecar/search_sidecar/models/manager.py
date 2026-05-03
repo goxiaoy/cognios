@@ -44,11 +44,6 @@ LOG = logging.getLogger("search_sidecar.models")
 CHUNK_SIZE = 64 * 1024  # 64 KiB — balances syscall overhead and memory.
 
 
-class LicenseRequired(RuntimeError):
-    """Raised when a download is attempted on a role whose license
-    has not yet been accepted (currently only the ``captioner`` role)."""
-
-
 class IntegrityError(RuntimeError):
     """Raised when a downloaded file's SHA-256 does not match the
     manifest. The ``.partial`` file is removed before this is raised."""
@@ -84,8 +79,6 @@ class RoleStatus:
     state: str  # "missing" | "downloading" | "ready" | "error"
     repo: str = ""
     commit: str | None = None
-    license_accepted: bool = False
-    requires_acceptance: bool = False
     error: str | None = None
 
 
@@ -100,7 +93,18 @@ class ModelManager:
     role cannot be downloaded twice concurrently — the second caller
     receives a 409-style ``RuntimeError``. This mirrors the route layer's
     expected behaviour.
+
+    A separate ``asyncio.Semaphore`` caps total concurrent active
+    downloads at ``MAX_CONCURRENT_DOWNLOADS``. When the user enables
+    a multi-stage feature (PP-StructureV3 fans out 13 download
+    requests), the first 2 stream while the rest queue inside their
+    own ``download()`` coroutine. The route layer's SSE response
+    stays open; the queued caller's first frame fires when a slot
+    opens up. The cap protects HuggingFace's CDN (which throttles
+    aggressively under burst) and the user's bandwidth.
     """
+
+    MAX_CONCURRENT_DOWNLOADS = 2
 
     def __init__(
         self,
@@ -118,6 +122,10 @@ class ModelManager:
         self._models_root.mkdir(parents=True, exist_ok=True)
         self._inflight: set[str] = set()
         self._lock = asyncio.Lock()
+        # Lazy semaphore creation: ``asyncio.Semaphore`` binds to
+        # the running loop on construction, which the FastAPI test
+        # client doesn't have at import time. Create on first use.
+        self._download_slot: asyncio.Semaphore | None = None
 
     # ----- public surface ------------------------------------------------
 
@@ -130,22 +138,6 @@ class ModelManager:
 
     def commit_dir(self, role: str, commit: str) -> Path:
         return self.role_dir(role) / commit
-
-    def license_sentinel(self, role: str) -> Path:
-        return self.role_dir(role) / "license.accepted"
-
-    def is_license_accepted(self, role: str) -> bool:
-        return self.license_sentinel(role).exists()
-
-    def accept_license(self, role: str) -> None:
-        spec = self._spec(role)
-        if not spec.requires_acceptance:
-            # Idempotent no-op: roles without a license gate are always
-            # "accepted" by definition.
-            return
-        path = self.license_sentinel(role)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
 
     def status(self) -> dict[str, RoleStatus]:
         """Synchronous read of every role's current state. Cheap;
@@ -164,20 +156,13 @@ class ModelManager:
                 state=state,
                 repo=spec.repo,
                 commit=current,
-                license_accepted=self.is_license_accepted(role),
-                requires_acceptance=spec.requires_acceptance,
             )
         return out
 
     def is_ready(self, role: str) -> bool:
         return self._read_current(role) is not None
 
-    async def download(
-        self,
-        role: str,
-        *,
-        hf_token: str | None = None,
-    ) -> AsyncIterator[ProgressEvent]:
+    async def download(self, role: str) -> AsyncIterator[ProgressEvent]:
         """Download every file for ``role`` and activate the commit.
 
         Yields ``ProgressEvent``s the route layer can pipe to SSE:
@@ -185,13 +170,14 @@ class ModelManager:
         - ``state="verifying"`` once per file at SHA-256 check time
         - ``state="ready"`` once after activation, OR
         - ``state="error"`` once with an ``error`` message; iteration ends.
+
+        Concurrency: the per-role check (``self._inflight``) prevents
+        a duplicate request; the global semaphore
+        (``self._download_slot``) caps total active downloads at
+        ``MAX_CONCURRENT_DOWNLOADS``. Stages past the cap suspend
+        before any IO and resume when a slot opens.
         """
         spec = self._spec(role)
-
-        if spec.requires_acceptance and not self.is_license_accepted(role):
-            raise LicenseRequired(
-                f"role {role!r} requires license acceptance before download"
-            )
 
         async with self._lock:
             if role in self._inflight:
@@ -199,10 +185,21 @@ class ModelManager:
             self._inflight.add(role)
 
         try:
-            async for event in self._download_role(spec, hf_token=hf_token):
-                yield event
+            slot = self._get_download_slot()
+            async with slot:
+                async for event in self._download_role(spec):
+                    yield event
         finally:
             self._inflight.discard(role)
+
+    def _get_download_slot(self) -> asyncio.Semaphore:
+        """Lazily create the global download semaphore the first time
+        a download() runs. Bound to the active loop at that point so
+        the manager can be constructed outside an event loop (matters
+        for synchronous tests that use the manager's ``status()``)."""
+        if self._download_slot is None:
+            self._download_slot = asyncio.Semaphore(self.MAX_CONCURRENT_DOWNLOADS)
+        return self._download_slot
 
     # ----- internals -----------------------------------------------------
 
@@ -262,11 +259,11 @@ class ModelManager:
         return partial, final
 
     async def _download_role(
-        self, spec: ModelSpec, *, hf_token: str | None
+        self, spec: ModelSpec
     ) -> AsyncIterator[ProgressEvent]:
         try:
             for file in spec.files:
-                async for ev in self._download_file(spec, file, hf_token=hf_token):
+                async for ev in self._download_file(spec, file):
                     yield ev
             self._activate(spec.role, spec.commit)
             yield ProgressEvent(role=spec.role, state="ready")
@@ -275,7 +272,7 @@ class ModelManager:
             yield ProgressEvent(role=spec.role, state="error", error=str(err))
 
     async def _download_file(
-        self, spec: ModelSpec, file, *, hf_token: str | None
+        self, spec: ModelSpec, file
     ) -> AsyncIterator[ProgressEvent]:
         partial, final = self._resolve_target_paths(spec, file.name)
 
@@ -292,8 +289,6 @@ class ModelManager:
 
         url = self._build_url(spec, file.name)
         headers: dict[str, str] = {}
-        if hf_token:
-            headers["Authorization"] = f"Bearer {hf_token}"
 
         # Range-resume if we have a non-empty partial
         offset = partial.stat().st_size if partial.exists() else 0

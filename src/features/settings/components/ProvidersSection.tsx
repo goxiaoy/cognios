@@ -9,15 +9,14 @@ import type {
   SearchSettings,
   SidecarEnvelope,
 } from "../../../lib/contracts/search";
-import { setHfToken as setHfTokenIpc } from "../../../lib/tauri/ipc";
 import type { SearchClient } from "../../search/types/search";
 import {
   Capability,
   PROVIDER_PRESETS,
+  presetOwnsRole,
   ProviderPreset,
 } from "../data/providerPresets";
 import type { ProgressByRole } from "../hooks/useModelDownloadProgress";
-import { LicenseAcceptanceModal } from "./LicenseAcceptanceModal";
 import { ProviderEditorModal } from "./ProviderEditorModal";
 
 const CAPABILITY_LABEL: Record<Capability, string> = {
@@ -204,7 +203,14 @@ export function ProvidersSection({
 
       <ul className="providers-list">
         {visiblePresets.map((preset) => {
-          const role = primaryRoleFor(preset, rolesByName);
+          // ``role`` is the row's progress representative — for a
+          // multi-stage provider (PP-StructureV3) we pick the
+          // currently-downloading stage so the row's progress bar
+          // reflects "what's happening now"; otherwise the first
+          // not-ready stage; otherwise the first stage. Aggregate
+          // progress lives in the sidebar DownloadDock.
+          const ownedRoles = primaryRoleFor(preset, rolesByName);
+          const role = pickRepresentativeRole(ownedRoles);
           return (
             <ProviderRow
               key={preset.providerId}
@@ -264,13 +270,21 @@ function isProviderConfigured(
   rolesByName: Record<string, ModelRoleStatus>
 ): boolean {
   if (preset.providerType === "local") {
-    // For locals "configured" means the underlying model is ready.
-    // Falls back to true if we have no role status yet so the page
-    // doesn't show every local provider as Not configured during
-    // the initial load.
-    const role = primaryRoleFor(preset, rolesByName);
-    if (!role) return true;
-    return role.state === "ready";
+    // For locals "configured" means every underlying model role is
+    // ready. ``primaryRoleFor`` returns the full set so a multi-
+    // stage provider (PP-StructureV3 owns 13 ``advanced-ocr-*``
+    // roles) reports configured only when ALL stages are ready —
+    // otherwise the row would lie about being usable while the
+    // bundle is still mid-download.
+    //
+    // If the preset declares no downloadable roles (rapidocr ships
+    // bundled in the wheel) ``primaryRoleFor`` returns an empty
+    // list, which we treat as configured — there's nothing to wait
+    // for. Same fallback applies during the initial load before
+    // the models envelope arrives.
+    const roles = primaryRoleFor(preset, rolesByName);
+    if (roles.length === 0) return true;
+    return roles.every((role) => role.state === "ready");
   }
   if (preset.authKind === "api-key") {
     return keyPresence[preset.providerId] ?? false;
@@ -281,14 +295,29 @@ function isProviderConfigured(
 function primaryRoleFor(
   preset: ProviderPreset,
   rolesByName: Record<string, ModelRoleStatus>
+): ModelRoleStatus[] {
+  if (preset.providerType !== "local" || !preset.localRoleId) return [];
+  // Match by ownership rather than by the capability→role table
+  // that hardcodes singular role names — multi-stage providers
+  // (PP-StructureV3) own a *set* of role ids that share a prefix.
+  return Object.values(rolesByName).filter((role) =>
+    presetOwnsRole(preset, role.role)
+  );
+}
+
+/** Pick a single role to feed into the row's progress UI. Returns
+ * the first role currently downloading; else the first not-ready
+ * role; else the first role (which will be ready). ``undefined``
+ * when the provider has no downloadable roles. */
+function pickRepresentativeRole(
+  roles: ModelRoleStatus[]
 ): ModelRoleStatus | undefined {
-  if (preset.providerType !== "local") return undefined;
-  for (const cap of preset.capabilities) {
-    const roleName = CAPABILITY_TO_ROLE[cap];
-    const role = rolesByName[roleName];
-    if (role) return role;
-  }
-  return undefined;
+  if (roles.length === 0) return undefined;
+  return (
+    roles.find((r) => r.state === "downloading") ??
+    roles.find((r) => r.state !== "ready") ??
+    roles[0]
+  );
 }
 
 /** Strip the redundant "Local " prefix when we render the provider
@@ -402,9 +431,6 @@ function derivePresetStatus(
     if (role.state === "verifying")
       return { label: "Verifying", toneClass: "is-pending" };
     if (role.state === "missing") {
-      if (role.requiresAcceptance && !role.licenseAccepted) {
-        return { label: "License pending", toneClass: "is-pending" };
-      }
       return { label: "Not downloaded", toneClass: "is-empty" };
     }
     if (role.state === "error")
@@ -432,8 +458,7 @@ function ProviderActions({
   isOpen: boolean;
   onToggle: () => void;
 }) {
-  const [showLicense, setShowLicense] = useState(false);
-  const [busy, setBusy] = useState<"accept" | "download" | null>(null);
+  const [busy, setBusy] = useState<"download" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const liveState = progress?.state;
@@ -446,33 +471,9 @@ function ProviderActions({
     // Capture the narrowed value so the closures below don't have
     // to re-check `role` for nullability.
     const localRole: ModelRoleStatus = role;
-    const needsLicense =
-      localRole.requiresAcceptance && !localRole.licenseAccepted;
-    const needsHfToken = needsLicense && localRole.role === "captioner";
     const canDownload =
-      localRole.state === "missing" && !needsLicense && !isLiveDownloading;
+      localRole.state === "missing" && !isLiveDownloading;
     const canRetry = localRole.state === "error" && !isLiveDownloading;
-
-    async function handleAccept() {
-      if (needsHfToken) {
-        setShowLicense(true);
-        return;
-      }
-      setBusy("accept");
-      setActionError(null);
-      try {
-        const env = await client.acceptModelLicense(localRole.role);
-        if (env.state !== "ready") {
-          setActionError(env.error ?? "License acceptance failed.");
-        }
-      } catch (err) {
-        setActionError(
-          err instanceof Error ? err.message : "License acceptance failed."
-        );
-      } finally {
-        setBusy(null);
-      }
-    }
 
     async function handleDownload() {
       setBusy("download");
@@ -491,16 +492,7 @@ function ProviderActions({
     const pct = progressPercent(progress);
     return (
       <>
-        {needsLicense ? (
-          <button
-            type="button"
-            className="settings-action is-primary"
-            disabled={busy !== null}
-            onClick={() => void handleAccept()}
-          >
-            {busy === "accept" ? "Accepting…" : "Accept license"}
-          </button>
-        ) : isLiveDownloading ? (
+        {isLiveDownloading ? (
           <button
             type="button"
             className="settings-action is-progress"
@@ -548,15 +540,6 @@ function ProviderActions({
           <span className="provider-card-error" role="status">
             {actionError}
           </span>
-        ) : null}
-        {showLicense ? (
-          <LicenseAcceptanceModal
-            role={localRole.role}
-            client={client}
-            setHfToken={setHfTokenIpc}
-            onAccepted={() => setShowLicense(false)}
-            onCancel={() => setShowLicense(false)}
-          />
         ) : null}
       </>
     );

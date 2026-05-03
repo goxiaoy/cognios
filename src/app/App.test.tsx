@@ -32,7 +32,6 @@ vi.mock("../lib/tauri/ipc", () => ({
   getIndexingStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
   getNodeIndexingStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
   getModelsStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
-  acceptModelLicense: vi.fn().mockResolvedValue({ state: "initialising" }),
   startModelDownload: vi.fn().mockResolvedValue(undefined),
   getNodeContent: vi.fn().mockResolvedValue({ state: "initialising" }),
   // Feature-oriented Settings (Phase 1) bridge — stubbed.

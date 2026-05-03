@@ -1,5 +1,4 @@
 import {
-  acceptModelLicense,
   deleteProviderSecret,
   getIndexingStatus,
   getModelsStatus,
@@ -22,7 +21,6 @@ export const searchClient: SearchClient = {
   nodeIndexStatus: getNodeIndexingStatus,
   nodeContent: getNodeContent,
   modelsStatus: getModelsStatus,
-  acceptModelLicense,
   startModelDownload,
   settings: getSearchSettings,
   updateSettings: updateSearchSettings,

@@ -19,7 +19,6 @@ import pytest
 from search_sidecar.models.manager import (
     DownloadFailed,
     IntegrityError,
-    LicenseRequired,
     ModelManager,
     ProgressEvent,
 )
@@ -292,37 +291,6 @@ async def test_skips_download_when_final_already_verified(tmp_path: Path):
     assert states[-1] == "ready"
 
 
-async def test_captioner_requires_license_acceptance(tmp_path: Path):
-    body = b"weights"
-    captioner_spec = ModelSpec(
-        role="captioner",
-        repo="fixture/repo",
-        commit="abc123",
-        files=(FileSpec(name="weights.gguf", sha256=_sha256(body)),),
-        license="gemma",
-        requires_acceptance=True,
-    )
-    served = {"/weights.gguf": body}
-    with fixture_server(served) as base_url:
-        manager = ModelManager(
-            storage_dir=tmp_path,
-            manifest={"captioner": captioner_spec},
-            url_override={
-                f"fixture/repo@abc123/weights.gguf": f"{base_url}/weights.gguf",
-            },
-        )
-
-        # Without acceptance: LicenseRequired raised before any IO
-        with pytest.raises(LicenseRequired):
-            await _drain(manager.download("captioner"))
-
-        # Accept and retry
-        manager.accept_license("captioner")
-        events = await _drain(manager.download("captioner"))
-
-    assert events[-1].state == "ready"
-
-
 async def test_status_reflects_state_transitions(tmp_path: Path):
     body = b"x" * 1024
     spec = _make_spec("embedding", {"a.bin": body})
@@ -358,9 +326,75 @@ async def test_unknown_role_raises(tmp_path: Path):
         await _drain(manager.download("nonexistent"))
 
 
-async def test_accept_license_is_idempotent_and_noop_for_non_gated(tmp_path: Path):
-    spec = _make_spec("embedding", {"a.bin": b"x"})
-    manager = ModelManager(storage_dir=tmp_path, manifest={"embedding": spec})
-    # Calling accept_license on a role without a gate should be a no-op
-    manager.accept_license("embedding")
-    assert not manager.is_license_accepted("embedding")
+async def test_concurrent_downloads_capped_at_max(tmp_path: Path):
+    """When more than ``MAX_CONCURRENT_DOWNLOADS`` callers issue
+    download() at once (e.g. PP-StructureV3's 13 stages firing
+    together), the cap suspends the excess before any IO. We use 3
+    roles + a max of 2 to verify the third suspends until one of the
+    first two completes."""
+    import asyncio as _asyncio
+
+    bodies = {f"role-{i}": b"x" * 256 for i in range(3)}
+    specs: dict[str, ModelSpec] = {}
+    for role, body in bodies.items():
+        specs[role] = ModelSpec(
+            role=role,
+            repo="fixture/repo",
+            commit="abc123",
+            files=(FileSpec(name="a.bin", sha256=_sha256(body)),),
+        )
+
+    served = {f"/{role}": body for role, body in bodies.items()}
+    with fixture_server(served) as base_url:
+        manager = ModelManager(
+            storage_dir=tmp_path,
+            manifest=specs,
+            url_override={
+                f"fixture/repo@abc123/a.bin": f"{base_url}/role-0",
+            },
+        )
+        # Force the cap low so the test is deterministic against
+        # tiny payloads that complete near-instantly.
+        manager._download_slot = _asyncio.Semaphore(2)
+        # Override URL per-role so each role hits its own served body.
+        manager._url_override = {
+            f"fixture/repo@abc123/a.bin": f"{base_url}/role-0",
+        }
+
+        # Track how many downloads are simultaneously inside the
+        # semaphore. The downloader's first frame fires immediately
+        # after acquire, so observing >2 active means the cap leaked.
+        active_count = 0
+        peak = 0
+        observation_lock = _asyncio.Lock()
+
+        async def run_one(role: str) -> list[ProgressEvent]:
+            nonlocal active_count, peak
+            events: list[ProgressEvent] = []
+            async for ev in manager.download(role):
+                if ev.state == "downloading" and ev.bytes_downloaded == 0:
+                    async with observation_lock:
+                        active_count += 1
+                        peak = max(peak, active_count)
+                events.append(ev)
+                if ev.state in ("ready", "error"):
+                    async with observation_lock:
+                        active_count -= 1
+            return events
+
+        # Re-point each role's URL at the per-role served path.
+        manager._url_override = {
+            f"fixture/repo@abc123/a.bin": f"{base_url}/role-0",
+            **{
+                f"fixture/repo@abc123/a.bin@{role}": f"{base_url}/{role}"
+                for role in bodies
+            },
+        }
+        # Simpler: same URL per role works because each role's spec
+        # is identical here. Drive 3 concurrent downloads.
+        results = await _asyncio.gather(
+            *[run_one(role) for role in bodies]
+        )
+        for role_events in results:
+            assert role_events[-1].state == "ready", role_events
+        assert peak <= 2, f"peak concurrent downloads exceeded cap: {peak}"

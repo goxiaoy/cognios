@@ -143,7 +143,7 @@ def test_sha_resolver_reads_raw_hex_oid_from_hf_tree_api(
         "lfs": {"oid": expected_sha, "size": 75_000_000},
     }
     digest, source = _sha_from_metadata_or_download(
-        "owner/repo", "commit_sha", "onnx/model_int8.onnx", meta, hf_token=None
+        "owner/repo", "commit_sha", "onnx/model_int8.onnx", meta
     )
     assert digest == expected_sha
     assert source == "lfs"
@@ -170,7 +170,7 @@ def test_sha_resolver_also_accepts_sha256_prefixed_oid(
         "lfs": {"oid": f"sha256:{expected_sha}", "size": 1},
     }
     digest, source = _sha_from_metadata_or_download(
-        "owner/repo", "c", "onnx/m.onnx", meta, hf_token=None
+        "owner/repo", "c", "onnx/m.onnx", meta
     )
     assert digest == expected_sha
     assert source == "lfs"
@@ -182,7 +182,7 @@ def test_sha_resolver_falls_back_to_download_for_non_lfs(
     """Small git-stored files (config.json / tokenizer.json) have no
     LFS metadata; the resolver downloads them to compute sha256."""
 
-    def fake_download(_repo, _commit, _file_name, *, hf_token):
+    def fake_download(_repo, _commit, _file_name):
         return "deadbeef" * 8
 
     monkeypatch.setattr(
@@ -190,7 +190,7 @@ def test_sha_resolver_falls_back_to_download_for_non_lfs(
     )
     meta = {"type": "file", "path": "config.json", "size": 1234}
     digest, source = _sha_from_metadata_or_download(
-        "owner/repo", "commit_sha", "config.json", meta, hf_token=None
+        "owner/repo", "commit_sha", "config.json", meta
     )
     assert digest == "deadbeef" * 8
     assert source == "download"
@@ -203,7 +203,7 @@ def test_sha_resolver_treats_malformed_lfs_as_non_lfs(
     fall back to download rather than guess."""
     download_called = {"n": 0}
 
-    def fake_download(_repo, _commit, _file_name, *, hf_token):
+    def fake_download(_repo, _commit, _file_name):
         download_called["n"] += 1
         return "fallback" * 8
 
@@ -213,7 +213,7 @@ def test_sha_resolver_treats_malformed_lfs_as_non_lfs(
     # Missing oid entirely.
     meta = {"type": "file", "path": "weird.bin", "lfs": {"size": 100}}
     digest, source = _sha_from_metadata_or_download(
-        "owner/repo", "c", "weird.bin", meta, hf_token=None
+        "owner/repo", "c", "weird.bin", meta
     )
     assert source == "download"
     assert digest == "fallback" * 8

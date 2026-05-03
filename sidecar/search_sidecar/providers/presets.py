@@ -14,8 +14,7 @@ Each preset declares:
   capability the provider serves, unless the user overrides it. For
   cloud providers, these are model names sent in the request body.
   For local providers, the manifest pins these.
-- ``auth_kind`` — ``"none"`` (local with no gate), ``"hf-token"``
-  (gated HF download), or ``"api-key"`` (cloud).
+- ``auth_kind`` — ``"none"`` (local) or ``"api-key"`` (cloud).
 - ``base_url`` — only set for cloud providers; cloud HTTP client uses
   ``{base_url}/v1/embeddings``, ``{base_url}/v1/models``, etc.
 - ``validation_endpoint`` — relative path under ``base_url`` that the
@@ -41,7 +40,7 @@ from typing import Literal
 # ``ocr`` capability which only returns flat detected text.
 Capability = Literal["embedding", "reranking", "vision", "ocr", "advanced-ocr"]
 ProviderType = Literal["local", "cloud"]
-AuthKind = Literal["none", "hf-token", "api-key"]
+AuthKind = Literal["none", "api-key"]
 
 
 @dataclass(frozen=True)

@@ -30,13 +30,6 @@ def test_each_role_lists_at_least_one_file():
         assert all(f.name for f in spec.files), f"{role!r} has empty file names"
 
 
-def test_v1_roles_do_not_require_acceptance():
-    """No gated repo in v1 (Gemma was the only one and it's deferred)."""
-    for role, spec in DEFAULTS.items():
-        assert spec.requires_acceptance is False, role
-        assert spec.license is None, role
-
-
 def test_is_pinned_detects_placeholder_state():
     """``is_pinned`` returns False when either the commit or any file
     SHA is still the placeholder string. Used by release-build CI to

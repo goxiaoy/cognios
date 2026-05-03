@@ -115,18 +115,11 @@ export interface ModelRoleStatus {
    */
   repo: string;
   commit?: string | null;
-  licenseAccepted: boolean;
-  requiresAcceptance: boolean;
   error?: string | null;
 }
 
 export interface ModelsStatus {
   roles: Record<string, ModelRoleStatus>;
-}
-
-export interface LicenseAcceptResponse {
-  accepted: boolean;
-  role: string;
 }
 
 export type ModelDownloadStateName =
@@ -151,7 +144,6 @@ export interface ModelDownloadEvent {
 
 export interface StartModelDownloadInput {
   role: string;
-  hfToken?: string;
 }
 
 // ----- Search settings (Phase 1 of feature-oriented Settings) ----------------

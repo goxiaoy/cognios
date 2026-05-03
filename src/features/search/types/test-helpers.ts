@@ -18,9 +18,6 @@ export function makeStubSearchClient(
     nodeIndexStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
     nodeContent: vi.fn().mockResolvedValue({ state: "initialising" }),
     modelsStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
-    acceptModelLicense: vi
-      .fn()
-      .mockResolvedValue({ state: "initialising" }),
     startModelDownload: vi.fn().mockResolvedValue(undefined),
     settings: vi.fn().mockResolvedValue({ state: "initialising" }),
     updateSettings: vi.fn().mockResolvedValue({ state: "initialising" }),

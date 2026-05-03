@@ -13,17 +13,18 @@ pub mod advanced_ocr_watcher;
 pub mod client;
 pub mod forwarder;
 pub mod index_state_sync;
+#[cfg(debug_assertions)]
+pub mod python_dev_watcher;
 pub mod runtime_file;
 pub mod settings_fallback;
 pub mod supervisor;
 
 pub use client::{
     FeatureConfigDto, IndexSnapshotDto, IndexSnapshotEntry, IndexStatusDto,
-    LicenseAcceptResponseDto, ModelDownloadEvent, ModelRoleStatusDto, ModelsStatusDto,
-    NodeContentChunkDto, NodeContentDto, NodeEvent, NodeEventAck, NodeEventKind,
-    NodeIndexStatusDto, ProviderConfigDto, SearchInput, SearchResponseDto,
-    SearchResultDto, SearchSettingsDto, SearchSidecarClient, SidecarEnvelope,
-    SidecarEnvelopeState,
+    ModelDownloadEvent, ModelRoleStatusDto, ModelsStatusDto, NodeContentChunkDto,
+    NodeContentDto, NodeEvent, NodeEventAck, NodeEventKind, NodeIndexStatusDto,
+    ProviderConfigDto, SearchInput, SearchResponseDto, SearchResultDto,
+    SearchSettingsDto, SearchSidecarClient, SidecarEnvelope, SidecarEnvelopeState,
 };
 pub use runtime_file::{read_runtime_file, RuntimeFile, RuntimeFileError};
 pub use settings_fallback::read_settings_file_fallback;

@@ -11,7 +11,7 @@
  */
 
 export type ProviderType = "local" | "cloud";
-export type AuthKind = "none" | "hf-token" | "api-key";
+export type AuthKind = "none" | "api-key";
 export type Capability =
   | "embedding"
   | "reranking"
@@ -30,6 +30,19 @@ export interface ProviderPreset {
   validationEndpoint?: string;
   /** UI hint for masked-key display. ``"sk-"`` for OpenAI etc. */
   apiKeyPrefix?: string;
+  /** Identifies the ModelManager role(s) this provider owns. The
+   * frontend consults this when the user binds a feature to a
+   * local provider so it can kick off downloads for any missing
+   * stages without waiting for the user to click 13 buttons.
+   *
+   * - Single role (``"embedding"``): exact-match lookup.
+   * - Prefix (``"advanced-ocr-"``, ending in ``-``): matches every
+   *   role whose id starts with the prefix (the PP-StructureV3
+   *   bundle exposes 13 such stages).
+   * - ``undefined``: the provider doesn't have downloadable models
+   *   (cloud providers, or local providers like rapidocr whose
+   *   models ship inside the wheel). */
+  localRoleId?: string;
 }
 
 export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
@@ -40,6 +53,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     capabilities: ["embedding"],
     defaultModelPerCapability: { embedding: "gte-multilingual-base" },
     authKind: "none",
+    localRoleId: "embedding",
   },
   {
     providerId: "local-gte-reranker",
@@ -50,6 +64,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
       reranking: "gte-multilingual-reranker-base",
     },
     authKind: "none",
+    localRoleId: "reranker",
   },
   {
     providerId: "local-paddleocr",
@@ -58,6 +73,8 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     capabilities: ["ocr"],
     defaultModelPerCapability: { ocr: "PP-OCRv4_mobile" },
     authKind: "none",
+    // No localRoleId — rapidocr-onnxruntime ships its models inside
+    // the wheel; ModelManager has nothing to download.
   },
   {
     // PP-StructureV3 — layout-aware OCR with table + formula
@@ -72,6 +89,9 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
       "advanced-ocr": "PP-StructureV3",
     },
     authKind: "none",
+    // Prefix match — every ``advanced-ocr-*`` stage role belongs
+    // to this provider.
+    localRoleId: "advanced-ocr-",
   },
   {
     providerId: "openai",
@@ -114,6 +134,20 @@ export function presetsWithCapability(
   capability: Capability
 ): readonly ProviderPreset[] {
   return PROVIDER_PRESETS.filter((p) => p.capabilities.includes(capability));
+}
+
+/** True when ``role`` is one of the model-manager roles this preset
+ * owns. Resolves both exact-match and prefix-match conventions for
+ * ``localRoleId``. Used by the auto-download path in FeatureRow to
+ * decide which roles to kick off when the user binds a feature to a
+ * local provider.
+ */
+export function presetOwnsRole(preset: ProviderPreset, role: string): boolean {
+  if (!preset.localRoleId) return false;
+  if (preset.localRoleId.endsWith("-")) {
+    return role.startsWith(preset.localRoleId);
+  }
+  return role === preset.localRoleId;
 }
 
 /** UI display order for features. Mirrors the canonical order used

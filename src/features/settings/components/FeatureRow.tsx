@@ -17,6 +17,7 @@ import type { SearchClient } from "../../search/types/search";
 import {
   FeatureMeta,
   presetById,
+  presetOwnsRole,
   presetsWithCapability,
   ProviderPreset,
 } from "../data/providerPresets";
@@ -70,6 +71,7 @@ export function FeatureRow({
 
   async function handleToggle() {
     if (meta.mandatory) return;
+    const wasEnabled = enabled;
     // Keep the provider binding sticky across enable/disable —
     // clearing it on disable made the card height jump (the
     // "via <provider>" meta row collapsed) and lost the user's
@@ -86,7 +88,15 @@ export function FeatureRow({
       ...settings,
       features: nextFeatures,
     });
-    if (env.state === "ready" && env.data) onSettingsChange(env.data);
+    if (env.state === "ready" && env.data) {
+      onSettingsChange(env.data);
+      // Just-enabled with a local provider already bound? Kick off
+      // any missing model downloads so the user doesn't have to
+      // chase 13 download buttons in the Providers column.
+      if (!wasEnabled && config?.providerId) {
+        void kickoffMissingDownloads(config.providerId);
+      }
+    }
   }
 
   async function handleProviderChange(nextId: string) {
@@ -123,7 +133,43 @@ export function FeatureRow({
       features: nextFeatures,
       cloudConsentAcked,
     });
-    if (env.state === "ready" && env.data) onSettingsChange(env.data);
+    if (env.state === "ready" && env.data) {
+      onSettingsChange(env.data);
+      // Bound a local provider? Kick off any missing stages so the
+      // user doesn't have to chase per-stage download buttons —
+      // particularly important for PP-StructureV3 (13 stages).
+      if (next) void kickoffMissingDownloads(next);
+    }
+  }
+
+  /** Fire ``startModelDownload`` for every role this preset owns
+   * whose state isn't already ``ready`` / ``downloading``. Quiet
+   * on failure — the DownloadDock surfaces persistent errors via
+   * the polled models envelope. No-op for cloud providers and
+   * for local providers that ship their models bundled (rapidocr).
+   */
+  async function kickoffMissingDownloads(providerId: string): Promise<void> {
+    const preset = presetById(providerId);
+    if (!preset || preset.providerType !== "local" || !preset.localRoleId) {
+      return;
+    }
+    try {
+      const env = await client.modelsStatus();
+      if (env.state !== "ready" || !env.data) return;
+      for (const [roleId, status] of Object.entries(env.data.roles)) {
+        if (!presetOwnsRole(preset, roleId)) continue;
+        if (status.state === "ready" || status.state === "downloading") {
+          continue;
+        }
+        try {
+          await client.startModelDownload({ role: roleId });
+        } catch {
+          /* swallow — dock surfaces the error via polled state */
+        }
+      }
+    } catch {
+      /* models_status unavailable — user can retry from Settings */
+    }
   }
 
   return (

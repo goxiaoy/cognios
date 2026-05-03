@@ -184,8 +184,6 @@ function buildEntries(
       state: "unknown",
       repo: "",
       commit: null,
-      licenseAccepted: false,
-      requiresAcceptance: false,
       error: null,
     })
   );
@@ -240,8 +238,14 @@ function deriveDockState(
   if (liveState === "downloading") return "downloading";
   if (liveState === "verifying") return "verifying";
   if (liveState === "error" || roleState === "error") return "error";
-  if (roleState === "missing") return "queued";
-  // ready / unknown / no signal — nothing to surface.
+  // ``missing`` without a live SSE event is NOT the same as
+  // "queued for download" — most missing roles are just optional
+  // models the user has never enabled (e.g. the 13 advanced-ocr
+  // stages). Surfacing them as "queued" makes the dock advertise
+  // downloads that aren't actually happening. The dock should only
+  // light up when there's real evidence of activity (live events
+  // or recorded errors); the Settings page is the right surface
+  // for "this model exists, you could enable it".
   return null;
 }
 
