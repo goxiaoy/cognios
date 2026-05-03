@@ -156,16 +156,21 @@ export function FeatureRow({
     try {
       const env = await client.modelsStatus();
       if (env.state !== "ready" || !env.data) return;
+      // Fire in parallel — each ``startModelDownload`` returns a
+      // Promise that only resolves when the SSE stream closes (i.e.
+      // download completes). Awaiting in sequence would serialize
+      // 13 PP-StructureV3 stages and bypass the sidecar's
+      // concurrency-cap+queue logic; instead, fire-and-forget so the
+      // sidecar sees all requests at once and parks the excess on
+      // its semaphore (emitting ``queued`` frames the dock surfaces).
       for (const [roleId, status] of Object.entries(env.data.roles)) {
         if (!presetOwnsRole(preset, roleId)) continue;
         if (status.state === "ready" || status.state === "downloading") {
           continue;
         }
-        try {
-          await client.startModelDownload({ role: roleId });
-        } catch {
+        void client.startModelDownload({ role: roleId }).catch(() => {
           /* swallow — dock surfaces the error via polled state */
-        }
+        });
       }
     } catch {
       /* models_status unavailable — user can retry from Settings */

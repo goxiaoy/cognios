@@ -398,3 +398,15 @@ async def test_concurrent_downloads_capped_at_max(tmp_path: Path):
         for role_events in results:
             assert role_events[-1].state == "ready", role_events
         assert peak <= 2, f"peak concurrent downloads exceeded cap: {peak}"
+
+        # At least one role must have observed a ``queued`` event —
+        # with 3 callers and a cap of 2, at least one had to wait
+        # for a slot. Without the pre-acquire ``queued`` frame, the
+        # DownloadDock can't tell "request landed but is queued"
+        # from "no request was ever made", which surfaced as
+        # "missing pending models" in the v1 dock UX.
+        queued_seen = any(
+            any(ev.state == "queued" for ev in role_events)
+            for role_events in results
+        )
+        assert queued_seen, "expected at least one ``queued`` frame from the third caller"

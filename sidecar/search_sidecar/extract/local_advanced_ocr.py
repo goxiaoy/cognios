@@ -70,26 +70,86 @@ class PpStructureV3Extractor:
     of RAM. The first job pays this cost; subsequent jobs are fast.
     """
 
-    # Map our role-prefixed names to the PP-StructureV3 init kwarg
-    # paddleocr expects. Centralized here so the factory is decoupled
-    # from paddleocr's specific naming.
-    STAGE_TO_KWARG: dict[str, str] = {
-        "advanced-ocr-detection": "text_detection_model_dir",
-        "advanced-ocr-recognition": "text_recognition_model_dir",
-        "advanced-ocr-layout": "layout_detection_model_dir",
-        "advanced-ocr-region": "region_detection_model_dir",
-        "advanced-ocr-doc-orientation": "doc_orientation_classify_model_dir",
-        "advanced-ocr-textline-orientation": "textline_orientation_model_dir",
-        "advanced-ocr-doc-unwarping": "doc_unwarping_model_dir",
-        "advanced-ocr-table-classification": "table_classification_model_dir",
-        "advanced-ocr-table-structure-wired": "wired_table_structure_recognition_model_dir",
-        "advanced-ocr-table-structure-wireless": "wireless_table_structure_recognition_model_dir",
-        "advanced-ocr-table-cells-wired": "wired_table_cells_detection_model_dir",
-        "advanced-ocr-table-cells-wireless": "wireless_table_cells_detection_model_dir",
-        "advanced-ocr-formula": "formula_recognition_model_dir",
+    # Map our role-prefixed names to the per-stage PP-StructureV3 init
+    # kwargs paddleocr expects. Centralised here so the factory is
+    # decoupled from paddleocr's specific naming.
+    #
+    # Each stage gets *two* kwargs: ``_model_dir`` (where the files
+    # live on disk) and ``_model_name`` (the model identifier
+    # paddleocr cross-references against the local config). Without
+    # the name, paddleocr defaults to its own pipeline-internal
+    # default (e.g. ``PP-OCRv5_server_det`` for text detection in
+    # 3.x) and rejects our v4-mobile dirs with a "model name
+    # mismatch" error. The matching name string is the basename of
+    # the HuggingFace repo we pinned in models/manifest.py.
+    STAGE_TO_KWARGS: dict[str, tuple[str, str]] = {
+        # role_id -> (dir_kwarg, name_kwarg)
+        "advanced-ocr-detection": (
+            "text_detection_model_dir",
+            "text_detection_model_name",
+        ),
+        "advanced-ocr-recognition": (
+            "text_recognition_model_dir",
+            "text_recognition_model_name",
+        ),
+        "advanced-ocr-layout": (
+            "layout_detection_model_dir",
+            "layout_detection_model_name",
+        ),
+        "advanced-ocr-region": (
+            "region_detection_model_dir",
+            "region_detection_model_name",
+        ),
+        "advanced-ocr-doc-orientation": (
+            "doc_orientation_classify_model_dir",
+            "doc_orientation_classify_model_name",
+        ),
+        "advanced-ocr-textline-orientation": (
+            "textline_orientation_model_dir",
+            "textline_orientation_model_name",
+        ),
+        "advanced-ocr-doc-unwarping": (
+            "doc_unwarping_model_dir",
+            "doc_unwarping_model_name",
+        ),
+        "advanced-ocr-table-classification": (
+            "table_classification_model_dir",
+            "table_classification_model_name",
+        ),
+        "advanced-ocr-table-structure-wired": (
+            "wired_table_structure_recognition_model_dir",
+            "wired_table_structure_recognition_model_name",
+        ),
+        "advanced-ocr-table-structure-wireless": (
+            "wireless_table_structure_recognition_model_dir",
+            "wireless_table_structure_recognition_model_name",
+        ),
+        "advanced-ocr-table-cells-wired": (
+            "wired_table_cells_detection_model_dir",
+            "wired_table_cells_detection_model_name",
+        ),
+        "advanced-ocr-table-cells-wireless": (
+            "wireless_table_cells_detection_model_dir",
+            "wireless_table_cells_detection_model_name",
+        ),
+        "advanced-ocr-formula": (
+            "formula_recognition_model_dir",
+            "formula_recognition_model_name",
+        ),
     }
 
-    def __init__(self, model_dir_by_stage: dict[str, Path]) -> None:
+    # Backwards-compatible alias for callers that previously iterated
+    # ``STAGE_TO_KWARG`` (the dir-only mapping). Returns the dir
+    # kwarg for each stage. Tests against the older key still work.
+    STAGE_TO_KWARG: dict[str, str] = {
+        stage: dir_kwarg for stage, (dir_kwarg, _) in STAGE_TO_KWARGS.items()
+    }
+
+    def __init__(
+        self,
+        model_dir_by_stage: dict[str, Path],
+        model_name_by_stage: dict[str, str] | None = None,
+    ) -> None:
         if not can_load_local_advanced_ocr():
             raise RuntimeError(
                 "paddleocr / paddlepaddle are not importable. Install "
@@ -97,7 +157,7 @@ class PpStructureV3Extractor:
             )
         missing_stages = [
             stage
-            for stage in self.STAGE_TO_KWARG
+            for stage in self.STAGE_TO_KWARGS
             if stage not in model_dir_by_stage
         ]
         if missing_stages:
@@ -106,6 +166,7 @@ class PpStructureV3Extractor:
                 + ", ".join(missing_stages)
             )
         self._model_dir_by_stage = dict(model_dir_by_stage)
+        self._model_name_by_stage = dict(model_name_by_stage or {})
         # Pipeline is constructed on first call; see class docstring.
         self._pipeline: Any | None = None
 
@@ -131,11 +192,15 @@ class PpStructureV3Extractor:
         from paddleocr import PPStructureV3  # type: ignore[import-not-found]
 
         kwargs: dict[str, str] = {}
-        for stage, kwarg in self.STAGE_TO_KWARG.items():
-            kwargs[kwarg] = str(self._model_dir_by_stage[stage])
+        for stage, (dir_kwarg, name_kwarg) in self.STAGE_TO_KWARGS.items():
+            kwargs[dir_kwarg] = str(self._model_dir_by_stage[stage])
+            name = self._model_name_by_stage.get(stage)
+            if name:
+                kwargs[name_kwarg] = name
         LOG.info(
-            "PP-StructureV3 pipeline init with %d stage model dirs",
-            len(kwargs),
+            "PP-StructureV3 pipeline init with %d stage model dirs (+%d names)",
+            sum(1 for k in kwargs if k.endswith("_model_dir")),
+            sum(1 for k in kwargs if k.endswith("_model_name")),
         )
         self._pipeline = PPStructureV3(**kwargs)
         return self._pipeline

@@ -55,10 +55,16 @@ class DownloadFailed(RuntimeError):
 
 @dataclass(frozen=True)
 class ProgressEvent:
-    """Streamed during a download for the route layer to re-emit as SSE."""
+    """Streamed during a download for the route layer to re-emit as SSE.
+
+    ``"queued"`` fires when more callers asked to download than the
+    concurrency cap allows; the request is parked on the semaphore.
+    The next live event is either ``"downloading"`` (slot opened)
+    or ``"error"`` (the caller closed the SSE stream early).
+    """
 
     role: str
-    state: str  # one of: "downloading", "verifying", "ready", "error"
+    state: str  # "queued" | "downloading" | "verifying" | "ready" | "error"
     file: str | None = None  # which file is being processed
     bytes_downloaded: int = 0
     bytes_total: int | None = None
@@ -186,6 +192,14 @@ class ModelManager:
 
         try:
             slot = self._get_download_slot()
+            # Emit a ``queued`` frame when we'd actually have to wait
+            # for a slot. Without this the SSE stream stays silent
+            # while parked on the semaphore and the DownloadDock
+            # can't tell "request landed but is queued" from "no
+            # request was ever made". Polled non-blocking-ly so the
+            # already-free path skips the noise.
+            if slot.locked():
+                yield ProgressEvent(role=spec.role, state="queued")
             async with slot:
                 async for event in self._download_role(spec):
                     yield event

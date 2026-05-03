@@ -216,7 +216,8 @@ export function ProvidersSection({
               key={preset.providerId}
               preset={preset}
               role={role}
-              progress={role ? progress[role.role] : undefined}
+              ownedRoles={ownedRoles}
+              progressByRole={progress}
               client={client}
               isConfigured={isProviderConfigured(
                 preset,
@@ -244,6 +245,11 @@ export function ProvidersSection({
               (p) => p.providerId === openId
             );
             if (!preset) return null;
+            // Local providers expand inline (see ProviderRow's
+            // ``provider-row-expansion`` block) — no modal. The
+            // editor modal is for cloud-provider credential entry,
+            // which isn't applicable to ``authKind: "none"``.
+            if (preset.providerType === "local") return null;
             return (
               <ProviderEditorModal
                 preset={preset}
@@ -338,7 +344,8 @@ function avatarText(preset: ProviderPreset): string {
 function ProviderRow({
   preset,
   role,
-  progress,
+  ownedRoles,
+  progressByRole,
   client,
   isConfigured,
   isInUse,
@@ -347,7 +354,8 @@ function ProviderRow({
 }: {
   preset: ProviderPreset;
   role: ModelRoleStatus | undefined;
-  progress: ModelDownloadEvent | undefined;
+  ownedRoles: ModelRoleStatus[];
+  progressByRole: ProgressByRole;
   client: SearchClient;
   isConfigured: boolean;
   isInUse: boolean;
@@ -360,9 +368,11 @@ function ProviderRow({
     .join(", ");
 
   const status = derivePresetStatus(preset, role, isConfigured);
+  const hasStageDetails =
+    preset.providerType === "local" && ownedRoles.length > 0;
 
   return (
-    <li className={`provider-row provider-card${isInUse ? " is-in-use" : ""}`}>
+    <li className={`provider-row provider-card${isInUse ? " is-in-use" : ""}${isOpen ? " is-open" : ""}`}>
       <div className={`provider-avatar provider-avatar--${preset.providerType}`}>
         {avatarText(preset)}
       </div>
@@ -406,15 +416,169 @@ function ProviderRow({
         <ProviderActions
           preset={preset}
           role={role}
-          progress={progress}
+          progress={role ? progressByRole[role.role] : undefined}
           client={client}
           isConfigured={isConfigured}
           isOpen={isOpen}
           onToggle={onToggle}
         />
       </div>
+      {isOpen && hasStageDetails ? (
+        <ProviderStageList
+          preset={preset}
+          ownedRoles={ownedRoles}
+          progressByRole={progressByRole}
+          client={client}
+        />
+      ) : null}
     </li>
   );
+}
+
+/** Inline expansion under a local provider row. Lists every model
+ * role this preset owns with its individual state, progress, and a
+ * Retry button when in error. Shown when the user clicks "Details"
+ * on a local provider — local providers don't open the editor
+ * modal (no credentials to enter), so the expansion is the only
+ * way to see per-stage detail.
+ */
+function ProviderStageList({
+  preset,
+  ownedRoles,
+  progressByRole,
+  client,
+}: {
+  preset: ProviderPreset;
+  ownedRoles: ModelRoleStatus[];
+  progressByRole: ProgressByRole;
+  client: SearchClient;
+}) {
+  const allReady = ownedRoles.every((r) => r.state === "ready");
+  const anyMissing = ownedRoles.some(
+    (r) => r.state === "missing" || r.state === "error"
+  );
+  const sorted = [...ownedRoles].sort((a, b) => a.role.localeCompare(b.role));
+
+  async function handleRetryAll() {
+    const missing = ownedRoles.filter(
+      (r) => r.state === "missing" || r.state === "error"
+    );
+    for (const r of missing) {
+      void client.startModelDownload({ role: r.role }).catch(() => {});
+    }
+  }
+
+  return (
+    <div className="provider-row-expansion">
+      <div className="provider-stage-summary">
+        <span className="provider-stage-summary-label">
+          {ownedRoles.length === 1
+            ? "Model"
+            : `${ownedRoles.length} stages`}
+        </span>
+        <span className="provider-stage-summary-state">
+          {allReady
+            ? "All ready"
+            : `${ownedRoles.filter((r) => r.state === "ready").length} / ${ownedRoles.length} ready`}
+        </span>
+        {anyMissing && !allReady ? (
+          <button
+            type="button"
+            className="provider-stage-retry"
+            onClick={() => void handleRetryAll()}
+          >
+            Download missing
+          </button>
+        ) : null}
+      </div>
+      <ul className="provider-stage-list">
+        {sorted.map((r) => (
+          <ProviderStageRow
+            key={r.role}
+            preset={preset}
+            role={r}
+            progress={progressByRole[r.role]}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ProviderStageRow({
+  preset,
+  role,
+  progress,
+}: {
+  preset: ProviderPreset;
+  role: ModelRoleStatus;
+  progress: ModelDownloadEvent | undefined;
+}) {
+  const liveState = progress?.state;
+  const effectiveState = liveState ?? role.state;
+  const label = stageLabelFor(preset, role.role);
+  const pct = progressPercent(progress);
+  const isActive =
+    effectiveState === "downloading" || effectiveState === "verifying";
+  return (
+    <li className={`provider-stage-item is-${effectiveState}`}>
+      <span className="provider-stage-name" title={role.role}>
+        {label}
+      </span>
+      <span className="provider-stage-state">
+        {STATE_LABEL[effectiveState] ?? effectiveState}
+      </span>
+      {isActive ? (
+        <span
+          className="provider-stage-bar"
+          aria-label={`${label}: ${pct}%`}
+        >
+          <span
+            className="provider-stage-bar-fill"
+            style={{ width: `${pct}%` }}
+          />
+        </span>
+      ) : null}
+      {role.error ? (
+        <span className="provider-stage-error" title={role.error}>
+          {truncate(role.error, 60)}
+        </span>
+      ) : null}
+    </li>
+  );
+}
+
+const STATE_LABEL: Record<string, string> = {
+  ready: "Ready",
+  missing: "Missing",
+  downloading: "Downloading",
+  verifying: "Verifying",
+  queued: "Queued",
+  error: "Error",
+};
+
+/** Strip the provider's role prefix and humanise the remainder.
+ * ``advanced-ocr-table-cells-wired`` → ``Table cells (wired)``. */
+function stageLabelFor(preset: ProviderPreset, roleId: string): string {
+  let stem = roleId;
+  if (preset.localRoleId && preset.localRoleId.endsWith("-")) {
+    stem = roleId.slice(preset.localRoleId.length);
+  } else if (preset.localRoleId) {
+    stem = preset.localRoleId;
+  }
+  // Special-case the wired/wireless table variants so the suffix
+  // reads naturally.
+  const wiredMatch = stem.match(/^(.*)-(wired|wireless)$/);
+  if (wiredMatch) {
+    return `${humanize(wiredMatch[1])} (${wiredMatch[2]})`;
+  }
+  return humanize(stem);
+}
+
+function humanize(s: string): string {
+  if (!s) return s;
+  const spaced = s.replace(/-/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
 type DerivedStatus = { label: string; toneClass: string };

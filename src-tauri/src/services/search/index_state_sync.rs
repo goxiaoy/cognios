@@ -179,7 +179,14 @@ pub async fn run_index_state_sync(
                             Ok(updated) => {
                                 cursor = changes.next_seq.max(cursor);
                                 if updated > 0 {
-                                    log::debug!(
+                                    // Per-batch trace only — debug-level
+                                    // logging produced 1+ lines every poll
+                                    // tick during active indexing runs,
+                                    // which buried the actually-actionable
+                                    // logs. The cursor + count are still
+                                    // available via ``RUST_LOG=trace`` if
+                                    // someone needs them.
+                                    log::trace!(
                                         "index-state-sync: applied {updated} transition(s), cursor={cursor}"
                                     );
                                     let _ = app_handle.emit(

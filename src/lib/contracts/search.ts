@@ -123,6 +123,7 @@ export interface ModelsStatus {
 }
 
 export type ModelDownloadStateName =
+  | "queued"
   | "downloading"
   | "verifying"
   | "ready"

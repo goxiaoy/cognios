@@ -13,8 +13,6 @@ __pycache__/
 # pytest
 .pytest_cache/
 
-# uv lockfile is intentionally NOT ignored — it pins the supply chain.
-# Once Phase 5 / Unit 12 lands the release packaging story we will commit
-# uv.lock here. For Unit 3 (pre-Unit 12) the lockfile is regenerated on
-# every uv sync; ignore it until then.
-uv.lock
+# uv.lock is committed — pins the supply chain (paddlepaddle's ABI
+# coupling to a specific paddlex/paddleocr revision matters). Devs
+# share the resolved tree; CI / release builds reproduce it.

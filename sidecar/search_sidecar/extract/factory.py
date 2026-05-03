@@ -204,11 +204,12 @@ def select_advanced_ocr_extractor(
             preset.provider_id,
         )
         return None
-    stage_dirs = _collect_advanced_ocr_stage_dirs(model_manager)
-    if stage_dirs is None:
+    collected = _collect_advanced_ocr_stages(model_manager)
+    if collected is None:
         return None
+    stage_dirs, stage_names = collected
     try:
-        extractor = PpStructureV3Extractor(stage_dirs)
+        extractor = PpStructureV3Extractor(stage_dirs, stage_names)
     except Exception as err:
         LOG.warning("local PP-StructureV3 construction failed: %s", err)
         return None
@@ -216,22 +217,33 @@ def select_advanced_ocr_extractor(
     return extractor
 
 
-def _collect_advanced_ocr_stage_dirs(
+def _collect_advanced_ocr_stages(
     model_manager: "ModelManager",
-) -> dict[str, Path] | None:
-    """Walk every PP-StructureV3 stage role and return the directory
-    holding its inference files. Returns ``None`` (with a warning) if
-    any stage isn't yet downloaded — the caller surfaces that as
-    "advanced OCR will activate once downloads finish".
+) -> tuple[dict[str, Path], dict[str, str]] | None:
+    """Walk every PP-StructureV3 stage role and return both the
+    on-disk directory holding the inference files **and** the
+    canonical model name paddleocr expects to validate against.
+
+    Returns ``None`` (with a warning) if any stage isn't yet
+    downloaded — the caller surfaces that as "advanced OCR will
+    activate once downloads finish".
+
+    The model name is the basename of the manifest's HuggingFace
+    repo (``PaddlePaddle/PP-OCRv4_mobile_det`` →
+    ``PP-OCRv4_mobile_det``). paddleocr's pipeline cross-references
+    this against each stage's ``inference.yml`` and refuses to load
+    a v4-mobile dir when its own default expected, e.g., a v5-server
+    variant.
 
     Uses the ``<role_dir>/current`` symlink the manager maintains
     after a successful download — that resolves to the active
-    commit's directory, which is where ``inference.json`` /
-    ``inference.pdmodel`` / ``inference.pdiparams`` live.
+    commit's directory, which is where the inference files live.
     """
     statuses = model_manager.status()
+    manifest = model_manager.manifest
     stage_dirs: dict[str, Path] = {}
-    for role in PpStructureV3Extractor.STAGE_TO_KWARG:
+    stage_names: dict[str, str] = {}
+    for role in PpStructureV3Extractor.STAGE_TO_KWARGS:
         status = statuses.get(role)
         if status is None or status.state != "ready":
             LOG.info(
@@ -250,7 +262,12 @@ def _collect_advanced_ocr_stage_dirs(
             )
             return None
         stage_dirs[role] = directory
-    return stage_dirs
+        spec = manifest.get(role)
+        if spec is not None and spec.repo:
+            # Repo is ``"PaddlePaddle/PP-OCRv4_mobile_det"``; the
+            # model name is the segment after the slash.
+            stage_names[role] = spec.repo.rsplit("/", 1)[-1]
+    return stage_dirs, stage_names
 
 
 # ----- internals -------------------------------------------------------------

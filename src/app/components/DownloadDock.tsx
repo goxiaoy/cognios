@@ -237,15 +237,16 @@ function deriveDockState(
   if (liveState === "ready") return null;
   if (liveState === "downloading") return "downloading";
   if (liveState === "verifying") return "verifying";
+  if (liveState === "queued") return "queued";
   if (liveState === "error" || roleState === "error") return "error";
   // ``missing`` without a live SSE event is NOT the same as
   // "queued for download" — most missing roles are just optional
   // models the user has never enabled (e.g. the 13 advanced-ocr
   // stages). Surfacing them as "queued" makes the dock advertise
-  // downloads that aren't actually happening. The dock should only
-  // light up when there's real evidence of activity (live events
-  // or recorded errors); the Settings page is the right surface
-  // for "this model exists, you could enable it".
+  // downloads that aren't actually happening. The dock only lights
+  // up when there's real evidence of activity (live events or
+  // recorded errors). Roles parked on the manager's concurrency
+  // semaphore emit a ``queued`` SSE frame, so they DO appear here.
   return null;
 }
 

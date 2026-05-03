@@ -32,12 +32,18 @@ dependencies = [
   "Pillow>=10.0,<12.0",
 ]
 
-# The semantic-search ONNX path is opt-in: dev installs default to the
-# StubEmbedder (zero-vector) so test runs stay snappy. Release builds
-# (Unit 12 PyInstaller) install ``--extra embedding`` to pull the
-# transformers tokenizer + optimum.onnxruntime runtime that
-# ``GteEmbedder`` needs. The orchestrator factory falls back to
-# ``StubEmbedder`` automatically when these aren't importable.
+# The semantic-search ONNX path and the layout-aware advanced-OCR
+# pipeline both ship as optional extras so callers who pip-install
+# the sidecar can opt in. Both factories degrade gracefully when
+# the deps aren't importable: the embedder falls back to
+# ``StubEmbedder`` (zero-vector) and the advanced-OCR factory
+# returns ``None`` (dispatcher routes to basic OCR instead).
+#
+# Dev installs DO want both extras — the configured features need
+# the real models to behave like production. We pull them in by
+# default via ``tool.uv.default-extras`` below; the public extras
+# surface stays available for any consumer who wants a slim install
+# (``pip install search-sidecar`` keeps both paths stubbed).
 [project.optional-dependencies]
 embedding = [
   "optimum[onnxruntime]>=1.24,<2.0",
@@ -45,12 +51,19 @@ embedding = [
 ]
 # Layout-aware OCR (PP-StructureV3). Genuinely heavy — paddleocr +
 # paddlepaddle pull ~600 MB of native deps and the 13-stage model
-# bundle adds another ~600 MB on first download. Off by default; the
-# Settings UI surfaces an install hint when the user enables advanced
-# OCR with a local provider but the extra isn't present.
+# bundle adds another ~600 MB on first download. The factory skips
+# the local pipeline silently when these aren't importable.
+#
+# ``paddlex[ocr]`` is required: paddleocr 3.x delegates pipeline
+# construction to paddlex, and PP-StructureV3 specifically gates on
+# the ``[ocr]`` extra (pyclipper, shapely, chinese_calendar,
+# pypdfium2, imagesize, ftfy, premailer, ...). Without it the
+# pipeline init throws a generic ``DependencyError`` that paddleocr
+# wraps in an unhelpful "refer to the installation docs" message.
 advanced-ocr = [
   "paddleocr>=3.0,<4.0",
   "paddlepaddle>=3.0,<4.0",
+  "paddlex[ocr]>=3.0,<4.0",
 ]
 
 [project.scripts]
@@ -64,10 +77,26 @@ build-backend = "hatchling.build"
 packages = ["search_sidecar"]
 
 [dependency-groups]
+# Bare ``uv sync`` installs the ``dev`` group by default and the
+# group self-references the project with both extras enabled, so
+# devs get the full embedding + advanced-OCR runtime without
+# remembering ``--extra`` flags. Slim installs (no extras) are
+# still possible via ``uv sync --no-group dev`` or via plain
+# ``pip install search-sidecar`` for downstream consumers.
 dev = [
   "pytest==8.3.4",
   "pytest-asyncio==0.24.0",
+  "search-sidecar[embedding,advanced-ocr]",
 ]
+
+[tool.uv.sources]
+# Self-reference: tells uv the ``search-sidecar`` package referenced
+# above lives at the project root rather than on PyPI. Required
+# for the dep-group self-reference pattern to resolve.
+search-sidecar = { workspace = true }
+
+[tool.uv.workspace]
+members = ["."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
