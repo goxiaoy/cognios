@@ -47,9 +47,44 @@ import os
 import time
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, Field, model_validator
 
 LOG = logging.getLogger("search_sidecar.settings")
+
+# Wire-format tolerance: Rust + the frontend talk to ``/settings``
+# in camelCase (TS idiom + the tauri webview bridge). On disk we
+# keep snake_case so settings.json stays grep-friendly.
+#
+# Pydantic 2.13's alias machinery throws a noisy
+# ``UnsupportedFieldAttributeWarning`` on every model load even
+# when the alias is applied correctly, so we sidestep it: a
+# pre-validator on each model translates the known camelCase keys
+# into their snake_case Python names before the rest of pydantic
+# runs. ``model_dump(mode="json")`` still emits Python names →
+# settings.json stays snake_case for save_settings.
+_CAMEL_TO_SNAKE: dict[str, str] = {
+    "providerId": "provider_id",
+    "apiKeyRef": "api_key_ref",
+    "baseUrl": "base_url",
+    "modelPerCapability": "model_per_capability",
+    "cloudConsentAcked": "cloud_consent_acked",
+    "firstRunSkipped": "first_run_skipped",
+}
+
+
+def _normalize_keys(data: Any) -> Any:
+    """Best-effort: rewrite known camelCase keys to snake_case in
+    a freshly-received dict. Non-dict inputs (already-built model
+    instances, etc.) pass through untouched."""
+    if not isinstance(data, dict):
+        return data
+    result = dict(data)
+    for camel, snake in _CAMEL_TO_SNAKE.items():
+        if camel in result and snake not in result:
+            result[snake] = result.pop(camel)
+    return result
 
 CURRENT_VERSION = 1
 
@@ -75,6 +110,11 @@ class ProviderConfig(BaseModel):
     base_url: str | None = None  # None = use preset's default base URL
     model_per_capability: dict[str, str] = Field(default_factory=dict)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_camel_case(cls, data: Any) -> Any:
+        return _normalize_keys(data)
+
 
 class FeatureConfig(BaseModel):
     """User-configured state for one feature.
@@ -87,6 +127,11 @@ class FeatureConfig(BaseModel):
 
     enabled: bool = False
     provider_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_camel_case(cls, data: Any) -> Any:
+        return _normalize_keys(data)
 
 
 class SearchSettings(BaseModel):
@@ -110,6 +155,11 @@ class SearchSettings(BaseModel):
     # app relaunch.
     first_run_skipped: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_camel_case(cls, data: Any) -> Any:
+        return _normalize_keys(data)
+
 
 class SettingsVersionError(RuntimeError):
     """The on-disk file declares a `version` newer than this build supports."""
@@ -117,11 +167,12 @@ class SettingsVersionError(RuntimeError):
 
 def default_settings() -> SearchSettings:
     """Fresh-install defaults. Mandatory features (semantic-search,
-    result-reranking) are pre-bound to their local providers so a
-    fresh install boots into a working full-pipeline state once the
-    first-run downloads complete. Optional Phase-2 features (OCR,
-    captioning) stay unbound — they appear in settings the moment
-    the user enables them.
+    result-reranking, image-ocr) are pre-bound to their local
+    providers so a fresh install boots into a working full-pipeline
+    state once the first-run downloads complete. PaddleOCR ships
+    bundled inside the rapidocr-onnxruntime wheel, so image-ocr has
+    no download cost — that's why it's mandatory rather than opt-in.
+    Image captioning is still optional pending the local Gemma path.
     """
     return SearchSettings(
         providers={
@@ -131,6 +182,10 @@ def default_settings() -> SearchSettings:
             ),
             "local-gte-reranker": ProviderConfig(
                 provider_id="local-gte-reranker",
+                enabled=True,
+            ),
+            "local-paddleocr": ProviderConfig(
+                provider_id="local-paddleocr",
                 enabled=True,
             ),
         },
@@ -143,7 +198,10 @@ def default_settings() -> SearchSettings:
                 enabled=True,
                 provider_id="local-gte-reranker",
             ),
-            "image-ocr": FeatureConfig(enabled=False, provider_id=None),
+            "image-ocr": FeatureConfig(
+                enabled=True,
+                provider_id="local-paddleocr",
+            ),
             "image-captioning": FeatureConfig(enabled=False, provider_id=None),
         },
     )
@@ -182,7 +240,11 @@ def load_settings(path: Path) -> SearchSettings:
 # Feature ids that are mandatory in v1. Kept here (not in
 # providers/presets.py) so the settings layer has zero imports from
 # the providers layer.
-_MANDATORY_FEATURE_IDS: tuple[str, ...] = ("semantic-search", "result-reranking")
+_MANDATORY_FEATURE_IDS: tuple[str, ...] = (
+    "semantic-search",
+    "result-reranking",
+    "image-ocr",
+)
 
 
 def migrate_mandatory_features(

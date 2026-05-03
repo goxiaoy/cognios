@@ -5,17 +5,17 @@ import type { SearchClient } from "../../search/types/search";
 import { useModelDownloadProgress } from "../hooks/useModelDownloadProgress";
 import { useSearchSubsystemStatus } from "../hooks/useSearchSubsystemStatus";
 import { FeaturesList } from "./FeaturesList";
-import { IndexingStatusCard } from "./IndexingStatusCard";
-import { ModelManagerStatus } from "./ModelManagerStatus";
 import { ProvidersSection } from "./ProvidersSection";
 import { RestartConfirmation } from "./RestartConfirmation";
+import { SettingsDiagnostics } from "./SettingsDiagnostics";
 
 /**
- * Primary Settings page. Replaces the old "Models" card with the
- * feature-vocabulary view: Features list (with provider pickers per
- * feature) + Providers section (always visible). The legacy
- * ModelManagerStatus + IndexingStatusCard are reachable as a
- * "Diagnostics" sub-section so power users keep the inspect surface.
+ * Primary Settings page. Renders the feature catalogue (with a
+ * provider picker per feature) alongside the providers list — and
+ * folds the per-model role state (downloaded / pending license /
+ * error) directly into each local provider row, so users get a
+ * single coherent surface instead of a separate "Diagnostics"
+ * dashboard. The bottom strip shows aggregate counts.
  *
  * On settings change requiring a sidecar restart, a banner appears
  * with a button that opens RestartConfirmation; on confirm the
@@ -25,7 +25,6 @@ export function SettingsLayout({ client }: { client: SearchClient }) {
   const { models, indexing } = useSearchSubsystemStatus(client);
   const progress = useModelDownloadProgress();
   const [settings, setSettings] = useState<SearchSettings | null>(null);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showRestart, setShowRestart] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,16 +65,10 @@ export function SettingsLayout({ client }: { client: SearchClient }) {
 
   return (
     <section className="settings-layout" aria-label="Settings">
-      <header className="settings-header">
-        <button
-          type="button"
-          className="settings-diagnostics-link"
-          aria-pressed={showDiagnostics}
-          onClick={() => setShowDiagnostics((v) => !v)}
-        >
-          {showDiagnostics ? "Hide" : "Show"} Diagnostics
-        </button>
-      </header>
+      <p className="settings-page-sub">
+        Wire up the engines that power your knowledge base. Local providers
+        run on this Mac; cloud providers go through your own keys.
+      </p>
 
       {error ? (
         <p className="settings-role-error" role="alert">
@@ -84,8 +77,10 @@ export function SettingsLayout({ client }: { client: SearchClient }) {
       ) : null}
 
       {settings?.needsRestart ? (
-        <div className="settings-restart-banner" role="status">
-          <span>Settings changed — restart the sidecar to apply.</span>
+        <div className="settings-restart-toast" role="status">
+          <span className="settings-restart-toast-text">
+            Settings changed — restart the sidecar to apply.
+          </span>
           <button
             type="button"
             className="settings-action is-primary"
@@ -97,44 +92,40 @@ export function SettingsLayout({ client }: { client: SearchClient }) {
       ) : null}
 
       {settings ? (
-        <div className="settings-grid">
-          <FeaturesList
+        <>
+          <div className="settings-grid">
+            <FeaturesList
+              settings={settings}
+              client={client}
+              onSettingsChange={setSettings}
+            />
+            <ProvidersSection
+              settings={settings}
+              client={client}
+              onSettingsChange={setSettings}
+              models={models}
+              progress={progress}
+            />
+          </div>
+          <SettingsDiagnostics
             settings={settings}
-            client={client}
-            onSettingsChange={setSettings}
+            indexing={indexing}
+            models={models}
           />
-          <ProvidersSection
-            settings={settings}
-            client={client}
-            onSettingsChange={setSettings}
-          />
-        </div>
+        </>
       ) : (
         <p className="muted-copy">Loading settings…</p>
       )}
 
-      {showDiagnostics ? (
-        <div className="settings-grid settings-diagnostics">
-          <h2 className="settings-card-title">Diagnostics</h2>
-          <ModelManagerStatus
-            envelope={models}
-            client={client}
-            progress={progress}
-          />
-          <IndexingStatusCard envelope={indexing} />
-        </div>
-      ) : null}
-
       {showRestart ? (
         <RestartConfirmation
           client={client}
-          onClose={() => {
-            setShowRestart(false);
-            // After restart, re-fetch settings (needsRestart should clear).
-            void client.settings().then((env) => {
-              if (env.state === "ready" && env.data) setSettings(env.data);
-            });
-          }}
+          onClose={() => setShowRestart(false)}
+          // The component polls until the new sidecar reports ready
+          // and hands us the fresh state directly; if we re-fetched
+          // here we'd race the boot and risk an ``initialising``
+          // envelope leaving the stale ``needsRestart`` banner up.
+          onRestarted={setSettings}
         />
       ) : null}
     </section>

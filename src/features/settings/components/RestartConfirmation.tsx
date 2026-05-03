@@ -1,6 +1,10 @@
 import { useState } from "react";
 
+import type { SearchSettings } from "../../../lib/contracts/search";
 import type { SearchClient } from "../../search/types/search";
+
+const READY_POLL_INTERVAL_MS = 250;
+const READY_POLL_TIMEOUT_MS = 10_000;
 
 /**
  * Modal-style confirmation rendered inline in SettingsLayout when
@@ -8,13 +12,25 @@ import type { SearchClient } from "../../search/types/search";
  * affect the dispatcher require a restart in v1; this surface
  * makes the restart explicit (rather than auto-restart) so the
  * user knows search is briefly unavailable.
+ *
+ * After issuing the restart, polls ``client.settings()`` until the
+ * envelope returns ``ready`` (or the timeout elapses) — without
+ * the wait, the parent's post-close re-fetch races the new
+ * sidecar's boot, gets ``initialising``, and silently keeps the
+ * pre-restart state (with the stale ``needsRestart=true`` flag)
+ * which leaves the "Restart sidecar" banner on screen forever.
  */
 export function RestartConfirmation({
   client,
   onClose,
+  onRestarted,
 }: {
   client: SearchClient;
   onClose: () => void;
+  /** Called with the fresh post-restart settings once the new
+   * sidecar reports ``ready``. Bypassing the parent's separate
+   * re-fetch is what guarantees the banner clears. */
+  onRestarted?: (settings: SearchSettings) => void;
 }) {
   const [state, setState] = useState<
     | { kind: "idle" }
@@ -26,10 +42,28 @@ export function RestartConfirmation({
     setState({ kind: "restarting" });
     try {
       await client.restartSidecar();
-      // Wait briefly for settings GET to succeed against the new
-      // sidecar — confirms the runtime file rendezvous worked.
-      await client.settings();
-      onClose();
+      // Poll until the new sidecar comes up and returns a ready
+      // settings envelope.
+      const deadline = Date.now() + READY_POLL_TIMEOUT_MS;
+      let fresh: SearchSettings | null = null;
+      while (Date.now() < deadline) {
+        const env = await client.settings();
+        if (env.state === "ready" && env.data) {
+          fresh = env.data;
+          break;
+        }
+        await sleep(READY_POLL_INTERVAL_MS);
+      }
+      if (fresh) {
+        onRestarted?.(fresh);
+        onClose();
+      } else {
+        setState({
+          kind: "error",
+          message:
+            "Restart issued but the search subsystem hasn't come back online yet. Try again in a moment.",
+        });
+      }
     } catch (err) {
       setState({
         kind: "error",
@@ -72,4 +106,8 @@ export function RestartConfirmation({
       </div>
     </div>
   );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

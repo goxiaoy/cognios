@@ -11,11 +11,13 @@ body {
   min-width: 320px;
   height: 100%;
   overflow: hidden;
-  background:
-    radial-gradient(circle at top left, rgba(201, 81, 43, 0.12), transparent 32%),
-    linear-gradient(180deg, #f8f6f1 0%, var(--bg) 100%);
+  background: var(--paper);
   color: var(--ink);
   font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv11";
 }
 
 #root {
@@ -267,22 +269,40 @@ button:disabled {
   grid-template-columns: 0.95rem minmax(0, 1fr);
   gap: 0;
   align-items: center;
-  padding: 0.18rem 0.35rem;
-  border-left: 2px solid transparent;
-  transition: background 120ms ease, border-color 120ms ease;
+  padding: 0.22rem 0.4rem;
+  border-radius: 6px;
+  position: relative;
+  color: var(--ink-2);
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .tree-row:hover {
-  background: color-mix(in srgb, var(--accent) 12%, white 88%);
+  background: rgba(34, 28, 14, 0.04);
 }
 
 .tree-row.is-selected {
-  background: color-mix(in srgb, var(--accent) 20%, white 80%);
-  border-left-color: var(--accent);
+  background: var(--accent-tint);
+  color: var(--ink);
+}
+
+.tree-row.is-selected::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
 .tree-row.is-selected:hover {
-  background: color-mix(in srgb, var(--accent) 24%, white 76%);
+  background: var(--accent-tint);
+}
+
+.tree-row.is-selected .node-icon {
+  color: var(--accent);
+  opacity: 1;
 }
 
 .tree-expander,
@@ -398,9 +418,9 @@ button:disabled {
 }
 
 .node-icon {
-  color: var(--accent-ink);
+  color: var(--ink-3);
   flex-shrink: 0;
-  opacity: 0.72;
+  opacity: 1;
 }
 
 .tree-row-main:focus-visible {
@@ -431,26 +451,70 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
-  font-size: 0.88rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1.3;
 }
 
-.node-state-icon {
+/* Static colored dot for index state — replaces the pre-Unit-13
+ * spinning Loader. Used in tree rows (dot-only) and the inspector
+ * meta grid (dot + label inside a .node-state-pill). */
+.node-state-dot {
   flex-shrink: 0;
-  width: 0.75rem;
-  height: 0.75rem;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-4);
+  display: inline-block;
 }
 
-.node-state-icon.state-error {
-  color: #8a1e10;
+.node-state-dot.is-indexed {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(91, 122, 74, 0.18);
 }
 
-.node-state-icon.state-pending {
-  color: #8a6010;
-  animation: spin 1.4s linear infinite;
+.node-state-dot.is-pending {
+  background: var(--warn);
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.node-state-dot.is-error {
+  background: #b3261e;
+  box-shadow: 0 0 0 3px rgba(179, 38, 30, 0.18);
+}
+
+.node-state-dot.is-unsupported {
+  background: var(--ink-4);
+}
+
+/* Pill variant (inspector): dot + label, like the provider status
+ * pills used in Settings. */
+.node-state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.node-state-pill.is-indexed {
+  color: var(--ok);
+}
+
+.node-state-pill.is-pending {
+  color: var(--warn);
+}
+
+.node-state-pill.is-error {
+  color: #b3261e;
+}
+
+.node-state-pill.is-unsupported {
+  color: var(--ink-3);
+}
+
+.inspector-meta-muted {
+  color: var(--ink-4);
 }
 
 .node-state {
@@ -493,8 +557,8 @@ button:disabled {
 
 .tree-children {
   display: grid;
-  border-left: 1px dashed color-mix(in srgb, var(--line) 80%, transparent 20%);
-  margin-left: 1.35rem;
+  border-left: 1px solid var(--line-2);
+  margin-left: 1.1rem;
 }
 
 /* ── Tree context menu ── */
@@ -644,11 +708,11 @@ button:disabled {
   display: grid;
   /* brand → ops → primary nav (stretches) → footer pinned to bottom */
   grid-template-rows: auto auto 1fr auto;
-  gap: 1.25rem;
+  gap: 0.85rem;
   /* top padding clears the fixed titlebar + traffic lights */
-  padding: 2.75rem 0.75rem 1.5rem 1rem;
-  background: transparent;
-  border: none;
+  padding: 2.75rem 0.75rem 1.25rem 0.75rem;
+  background: var(--paper-2);
+  border-right: 1px solid var(--line-2);
   box-shadow: none;
 }
 
@@ -656,7 +720,7 @@ button:disabled {
   display: grid;
   gap: 0.1rem;
   padding-top: 0.5rem;
-  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  border-top: 1px solid var(--line-2);
 }
 
 .app-sidebar-footer-item {
@@ -665,17 +729,53 @@ button:disabled {
    * section. */
 }
 
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.25rem 0.4rem 0;
+  color: var(--ink);
+  min-width: 0;
+}
+
+.app-brand-logo {
+  flex-shrink: 0;
+  display: block;
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.04));
+}
+
+.app-brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* The 200px sidebar leaves the text column ~135px after the
+   * logo + gap + paddings. "Personal knowledge OS" at 0.7rem is
+   * juuust over that, so we ellipsize the tag rather than let it
+   * wrap to a third line under the heading. */
+  overflow: hidden;
+}
+
 .app-brand-mark {
   margin: 0;
   font-family: var(--font-heading);
-  font-size: 1.4rem;
-  letter-spacing: -0.03em;
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  line-height: 1.05;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .app-brand-copy {
-  margin: 0.35rem 0 0;
-  color: var(--muted);
-  font-size: 0.92rem;
+  margin: 0.1rem 0 0;
+  color: var(--ink-3);
+  font-size: 0.68rem;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .app-nav {
@@ -687,34 +787,36 @@ button:disabled {
 .app-nav-item {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.6rem;
   justify-content: start;
   width: 100%;
-  padding: 0.48rem 0.75rem;
+  padding: 0.45rem 0.65rem;
   border-color: transparent;
   background: transparent;
-  color: var(--muted);
-  font-size: 0.875rem;
-  border-radius: 0.4rem;
+  color: var(--ink-2);
+  font-size: 0.82rem;
+  font-weight: 500;
+  border-radius: var(--radius);
   box-shadow: none;
 }
 
 .app-nav-item:not(:disabled):hover {
-  background: color-mix(in srgb, var(--ink) 8%, transparent 92%);
+  background: rgba(34, 28, 14, 0.04);
   border-color: transparent;
   color: var(--ink);
   box-shadow: none;
 }
 
 .app-nav-item.is-active {
-  background: var(--accent);
+  background: var(--ink);
   border-color: transparent;
-  color: #fff;
-  font-weight: 600;
+  color: var(--paper);
+  font-weight: 500;
 }
 
 .app-nav-item.is-active:not(:disabled):hover {
-  background: color-mix(in srgb, var(--accent) 88%, black 12%);
+  background: #000;
+  color: var(--paper);
 }
 
 .app-nav-icon {
@@ -731,8 +833,6 @@ button:disabled {
 }
 
 .app-ops {
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 0.85rem;
   display: grid;
   gap: 0.25rem;
 }
@@ -740,24 +840,28 @@ button:disabled {
 .app-ops-item {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.5rem;
   width: 100%;
-  padding: 0.75rem 0.9rem;
-  border-color: transparent;
-  background: transparent;
-  color: var(--ink);
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--line-2);
+  background: var(--card);
+  color: var(--ink-3);
   box-shadow: none;
   text-align: left;
+  border-radius: var(--radius);
+  font-size: 0.82rem;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 .app-ops-item:not(:disabled):hover {
-  background: color-mix(in srgb, var(--accent) 10%, white 90%);
-  border-color: transparent;
+  background: var(--paper-2);
+  border-color: var(--ink-4);
+  color: var(--ink);
   box-shadow: none;
 }
 
 .app-ops-icon {
-  color: var(--muted);
+  color: currentColor;
   flex-shrink: 0;
 }
 
@@ -766,10 +870,15 @@ button:disabled {
 }
 
 .app-ops-hint {
-  color: var(--muted);
+  margin-left: auto;
+  color: var(--ink-4);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
 }
 
 .search-overlay {
@@ -1197,15 +1306,16 @@ button:disabled {
 
 .app-content-header {
   flex-shrink: 0;
-  padding: 0.85rem 1.5rem 0.65rem;
+  padding: 0.6rem 1rem 0.6rem;
+  border-bottom: 1px solid var(--line-2);
 }
 
 .app-content-title {
   margin: 0;
   font-family: var(--font-heading);
-  font-size: 1.05rem;
+  font-size: 0.95rem;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.005em;
   color: var(--ink);
 }
 
@@ -1215,13 +1325,12 @@ button:disabled {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: color-mix(in srgb, var(--panel) 97%, white 3%);
-  border-radius: 0.75rem;
-  border: 1px solid var(--line);
-  /* breathing room: right + bottom gap from window edge */
-  margin: 0 0.6rem 0.6rem 0.4rem;
-  padding: 1.25rem 1.5rem;
-  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.05);
+  background: var(--paper);
+  border-radius: 0;
+  border: none;
+  margin: 0;
+  padding: 0;
+  box-shadow: none;
 }
 
 .app-panel.is-active {
@@ -1264,6 +1373,8 @@ button:disabled {
   min-height: 0;
   overflow: hidden;
   min-width: 0;
+  background: var(--paper);
+  border-right: 1px solid var(--line-2);
 }
 
 .tree-resize-handle {
@@ -1308,8 +1419,9 @@ body.is-resizing-pane {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 0 0.85rem 1rem 0.85rem;
+  padding: 0;
   overflow: hidden;
+  background: var(--paper);
 }
 
 .detail-surface-scroll {
@@ -1322,16 +1434,23 @@ body.is-resizing-pane {
 
 .detail-surface-scroll > .breadcrumbs {
   flex: 0 0 auto;
+  padding: 0.85rem 1.5rem 0;
+  margin-bottom: 0;
+  font-family: var(--font-mono);
 }
 
 .detail-placeholder {
   display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
   align-items: center;
   justify-content: center;
+  gap: 0.5rem;
   color: var(--ink-3);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
+  padding: 2rem;
+  text-align: center;
 }
 
 .detail-placeholder p {
@@ -1339,12 +1458,13 @@ body.is-resizing-pane {
 }
 
 .inspector-panel {
-  padding: 0 0 1rem 0.9rem;
+  padding: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  border-left: 1px solid color-mix(in srgb, var(--line) 55%, transparent 45%);
+  background: var(--paper);
+  border-left: 1px solid var(--line-2);
 }
 
 .inspector-panel-scroll {
@@ -1360,18 +1480,25 @@ body.is-resizing-pane {
   flex-direction: column;
   min-height: 0;
   flex: 1;
+  background: var(--paper);
+  border-right: 1px solid var(--line-2);
 }
 
 .explorer-tree-toolbar {
-  padding: 0.35rem 0.55rem 0.45rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--line-2);
+  min-height: 44px;
 }
 
 .explorer-tree {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0.2rem 0;
+  padding: 0.4rem 0.4rem 0.75rem;
+  font-size: 0.82rem;
 }
 
 .inspector-pane--empty {
@@ -1391,32 +1518,39 @@ body.is-resizing-pane {
 .breadcrumbs {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.4rem 0;
-  margin-bottom: 0.4rem;
-  font-size: 0.75rem;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.5rem 0;
+  margin-bottom: 0;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
   color: var(--ink-3);
-  overflow: hidden;
   white-space: nowrap;
+  overflow: hidden;
 }
 
 .breadcrumb-segment-group {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.25rem;
 }
 
 .breadcrumb-separator {
-  color: var(--ink-3);
-  opacity: 0.7;
+  color: var(--ink-4);
+  opacity: 1;
 }
 
 .breadcrumb-segment {
-  color: var(--ink-2);
+  color: var(--ink-3);
+  padding: 1px 4px;
+  border-radius: 4px;
+  transition: background 100ms ease, color 100ms ease;
 }
 
 .breadcrumb-segment-group:last-child .breadcrumb-segment {
   color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 0.76rem;
   font-weight: 500;
 }
 
@@ -1530,13 +1664,16 @@ body.is-resizing-pane {
 /* ── Inspector pane ── */
 
 .inspector-pane {
-  padding: 0;
+  padding: 1.1rem 1.1rem 4rem;
 }
 
 .inspector-pane-header {
-  padding-bottom: 0.75rem;
-  margin-bottom: 0.65rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-bottom: 0.85rem;
+  margin-bottom: 0.85rem;
+  border-bottom: 1px solid var(--line-2);
 }
 
 .inspector-pane-title {
@@ -1544,34 +1681,35 @@ body.is-resizing-pane {
   font-family: var(--font-heading);
   font-size: 0.95rem;
   font-weight: 600;
-  letter-spacing: -0.01em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+  word-break: break-word;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.3;
 }
 
 .inspector-pane-kind {
-  margin: 0.2rem 0 0;
-  color: var(--muted);
+  margin: 0;
+  color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
 }
 
 .inspector-meta {
   display: grid;
-  margin: 0;
+  grid-template-columns: 80px 1fr;
+  gap: 0.55rem 0.75rem;
+  margin: 0 0 0.5rem;
   padding: 0;
+  font-size: 0.78rem;
 }
 
 .inspector-meta-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 0.5rem;
-  padding: 0.4rem 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
+  display: contents;
 }
 
 .inspector-meta-row:last-child {
@@ -1579,22 +1717,26 @@ body.is-resizing-pane {
 }
 
 .inspector-meta-row dt {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
+  color: var(--ink-3);
+  font-family: var(--font-body);
+  font-size: 0.66rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
   flex-shrink: 0;
+  padding-top: 1px;
+  margin: 0;
 }
 
 .inspector-meta-row dd {
   margin: 0;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Hierarchy header actions ── */
@@ -2435,26 +2577,30 @@ body.is-resizing-pane {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  padding: 0 1rem 1rem 0;
+  padding: 0;
 }
 
 .markdown-preview-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding-bottom: 0.55rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
-  margin-bottom: 1.25rem;
+  gap: 0.75rem;
+  padding: 0.5rem 1.5rem 0.85rem;
+  border-bottom: 1px solid var(--line-2);
+  margin-bottom: 0;
 }
 
 .markdown-preview-title {
   margin: 0;
-  font-size: 1.1rem;
+  font-family: var(--font-heading);
+  font-size: 1.4rem;
   font-weight: 600;
+  letter-spacing: -0.015em;
   color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 
 .markdown-preview-body {
@@ -2499,20 +2645,26 @@ body.is-resizing-pane {
 .markdown-preview-mode-toggle {
   display: inline-flex;
   margin-left: auto;
-  border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
-  border-radius: 6px;
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 2px;
+  flex-shrink: 0;
+  gap: 1px;
   overflow: hidden;
 }
 
 .markdown-preview-mode-button {
   background: transparent;
   border: none;
-  border-right: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
-  color: var(--ink-2);
+  color: var(--ink-3);
   cursor: pointer;
   font-size: 0.72rem;
+  font-weight: 500;
   letter-spacing: 0.02em;
-  padding: 0.2rem 0.6rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 6px;
+  box-shadow: none;
 }
 
 .markdown-preview-mode-button:last-child {
@@ -2520,14 +2672,17 @@ body.is-resizing-pane {
 }
 
 .markdown-preview-mode-button:hover {
-  background: color-mix(in srgb, var(--line) 20%, transparent);
-  color: var(--ink);
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-2);
+  box-shadow: none;
 }
 
 .markdown-preview-mode-button.is-active {
-  background: color-mix(in srgb, var(--line) 30%, transparent);
+  background: var(--card);
   color: var(--ink);
-  font-weight: 600;
+  font-weight: 500;
+  box-shadow: var(--shadow-1);
 }
 
 .markdown-preview-rendered {
@@ -2535,9 +2690,12 @@ body.is-resizing-pane {
   min-height: 0;
   overflow: auto;
   font-size: 0.92rem;
-  line-height: 1.55;
-  color: var(--ink);
-  padding-right: 0.25rem;
+  line-height: 1.65;
+  color: var(--ink-2);
+  padding: 1.5rem 3rem 4rem;
+  max-width: 820px;
+  width: 100%;
+  margin: 0 auto;
 }
 
 .markdown-preview-rendered h1,
@@ -2546,17 +2704,30 @@ body.is-resizing-pane {
 .markdown-preview-rendered h4,
 .markdown-preview-rendered h5,
 .markdown-preview-rendered h6 {
+  font-family: var(--font-heading);
   font-weight: 600;
-  margin: 1.25em 0 0.5em;
+  margin: 1.6em 0 0.5em;
   line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  text-wrap: balance;
 }
 
-.markdown-preview-rendered h1 { font-size: 1.6rem; }
-.markdown-preview-rendered h2 { font-size: 1.3rem; }
-.markdown-preview-rendered h3 { font-size: 1.1rem; }
-.markdown-preview-rendered h4 { font-size: 1rem; }
+.markdown-preview-rendered h1 {
+  font-size: 1.85rem;
+  letter-spacing: -0.018em;
+  margin-top: 0;
+  margin-bottom: 0.6em;
+}
+.markdown-preview-rendered h2 {
+  font-size: 1.2rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--line-2);
+}
+.markdown-preview-rendered h3 { font-size: 1rem; }
+.markdown-preview-rendered h4 { font-size: 0.95rem; }
 .markdown-preview-rendered h5,
-.markdown-preview-rendered h6 { font-size: 0.92rem; color: var(--ink-2); }
+.markdown-preview-rendered h6 { font-size: 0.9rem; color: var(--ink-3); }
 
 .markdown-preview-rendered h1:first-child,
 .markdown-preview-rendered h2:first-child,
@@ -2565,11 +2736,12 @@ body.is-resizing-pane {
 }
 
 .markdown-preview-rendered p {
-  margin: 0.6em 0;
+  margin: 0 0 0.9em;
+  text-wrap: pretty;
 }
 
 .markdown-preview-rendered a {
-  color: #2563eb;
+  color: var(--accent);
   text-decoration: none;
 }
 
@@ -2594,21 +2766,23 @@ body.is-resizing-pane {
 }
 
 .markdown-preview-rendered code {
-  background: color-mix(in srgb, var(--line) 30%, transparent);
-  padding: 0.12em 0.35em;
-  border-radius: 3px;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 0.86em;
+  background: var(--paper-2);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--ink);
 }
 
 .markdown-preview-rendered pre {
-  background: color-mix(in srgb, var(--line) 25%, transparent);
-  padding: 0.75rem 1rem;
-  border-radius: 6px;
+  background: var(--paper-2);
+  border: 1px solid var(--line-2);
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
   overflow-x: auto;
-  margin: 0.8em 0;
-  font-size: 0.85rem;
-  line-height: 1.45;
+  margin: 1em 0 1.2em;
+  font-size: 0.82rem;
+  line-height: 1.55;
 }
 
 .markdown-preview-rendered pre code {
@@ -2658,24 +2832,24 @@ body.is-resizing-pane {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  padding: 0 1rem 1rem 0;
+  padding: 0;
 }
 
 .image-preview-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding-bottom: 0.55rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
-  margin-bottom: 1rem;
+  gap: 0.75rem;
+  padding: 0.5rem 1.5rem 0.85rem;
+  border-bottom: 1px solid var(--line-2);
+  margin-bottom: 0;
 }
 
 .image-preview-title {
   margin: 0;
   font-family: var(--font-heading);
-  font-size: 1.1rem;
+  font-size: 1.4rem;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2686,6 +2860,11 @@ body.is-resizing-pane {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  padding: 1.25rem 1.5rem 3rem;
+  overflow: auto;
+  max-width: 820px;
+  width: 100%;
+  margin: 0 auto;
 }
 
 .image-preview-section {
@@ -2725,10 +2904,10 @@ body.is-resizing-pane {
  * center-pane viewer. */
 .inspector-image {
   margin: 0.85rem 0 0;
-  border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
-  border-radius: 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
   overflow: hidden;
-  background: color-mix(in srgb, var(--line) 12%, transparent);
+  background: linear-gradient(135deg, var(--paper-2), var(--paper-3));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3141,21 +3320,32 @@ body.is-resizing-pane {
 }
 
 .settings-card {
-  border: 1px solid var(--line);
-  border-radius: 0.4rem;
-  padding: 0.85rem 1rem;
-  background: var(--surface-2, #f6f7f9);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.25rem 1rem;
+  background: var(--card);
+  box-shadow: var(--shadow-1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .settings-card-title {
-  margin: 0 0 0.5rem;
-  font-size: 0.92rem;
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
   font-weight: 600;
+  letter-spacing: -0.005em;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  color: var(--ink);
 }
 
 .settings-card-hint {
   margin: 0.5rem 0 0;
   font-size: 0.8rem;
+  color: var(--ink-3);
 }
 
 .settings-role-list {
@@ -3359,63 +3549,31 @@ body.is-resizing-pane {
   font-size: 0.7rem;
 }
 
-/* Settings modal — opens from the sidebar footer; SettingsLayout
- * renders its cards inside the modal body. Sized to fit the
- * read-only model + indexing dashboard plus future write controls. */
-.settings-modal {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  width: min(960px, calc(100vw - 48px));
-  max-height: calc(100vh - 64px);
+/* Settings page — full-section panel rendered in the app shell
+ * (was a modal pre-Unit 12). The shell-level header already shows
+ * "Settings" so the panel itself drops the page-title and just
+ * displays the cards on a paper background. */
+.settings-page-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 24px 48px rgba(30, 25, 20, 0.18);
+  background: var(--paper);
 }
 
-.settings-modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.85rem 1.1rem;
-  border-bottom: 1px solid var(--line);
+.settings-page-panel .settings-layout {
+  padding: 1.5rem 2rem 4rem;
+  max-width: 1080px;
+  width: 100%;
+  margin: 0 auto;
+  gap: 1.25rem;
 }
 
-.settings-modal-title {
-  margin: 0;
-  font-family: var(--font-heading);
-  font-size: 1.1rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-}
-
-.settings-modal-close {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 0.25rem;
-  border-radius: 0.3rem;
-  transition: background-color 120ms ease, color 120ms ease;
-}
-
-.settings-modal-close:hover {
-  background: color-mix(in srgb, var(--ink) 6%, transparent 94%);
-  color: var(--ink);
-}
-
-.settings-modal-body {
-  padding: 1rem 1.1rem 1.25rem;
-  overflow-y: auto;
-}
-
-/* SettingsLayout originally rendered as a full panel; inside the
- * modal we drop its outer max-width so the cards span the full
- * dialog width. */
-.settings-modal-body .settings-layout {
-  padding: 0;
-  max-width: none;
+@media (max-width: 900px) {
+  .settings-page-panel .settings-layout {
+    padding: 1.25rem 1.25rem 3rem;
+  }
 }
 
 .license-modal {
@@ -3626,33 +3784,53 @@ body.is-resizing-pane {
 .confirm-dialog-backdrop {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, #000 35%, transparent 65%);
+  background: rgba(20, 16, 8, 0.32);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  /* Above the provider chooser/editor modals (z-index 220) so the
+   * cloud-egress consent gate always wins when both are layered. */
+  z-index: 240;
+  animation: cogni-scrim-in 0.18s ease-out;
 }
 
 .confirm-dialog {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 1.4rem 1.6rem;
-  max-width: 28rem;
-  box-shadow: 0 8px 32px color-mix(in srgb, #000 25%, transparent 75%);
+  background: var(--card);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-xl);
+  padding: 1.5rem 1.6rem 1.25rem;
+  width: min(440px, calc(100vw - 32px));
+  max-width: none;
+  box-shadow: var(--shadow-3);
+  color: var(--ink);
+  animation: cogni-sheet-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
 }
 
 .confirm-dialog-title {
-  margin: 0 0 0.6rem;
-  font-size: 1rem;
+  margin: 0 0 0.7rem;
+  font-family: var(--font-heading);
+  font-size: 1.1rem;
   font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+}
+
+.confirm-dialog .muted-copy {
+  color: var(--ink-2);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  margin: 0 0 0.7rem;
 }
 
 .confirm-dialog-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 0.6rem;
-  margin-top: 1.2rem;
+  gap: 0.5rem;
+  margin-top: 1.1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line-2);
 }
 
 .settings-action.is-primary {
@@ -3667,34 +3845,100 @@ body.is-resizing-pane {
   font-weight: 600;
 }
 
-.settings-diagnostics-link {
-  appearance: none;
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 0.15rem 0.55rem;
-  font-size: 0.75rem;
-  cursor: pointer;
-  color: var(--muted);
+/* Floating action toast — pulled out of document flow so toggling
+ * a restart-affecting setting doesn't reflow the page. Anchors to
+ * the bottom-right of the viewport while the Settings section is
+ * mounted, paper card with a soft shadow so it reads as a
+ * persistent action prompt rather than a banner. */
+.settings-restart-toast {
+  position: fixed;
+  z-index: 220;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.6rem 0.7rem 0.6rem 1rem;
+  background: var(--card);
+  border: 1px solid var(--accent-soft);
+  border-radius: 999px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 12px 30px rgba(20, 16, 8, 0.18);
+  font-size: 0.82rem;
+  color: var(--ink);
+  max-width: calc(100vw - 3rem);
+  animation: settings-restart-toast-in 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
 }
 
-.settings-diagnostics-link:hover {
-  color: var(--text);
+@keyframes settings-restart-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
 }
 
-.settings-restart-banner {
+.settings-restart-toast-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Narrow viewports — switch to a full-width bottom strip so the
+ * toast doesn't crowd the dock chip on the left. */
+@media (max-width: 720px) {
+  .settings-restart-toast {
+    left: 1rem;
+    right: 1rem;
+    max-width: none;
+    border-radius: var(--radius);
+  }
+  .settings-restart-toast-text {
+    white-space: normal;
+  }
+}
+
+/* ── Settings page lede (sits below the shell-level "Settings"
+ * title; the page itself doesn't repeat the heading). ── */
+.settings-page-sub {
+  margin: 0 0 0.5rem;
+  color: var(--ink-3);
+  font-size: 0.85rem;
+  max-width: 64ch;
+  line-height: 1.5;
+}
+
+/* ── Two-column grid override ── */
+.settings-page-panel .settings-grid {
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 900px) {
+  .settings-page-panel .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── Card header rows (Features / Providers) ── */
+.features-card-header,
+.providers-card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.6rem;
-  padding: 0.5rem 0.75rem;
-  margin: 0.5rem 0 1rem;
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  border-radius: 6px;
-  font-size: 0.85rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--line-2);
 }
 
+.features-card-count,
+.providers-card-count {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--ink-4);
+  letter-spacing: 0;
+}
+
+/* ── Lists ── */
 .features-list,
 .providers-list {
   list-style: none;
@@ -3702,176 +3946,710 @@ body.is-resizing-pane {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.15rem;
 }
 
-.feature-row,
-.provider-row {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0.7rem 0.85rem;
-  background: var(--surface);
+.providers-list {
+  gap: 0.4rem;
+}
+
+/* ── Feature card ── */
+.feature-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 0.85rem;
+  align-items: flex-start;
+  padding: 0.85rem;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  background: transparent;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.feature-card:hover {
+  background: var(--paper-2);
+}
+
+.feature-card.is-enabled {
+  background: var(--paper-2);
+  border-color: var(--line);
+}
+
+.feature-card.is-enabled::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.feature-card-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--paper-2);
+  border: 1px solid var(--line-2);
+  color: var(--ink-2);
+}
+
+.feature-card.is-enabled .feature-card-icon {
+  background: var(--accent-tint);
+  border-color: var(--accent-soft);
+  color: var(--accent);
+}
+
+.feature-card-body {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.25rem;
+  min-width: 0;
 }
 
-.feature-row-header {
+.feature-card-name {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 0.6rem;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--ink);
 }
 
-.feature-row-meta {
+.feature-row-name {
+  /* Kept for tests asserting visible feature display name. */
+  display: inline;
+}
+
+.feature-card-blurb,
+.feature-row-description {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--ink-3);
+  line-height: 1.45;
+}
+
+.feature-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-radius: 4px;
+  border: 1px solid var(--line-2);
+  background: var(--paper-2);
+  color: var(--ink-3);
+}
+
+.feature-badge--required {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: var(--accent-soft);
+}
+
+.feature-badge--soon {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: transparent;
+}
+
+.feature-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--ink-3);
+  flex-wrap: wrap;
+}
+
+.feature-card-via {
+  color: var(--ink-4);
+}
+
+.feature-provider-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.55rem 0.2rem 0.4rem;
+  border-radius: 999px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  font-size: 0.74rem;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.feature-provider-pill.is-unset {
+  background: var(--accent-tint);
+  border-color: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Muted variant — used when the parent feature is toggled off so
+ * the meta row stays put (no card-height jump on toggle) but
+ * visually de-emphasizes itself. The pill is still clickable; if
+ * the user picks a provider while disabled we hold the binding
+ * sticky so flipping enable on uses it directly. */
+.feature-provider-pill.is-muted {
+  opacity: 0.5;
+}
+
+.feature-provider-pill.is-muted:not(:disabled):hover {
+  opacity: 0.85;
+  background: var(--paper-2);
+}
+
+.feature-provider-runtime-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-4);
+  flex-shrink: 0;
+}
+
+.feature-provider-pill.is-local .feature-provider-runtime-dot {
+  background: var(--local);
+}
+
+.feature-provider-pill.is-cloud .feature-provider-runtime-dot {
+  background: var(--cloud);
+}
+
+.feature-provider-pill.is-unset .feature-provider-runtime-dot {
+  background: var(--accent);
+}
+
+.feature-provider-select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding-right: 0.1rem;
+}
+
+.feature-provider-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.feature-card-toggle {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  padding-top: 0.35rem;
+}
+
+/* CogniOS-style switch (32x19, knob slides). Sized to feel like
+ * the prototype's `.toggle`. Reuses .feature-row-toggle-button
+ * so existing tests can still find it via getByRole("switch"). */
+.feature-toggle {
+  position: relative;
+  width: 32px;
+  height: 19px;
+  border-radius: 999px;
+  background: var(--ink-4);
+  border: 0;
+  cursor: pointer;
+  transition: background 150ms ease;
+  flex-shrink: 0;
+  padding: 0;
+  font-size: 0;
+}
+
+.feature-toggle.is-on {
+  background: var(--accent);
+}
+
+.feature-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 150ms ease;
+}
+
+.feature-toggle.is-on::after {
+  transform: translateX(13px);
+}
+
+.feature-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.feature-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.feature-row-required-badge {
+  /* Existing tests look up "Required" by visible text via the
+   * .feature-badge--required pill above; this hidden anchor stays
+   * for legacy markup callers but renders as a no-op. */
+  display: none;
+}
+
+.feature-row-coming-soon {
+  font-size: 0.7rem;
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+/* ── Provider chips ── */
+.provider-filter-chips {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0 0.85rem;
+}
+
+.provider-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.22rem 0.6rem;
+  border-radius: 999px;
+  background: var(--paper-2);
+  border: 1px solid var(--line-2);
+  font-size: 0.72rem;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 100ms ease, color 100ms ease;
+  box-shadow: none;
+}
+
+.provider-chip:hover:not(.is-active) {
+  background: var(--paper-3);
+  border-color: var(--line-2);
+}
+
+.provider-chip.is-active {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+.provider-chip-count {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--ink-4);
+  background: var(--paper);
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  line-height: 1.4;
+}
+
+.provider-chip.is-active .provider-chip-count {
+  background: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.78);
+}
+
+/* ── Provider card ── */
+.provider-row,
+.provider-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 0.85rem;
+  align-items: center;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-2);
+  background: var(--card);
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.provider-card:hover {
+  background: var(--paper-2);
+}
+
+.provider-card.is-in-use {
+  border-color: var(--line);
+}
+
+.provider-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  border: 1px solid var(--line-2);
+  background: var(--local-soft);
+  color: var(--local);
+}
+
+.provider-avatar--cloud {
+  background: var(--cloud-soft);
+  color: var(--cloud);
+}
+
+.provider-card-info,
+.provider-row-meta {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
   min-width: 0;
 }
 
-.feature-row-name {
-  font-weight: 500;
-}
-
-.feature-row-description {
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
-.feature-row-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.feature-row-required-badge {
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 0.1rem 0.5rem;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  color: var(--muted);
-}
-
-.feature-row-coming-soon {
-  font-size: 0.7rem;
-  color: var(--muted);
-  font-style: italic;
-}
-
-.feature-row-toggle-button {
-  appearance: none;
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0.15rem 0.65rem;
-  font-size: 0.72rem;
-  cursor: pointer;
-  font-weight: 500;
-}
-
-.feature-row-toggle-button.is-on {
-  background: color-mix(in srgb, #2ecc71 18%, transparent 82%);
-  border-color: color-mix(in srgb, #2ecc71 35%, var(--line));
-}
-
-.feature-row-body {
+.provider-card-name,
+.provider-row-name {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex-wrap: wrap;
-  font-size: 0.8rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--ink);
 }
 
-.feature-row-provider-label {
+.provider-card-using {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.provider-card-meta,
+.provider-row-type {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.72rem;
+  color: var(--ink-3);
+  flex-wrap: wrap;
+}
+
+.provider-card-runtime {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.provider-card-meta-sep {
+  color: var(--ink-4);
+}
+
+/* Pin the actions sub-area to a stable two-column grid so the
+ * status pill and CTA button line up across rows regardless of
+ * label length ("Ready" vs "Downloading", "Edit" vs "Add" vs
+ * "Accept license"). The min track widths fit the longest
+ * standard labels without truncation; longer labels (e.g.
+ * "Accept license") grow via max-content. */
+.provider-card-actions,
+.provider-row-actions {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) minmax(72px, max-content);
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.provider-card-actions > .settings-action,
+.provider-row-actions > .settings-action {
+  justify-self: stretch;
+  text-align: center;
+  justify-content: center;
+}
+
+.provider-status-pill,
+.provider-row-status {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  color: var(--muted);
+  font-size: 0.72rem;
+  color: var(--ink-3);
+  white-space: nowrap;
 }
 
-.feature-row-provider-picker {
-  font-size: 0.8rem;
-  padding: 0.2rem 0.4rem;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--surface);
+.provider-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-4);
 }
 
-.provider-row {
-  flex-direction: row;
+.provider-status-pill.is-ok {
+  color: var(--ok);
+}
+
+.provider-status-pill.is-ok .provider-status-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(91, 122, 74, 0.15);
+}
+
+.provider-row-status.is-configured,
+.provider-status-pill.is-configured {
+  color: var(--ok);
+}
+
+.provider-status-pill.is-configured .provider-status-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(91, 122, 74, 0.15);
+}
+
+.provider-row-status.is-empty,
+.provider-status-pill.is-empty {
+  color: var(--ink-3);
+}
+
+.provider-status-pill.is-pending {
+  color: var(--warn);
+}
+
+.provider-status-pill.is-pending .provider-status-dot {
+  background: var(--warn);
+  animation: cogni-pulse-dot 1.4s ease-in-out infinite;
+}
+
+.provider-status-pill.is-error {
+  color: #b3261e;
+}
+
+.provider-status-pill.is-error .provider-status-dot {
+  background: #b3261e;
+}
+
+@keyframes cogni-pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Repo badge under provider meta — opens HuggingFace tree page.
+ * No explicit max-width: the parent ``.provider-card-meta`` is
+ * ``flex-wrap: wrap`` so the badge falls onto its own line when
+ * the row gets narrow, and ``min-width: 0`` on the info column
+ * lets the ellipsis kick in only when even the wrapped line
+ * cannot fit. */
+.provider-card-repo {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--ink-3);
+  cursor: pointer;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 0.2rem;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: none;
 }
 
-.provider-row-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+.provider-card-repo:not(:disabled):hover {
+  color: var(--accent);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 
-.provider-row-name {
+.provider-card-repo-commit {
+  color: var(--ink-4);
+}
+
+/* Inline error line under provider meta */
+.provider-card-error {
+  margin: 0.3rem 0 0;
+  font-size: 0.72rem;
+  color: #b3261e;
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+
+.providers-empty {
+  list-style: none;
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 0.82rem;
+}
+
+/* Primary "Add" CTA for unconfigured providers */
+.settings-action.is-primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
   font-weight: 500;
 }
 
-.provider-row-type {
-  font-size: 0.72rem;
-  color: var(--muted);
+.settings-action.is-primary:hover:not(:disabled),
+.settings-action.is-primary:focus-visible {
+  background: #000;
+  border-color: #000;
+  color: var(--paper);
 }
 
-.provider-row-actions {
+/* ── Diagnostics summary block ── */
+.settings-diag {
+  margin-top: 0.5rem;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+}
+
+.settings-diag-head {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  justify-content: space-between;
+  padding: 0.85rem 1.1rem;
+  border-bottom: 1px solid var(--line-2);
 }
 
-.provider-row-status {
+.settings-diag-title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+}
+
+.settings-diag-version {
+  font-family: var(--font-mono);
   font-size: 0.72rem;
-  color: var(--muted);
+  color: var(--ink-3);
 }
 
-.provider-row-status.is-configured {
-  color: color-mix(in srgb, #2ecc71 80%, var(--text));
+.settings-diag-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--line-2);
 }
 
-.provider-editor {
-  margin-top: 0.6rem;
-  padding: 0.7rem 0.85rem;
-  background: color-mix(in srgb, var(--muted) 5%, var(--surface));
-  border: 1px solid var(--line);
-  border-radius: 6px;
+@media (max-width: 760px) {
+  .settings-diag-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.settings-diag-cell {
+  background: var(--card);
+  padding: 0.85rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.25rem;
 }
 
-.provider-editor-header {
+.settings-diag-cell .k {
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.settings-diag-cell .v {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.settings-diag-cell .v .suffix {
+  color: var(--ink-4);
+  font-size: 0.85rem;
+}
+
+.settings-diag-cell .sub {
+  font-size: 0.72rem;
+  color: var(--ink-3);
+}
+
+.settings-diag-cell .bar {
+  height: 4px;
+  background: var(--paper-2);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 0.25rem;
+}
+
+.settings-diag-cell .bar > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+/* Provider editor — used inside ProviderEditorModal. No outer
+ * chrome; the sheet provides the paper card, header, padding. */
+.provider-editor {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .provider-editor-key-label {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.78rem;
-  color: var(--muted);
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
 }
 
 .provider-editor-key-input {
-  padding: 0.3rem 0.45rem;
+  padding: 0.5rem 0.7rem;
   border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--surface);
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  border-radius: 8px;
+  background: var(--paper-2);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.provider-editor-key-input:focus {
+  border-color: var(--ink-3);
+  background: var(--card);
 }
 
 .provider-editor-key-status {
-  font-size: 0.78rem;
-  color: var(--muted);
+  font-size: 0.82rem;
+  color: var(--ink-2);
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -3895,13 +4673,713 @@ body.is-resizing-pane {
 }
 
 .provider-editor-info {
-  font-size: 0.78rem;
-  color: var(--muted);
+  font-size: 0.82rem;
+  color: var(--ink-2);
   margin: 0;
+}
+
+/* ── Provider editor modal sheet ───────────────────────── */
+.provider-modal-overlay {
+  background: rgba(20, 16, 8, 0.32);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  display: grid;
+  place-items: center;
+  padding-top: 0;
+  z-index: 220;
+  animation: cogni-scrim-in 0.18s ease-out;
+}
+
+@keyframes cogni-scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.provider-modal {
+  width: min(540px, calc(100vw - 32px));
+  max-height: calc(100vh - 60px);
+  background: var(--card);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+  border: 1px solid var(--line-2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: cogni-sheet-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+@keyframes cogni-sheet-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+.provider-modal-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.85rem;
+  align-items: center;
+  padding: 1rem 1.1rem;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.provider-modal-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  font-size: 0.92rem;
+}
+
+.provider-modal-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.provider-modal-title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+}
+
+.provider-modal-sub {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--ink-3);
+}
+
+.provider-modal-runtime {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.provider-modal-sub-sep {
+  color: var(--ink-4);
+}
+
+/* Higher-specificity selectors so we beat the global
+ * ``button:not(:disabled):hover`` (specificity 0,2,1) and
+ * ``button:not(:disabled):active`` rules — without this the close
+ * button picks up the terracotta accent + translateY from the
+ * default button cascade at the top of this file. */
+.provider-modal-close,
+.provider-modal-close:not(:disabled) {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+  cursor: pointer;
+  box-shadow: none;
+  transform: none;
+  transition: background 120ms ease, color 120ms ease;
+  padding: 0;
+}
+
+.provider-modal-close:not(:disabled):hover {
+  background: var(--paper-2);
+  color: var(--ink);
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.provider-modal-close:not(:disabled):active {
+  background: var(--paper-3);
+  color: var(--ink);
+  box-shadow: none;
+  transform: none;
+}
+
+.provider-modal-close:focus-visible {
+  outline: 2px solid var(--ink-3);
+  outline-offset: 2px;
+}
+
+.provider-modal-body {
+  padding: 1.1rem 1.25rem 1.25rem;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.provider-modal-privacy {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  margin: 0.25rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius);
+  background: var(--paper-2);
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.provider-modal-privacy strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.provider-modal-privacy-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  margin-top: 2px;
+  background: var(--ok-soft);
+  border: 1.5px solid var(--ok);
+}
+
+/* The editor's Save / Remove key buttons sit just above the
+ * privacy callout; tighten their margin since the modal owns
+ * the surrounding spacing. */
+.provider-modal-body .provider-editor-actions {
+  margin-top: 0.25rem;
+}
+
+/* ── Provider chooser modal (radio list of compatible providers) ── */
+.provider-chooser-body {
+  padding: 0.85rem 1rem;
+}
+
+.provider-choice-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.provider-choice {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 0.85rem;
+  align-items: center;
+  padding: 0.7rem 0.8rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-2);
+  background: var(--paper-2);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+  box-shadow: none;
+}
+
+/* :not(:disabled) bumps specificity to beat the global button hover
+ * rule that would otherwise paint these radio rows terracotta. */
+.provider-choice:not(:disabled):hover {
+  background: var(--paper-3);
+  border-color: var(--line);
+  box-shadow: none;
+  transform: none;
+}
+
+.provider-choice:not(:disabled):active {
+  transform: none;
+  box-shadow: none;
+}
+
+.provider-choice.is-selected {
+  background: var(--accent-tint);
+  border-color: var(--accent-soft);
+}
+
+.provider-choice-radio {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-4);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.provider-choice.is-selected .provider-choice-radio {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 3px var(--card);
+}
+
+.provider-choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.provider-choice-name {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.provider-choice-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--ink-3);
+  flex-wrap: wrap;
+}
+
+.provider-choice-runtime {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.provider-choice-sep {
+  color: var(--ink-4);
+}
+
+.provider-choice-warn {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.provider-choice-avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 0.72rem;
+  border-radius: 8px;
+}
+
+/* Footer for chooser & editor modal — sticky-feel with Cancel +
+ * primary CTA. */
+.provider-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.85rem 1.1rem;
+  border-top: 1px solid var(--line-2);
+  background: var(--paper-2);
 }
 
 .settings-diagnostics {
   margin-top: 1.5rem;
   border-top: 1px solid var(--line);
   padding-top: 1rem;
+}
+
+/* ── Download dock (sidebar foot) ──────────────────────── */
+/* Sits between the primary nav and the Settings footer button —
+ * surfaces only when there's a model download active or queued.
+ * Click the chip to expand a popover anchored to its right. */
+.dl-host {
+  display: block;
+  margin: 0 0 0.4rem;
+}
+
+.dl-chip {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.65rem 0.5rem;
+  background: var(--card);
+  border: 1px solid var(--line-2);
+  border-radius: 0.5rem;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease, border-color 120ms ease;
+  box-shadow: none;
+}
+
+.dl-chip:not(:disabled):hover,
+.dl-chip.is-open {
+  background: var(--paper-2);
+  border-color: var(--ink-4);
+  box-shadow: none;
+}
+
+.dl-chip.is-error {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line-2) 55%);
+}
+
+.dl-chip-glyph {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+
+.dl-chip.is-error .dl-chip-glyph {
+  color: var(--warn);
+}
+
+.dl-chip-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.4px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: dl-spin 0.9s linear infinite;
+}
+
+@keyframes dl-spin {
+  to { transform: rotate(360deg); }
+}
+
+.dl-chip-name {
+  color: var(--ink);
+  font-weight: 500;
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.dl-chip-pct {
+  font: 0.66rem var(--font-mono);
+  color: var(--ink-3);
+  letter-spacing: -0.005em;
+  flex-shrink: 0;
+}
+
+.dl-chip.is-error .dl-chip-pct {
+  color: var(--warn);
+}
+
+.dl-chip-count {
+  font: 0.6rem var(--font-mono);
+  color: var(--ink-3);
+  background: var(--paper);
+  border: 1px solid var(--line-2);
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  margin-left: 0.1rem;
+}
+
+/* Hairline progress bar at the very bottom of the chip. */
+.dl-chip-bar {
+  position: absolute;
+  left: 0.4rem;
+  right: 0.4rem;
+  bottom: 2px;
+  height: 1.5px;
+  grid-column: 1 / -1;
+  background: var(--line-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.dl-chip-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.35s ease;
+}
+
+.dl-chip.is-error .dl-chip-bar-fill {
+  background: var(--warn);
+}
+
+/* ── Download popover ──────────────────────────────────── */
+.dl-pop {
+  position: fixed;
+  z-index: 250;
+  width: 360px;
+  background: var(--card);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 16px 36px rgba(20, 16, 8, 0.18);
+  font-family: var(--font-body);
+  overflow: hidden;
+  animation: dl-pop-in 0.14s ease-out;
+}
+
+@keyframes dl-pop-in {
+  from { opacity: 0; transform: translateY(calc(-100% + 6px)); }
+  to { opacity: 1; transform: translateY(-100%); }
+}
+
+.dl-pop-arrow {
+  position: absolute;
+  left: -5px;
+  bottom: 22px;
+  width: 9px;
+  height: 9px;
+  background: var(--card);
+  border-left: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--line-2);
+  transform: rotate(45deg);
+}
+
+.dl-pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.6rem 0.85rem 0.4rem;
+  border-bottom: 1px dashed var(--line-2);
+}
+
+.dl-pop-title {
+  font-family: var(--font-heading);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.dl-pop-sub {
+  font: 0.66rem var(--font-mono);
+  color: var(--ink-3);
+}
+
+.dl-pop-active {
+  padding: 0.75rem 0.85rem 0.85rem;
+  background: var(--paper);
+}
+
+.dl-pop-active-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.dl-pop-label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.dl-pop-label.is-error {
+  color: var(--warn);
+}
+
+.dl-pop-name {
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dl-pop-source {
+  font: 0.66rem var(--font-mono);
+  color: var(--ink-3);
+  margin-top: 0.2rem;
+  word-break: break-all;
+}
+
+.dl-pop-bar {
+  margin-top: 0.6rem;
+  height: 2px;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.dl-pop-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.35s ease;
+}
+
+.dl-pop-bar-fill.is-error {
+  background: var(--warn);
+}
+
+.dl-pop-stats {
+  display: flex;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+  font: 0.7rem var(--font-mono);
+  color: var(--ink-3);
+  letter-spacing: -0.005em;
+}
+
+.dl-pop-stat.is-strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.dl-pop-err {
+  color: var(--warn);
+  font: 0.7rem var(--font-mono);
+}
+
+.dl-pop-actions {
+  margin-top: 0.6rem;
+  display: flex;
+  gap: 0.4rem;
+}
+
+.dl-pop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font: 500 0.74rem var(--font-body);
+  cursor: pointer;
+  box-shadow: none;
+  transform: none;
+}
+
+.dl-pop-btn:not(:disabled):hover {
+  background: var(--paper-2);
+  border-color: var(--line);
+  color: var(--ink);
+  box-shadow: none;
+  transform: none;
+}
+
+.dl-pop-queue {
+  border-top: 1px dashed var(--line-2);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.dl-pop-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.78rem;
+  color: var(--ink);
+  border-bottom: 1px dashed var(--line-2);
+}
+
+.dl-pop-item:last-child {
+  border-bottom: 0;
+}
+
+.dl-pop-item-glyph {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: var(--ink-4);
+}
+
+.dl-pop-item-dot {
+  width: 4px;
+  height: 4px;
+  background: currentColor;
+  border-radius: 50%;
+}
+
+.dl-pop-item-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dl-pop-item-stat {
+  font: 0.66rem var(--font-mono);
+  color: var(--ink-3);
+}
+
+.dl-pop-foot {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0.85rem;
+  border-top: 1px dashed var(--line-2);
+  background: var(--paper);
+  font-size: 0.7rem;
+}
+
+.dl-pop-foot-spacer {
+  flex: 1;
+}
+
+.dl-pop-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.7rem;
+  color: var(--ink-3);
+  text-decoration: none;
+}
+
+.dl-pop-link.is-info {
+  color: var(--ink-3);
+}
+
+/* Collapsed sidebar (Explorer narrow viewport) — show the chip
+ * compact: just glyph + percent, no name. */
+@media (max-width: 1100px) {
+  .explorer-layout .dl-chip {
+    grid-template-columns: 14px auto;
+    gap: 0.35rem;
+    padding: 0.4rem;
+  }
+  .explorer-layout .dl-chip-name,
+  .explorer-layout .dl-chip-count {
+    display: none;
+  }
+}
+
+/* ── Provider action button → in-button progress fill ─── */
+/* When a local model is mid-download we replace the Download/
+ * Retry/Details button with this: a disabled pill whose
+ * background fills left-to-right with the accent and shows the
+ * percent on top. The user reads progress without leaving the
+ * row. */
+.settings-action.is-progress {
+  position: relative;
+  overflow: hidden;
+  background: var(--paper-2);
+  border-color: var(--line);
+  color: var(--ink);
+  cursor: progress;
+  opacity: 1;
+}
+
+.settings-action.is-progress:hover {
+  background: var(--paper-2);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.settings-action-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  transition: width 0.35s ease;
+  pointer-events: none;
+}
+
+.settings-action-progress-label {
+  position: relative;
+  z-index: 1;
+  font: 500 0.72rem var(--font-mono);
+  color: var(--ink);
+  letter-spacing: -0.005em;
 }

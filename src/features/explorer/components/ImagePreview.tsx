@@ -138,9 +138,10 @@ function ImagePreviewEmptyState() {
   return (
     <div className="image-preview-empty muted-copy">
       <p>
-        No OCR or caption text indexed yet for this image. Once the
-        OCR extractor and image captioner are wired (Settings →
-        Models), text content will appear here.
+        This image hasn't been indexed yet. Local PaddleOCR will
+        extract its text in the background — results appear here
+        once indexing finishes. To also generate searchable
+        descriptions, enable Image captioning in Settings.
       </p>
     </div>
   );

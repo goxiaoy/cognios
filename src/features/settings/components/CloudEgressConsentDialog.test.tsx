@@ -72,6 +72,19 @@ describe("CloudEgressConsentDialog", () => {
   });
 });
 
+/** Open the FeatureRow's chooser modal, pick the provider whose name
+ * matches ``radioPattern``, and click "Use this provider" — the
+ * post-Unit-13 replacement for ``fireEvent.change(combobox)``. */
+function selectProviderViaChooser(radioPattern: RegExp) {
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: /(change|choose) provider for semantic search/i,
+    })
+  );
+  fireEvent.click(screen.getByRole("radio", { name: radioPattern }));
+  fireEvent.click(screen.getByRole("button", { name: /use this provider/i }));
+}
+
 describe("Cloud-egress consent gate (FeatureRow integration)", () => {
   it("blocks the PUT and shows the dialog when picking a cloud provider for the first time", async () => {
     const updateSettings = vi.fn().mockResolvedValue({
@@ -87,9 +100,7 @@ describe("Cloud-egress consent gate (FeatureRow integration)", () => {
         onSettingsChange={vi.fn()}
       />
     );
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "openai" },
-    });
+    selectProviderViaChooser(/openai/i);
     // Dialog should appear; PUT must NOT have fired yet.
     await waitFor(() => {
       expect(
@@ -113,9 +124,7 @@ describe("Cloud-egress consent gate (FeatureRow integration)", () => {
         onSettingsChange={vi.fn()}
       />
     );
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "openai" },
-    });
+    selectProviderViaChooser(/openai/i);
     fireEvent.click(
       await screen.findByRole("button", { name: /enable openai/i })
     );
@@ -143,9 +152,7 @@ describe("Cloud-egress consent gate (FeatureRow integration)", () => {
         onSettingsChange={vi.fn()}
       />
     );
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "openai" },
-    });
+    selectProviderViaChooser(/openai/i);
     await waitFor(() => {
       expect(updateSettings).toHaveBeenCalled();
     });
@@ -166,9 +173,9 @@ describe("Cloud-egress consent gate (FeatureRow integration)", () => {
         onSettingsChange={vi.fn()}
       />
     );
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "openai" },
-    });
+    selectProviderViaChooser(/openai/i);
+    // The chooser closes once we confirm; only the consent dialog's
+    // Cancel button is on screen now.
     fireEvent.click(
       await screen.findByRole("button", { name: /^cancel$/i })
     );
@@ -183,19 +190,20 @@ describe("Cloud-egress consent gate (FeatureRow integration)", () => {
       state: "ready",
       data: baseSettings(),
     });
+    // Start unbound so the chooser's "Use this provider" button is
+    // enabled when we pick local-gte (the only embedding-capable
+    // local preset). Picking the same provider that's already bound
+    // is a no-op and the confirm button stays disabled.
     render(
       <FeatureRow
         meta={SEMANTIC}
-        config={{ enabled: true, providerId: "local-gte" }}
+        config={{ enabled: true, providerId: null }}
         settings={baseSettings()}
         client={makeStubSearchClient({ updateSettings })}
         onSettingsChange={vi.fn()}
       />
     );
-    // Change to local-gte (already selected, but pretend) — no dialog.
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "local-gte" },
-    });
+    selectProviderViaChooser(/^GTE/i);
     await waitFor(() => {
       expect(updateSettings).toHaveBeenCalled();
     });

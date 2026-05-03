@@ -189,6 +189,10 @@ fn reconcile_and_emit(
 
     let outcome = match reconcile_mount(&mut conn, mount_id) {
         Ok(outcome) => outcome,
+        // Mount row vanished between the watcher tick and the reconcile read —
+        // the user deleted the mount and the worker hasn't picked up its stop
+        // signal yet. Quiet exit; the next loop iteration will see the signal.
+        Err(rusqlite::Error::QueryReturnedNoRows) => return,
         Err(error) => {
             eprintln!("failed to reconcile mount {mount_id}: {error}");
             return;
@@ -197,6 +201,20 @@ fn reconcile_and_emit(
 
     if !outcome.changed {
         return;
+    }
+
+    // Per-node ``node-created`` events for any descendants the
+    // reconcile just discovered (new file appeared in the watched
+    // folder, sync brought down new content, etc.) so the sidecar
+    // forwarder enqueues them for indexing. Mount-level reasons
+    // are dropped by the forwarder, so without this loop the
+    // indexer never wakes for newly-added files.
+    for child_id in outcome.new_descendant_ids {
+        emitter(VfsChangeEvent {
+            mount_id: child_id,
+            reason: "node-created".to_string(),
+            ..Default::default()
+        });
     }
 
     emitter(VfsChangeEvent {

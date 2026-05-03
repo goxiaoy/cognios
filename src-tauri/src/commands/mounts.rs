@@ -8,6 +8,7 @@ use crate::infrastructure::db::mount_repository::{
 use crate::services::mounts::create_mount::create_mount_snapshot;
 use crate::services::mounts::obsidian::{detect_obsidian_vaults, ObsidianVault};
 use crate::services::mounts::scanner::normalize_mount_path;
+use crate::services::mounts::watcher::VfsChangeEvent;
 use crate::AppState;
 
 #[derive(Debug, Serialize)]
@@ -61,6 +62,25 @@ pub fn create_mount(
     }
     let created_mount = create_mount_snapshot(&mut conn, &input)
         .map_err(|message| CreateMountErrorDto::Message { message })?;
+
+    // Fan out per-node ``node-created`` events so the search
+    // forwarder hands every newly-discovered node to the sidecar's
+    // indexer. Without this fan-out the mount appears in the tree
+    // (sqlite has the rows) but the sidecar's queue stays empty —
+    // 0 indexed / 0 in flight / files stuck on "pending".
+    (state.emitter)(VfsChangeEvent {
+        mount_id: created_mount.mount_id.clone(),
+        reason: "node-created".to_string(),
+        ..Default::default()
+    });
+    for child_id in &created_mount.new_descendant_ids {
+        (state.emitter)(VfsChangeEvent {
+            mount_id: child_id.clone(),
+            reason: "node-created".to_string(),
+            ..Default::default()
+        });
+    }
+
     state
         .mount_watchers
         .start_mount(

@@ -1,15 +1,57 @@
+/* CogniOS design tokens — warm paper palette, serif headings, Inter body. */
+
 :root {
   color-scheme: light;
-  --bg: #f6f4ef;
-  --panel: #fffdfa;
-  --ink: #161615;
-  --muted: #6d665e;
-  --line: #d7d0c6;
-  --accent: #c9512b;
+
+  /* Surfaces */
+  --paper: #faf8f4;
+  --paper-2: #f3efe7;
+  --paper-3: #ebe5d9;
+  --card: #ffffff;
+  --line: rgba(34, 28, 14, 0.10);
+  --line-2: rgba(34, 28, 14, 0.06);
+
+  /* Ink (text) */
+  --ink: #1d1b16;
+  --ink-2: #4a4538;
+  --ink-3: #7a7363;
+  --ink-4: #a8a191;
+
+  /* Accent — terracotta */
+  --accent: #b9482a;
   --accent-ink: #7d2d15;
+  --accent-soft: #f1d9cf;
+  --accent-tint: #fbf0ea;
+
+  /* Status */
+  --ok: #5b7a4a;
+  --ok-soft: #e3ebd8;
+  --warn: #b07a18;
+  --warn-soft: #f6e9cd;
   --success: #24523d;
-  --shadow: rgba(30, 25, 20, 0.06);
-  --font-heading: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
-  --font-body: "Avenir Next", "Segoe UI", sans-serif;
-  --font-mono: "SF Mono", "JetBrains Mono", monospace;
+
+  /* Runtime palette */
+  --local: #3f5b7a;
+  --local-soft: #dde6f0;
+  --cloud: #6b4a8a;
+  --cloud-soft: #e6dcf0;
+
+  /* Backwards-compatible aliases for older selectors */
+  --bg: var(--paper);
+  --panel: var(--card);
+  --muted: var(--ink-3);
+
+  --shadow: rgba(34, 28, 14, 0.06);
+  --shadow-1: 0 1px 0 rgba(34, 28, 14, 0.04), 0 1px 2px rgba(34, 28, 14, 0.04);
+  --shadow-2: 0 1px 0 rgba(34, 28, 14, 0.04), 0 8px 24px rgba(34, 28, 14, 0.06);
+  --shadow-3: 0 1px 0 rgba(34, 28, 14, 0.04), 0 18px 50px rgba(34, 28, 14, 0.10);
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  --font-heading: "Tiempos Text", "Iowan Old Style", "Charter", Georgia, serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
 }

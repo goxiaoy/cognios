@@ -7,7 +7,10 @@ import {
   Settings,
 } from "lucide-react";
 
-export type AppSection = "home" | "chat" | "explorer" | "memory";
+import { CogniLogo } from "./components/CogniLogo";
+import { DownloadDock } from "./components/DownloadDock";
+
+export type AppSection = "home" | "chat" | "explorer" | "memory" | "settings";
 
 type NavItem = { id: AppSection; label: string; Icon: React.ComponentType<{ size?: number }> };
 
@@ -22,18 +25,20 @@ export function AppSidebar({
   activeSection,
   onSelect,
   onOpenSearch,
-  onOpenSettings,
 }: {
   activeSection: AppSection;
   onSelect(section: AppSection): void;
   onOpenSearch(): void;
-  onOpenSettings(): void;
 }) {
+  const isSettingsActive = activeSection === "settings";
   return (
     <aside className="app-sidebar">
       <div className="app-brand">
-        <p className="app-brand-mark">CogniOS</p>
-        <p className="app-brand-copy">Personal knowledge OS</p>
+        <CogniLogo aria-hidden className="app-brand-logo" size={26} />
+        <div className="app-brand-text">
+          <p className="app-brand-mark">CogniOS</p>
+          <p className="app-brand-copy">Personal knowledge OS</p>
+        </div>
       </div>
 
       <div className="app-ops">
@@ -64,11 +69,12 @@ export function AppSidebar({
       </nav>
 
       <div className="app-sidebar-footer">
+        <DownloadDock onOpenSettings={() => onSelect("settings")} />
         <button
           type="button"
-          className="app-nav-item app-sidebar-footer-item"
-          onClick={onOpenSettings}
-          aria-label="Open settings"
+          aria-current={isSettingsActive ? "page" : undefined}
+          className={`app-nav-item app-sidebar-footer-item${isSettingsActive ? " is-active" : ""}`}
+          onClick={() => onSelect("settings")}
         >
           <Settings size={15} aria-hidden="true" />
           <span className="app-nav-label">Settings</span>

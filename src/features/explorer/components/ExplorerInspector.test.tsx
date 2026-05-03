@@ -46,7 +46,10 @@ describe("ExplorerInspector", () => {
       />
     );
 
-    expect(screen.getByText("indexed")).toBeInTheDocument();
+    // Inspector now renders the index state as a colored pill
+    // ("Indexed" / "Pending" / "Error" / "Not indexable") instead
+    // of the raw state value.
+    expect(screen.getByText("Indexed")).toBeInTheDocument();
     expect(screen.getByText(/WEB LINK/i)).toBeInTheDocument();
   });
 

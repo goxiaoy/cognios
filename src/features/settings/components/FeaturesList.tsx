@@ -13,8 +13,15 @@ export function FeaturesList({
   onSettingsChange: (next: SearchSettings) => void;
 }) {
   return (
-    <div className="settings-card">
-      <h2 className="settings-card-title">Features</h2>
+    <div className="settings-card features-card">
+      <div className="features-card-header">
+        <h2 className="settings-card-title features-card-title">
+          Features
+          <span className="features-card-count">
+            {FEATURE_CATALOG.length} capabilities
+          </span>
+        </h2>
+      </div>
       <ul className="features-list">
         {FEATURE_CATALOG.map((meta) => (
           <FeatureRow

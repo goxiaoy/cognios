@@ -26,6 +26,10 @@ pub struct ReconcileMountOutcome {
     pub mount_id: String,
     pub is_available: bool,
     pub changed: bool,
+    /// Node IDs that did not exist on the previous reconcile pass —
+    /// the caller fires ``node-created`` for each so the forwarder
+    /// hands them off to the sidecar's indexer.
+    pub new_descendant_ids: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -33,6 +37,11 @@ pub struct CreatedMount {
     pub mount_id: String,
     pub absolute_path: String,
     pub snapshot: ExplorerSnapshotDto,
+    /// Every descendant node persisted by the initial scan. The
+    /// caller emits ``node-created`` for each so the sidecar's
+    /// indexer queues them up — without this fan-out the mount
+    /// shows up in the tree but never gets indexed.
+    pub new_descendant_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -84,7 +93,8 @@ pub fn create_mount(
         ",
         params![mount_id, normalized_path.to_string_lossy(), ignore_config],
     )?;
-    insert_scanned_entries(&tx, &mount_id, &scanned_entries, &HashMap::new())?;
+    let new_descendant_ids =
+        insert_scanned_entries(&tx, &mount_id, &scanned_entries, &HashMap::new())?;
     tx.commit()?;
     touch_node_modified_at(conn, input.parent_id.as_deref())?;
 
@@ -94,6 +104,7 @@ pub fn create_mount(
         mount_id,
         absolute_path: normalized_path.to_string_lossy().into_owned(),
         snapshot,
+        new_descendant_ids,
     })
 }
 
@@ -191,6 +202,7 @@ pub fn reconcile_mount(
             mount_id: mount_id.to_string(),
             is_available: false,
             changed,
+            new_descendant_ids: Vec::new(),
         });
     }
 
@@ -212,6 +224,7 @@ pub fn reconcile_mount(
             mount_id: mount_id.to_string(),
             is_available: true,
             changed: false,
+            new_descendant_ids: Vec::new(),
         });
     }
 
@@ -229,13 +242,15 @@ pub fn reconcile_mount(
         .iter()
         .map(|entry| (entry.relative_path.clone(), entry.id.clone()))
         .collect::<HashMap<_, _>>();
-    insert_scanned_entries(&tx, mount_id, &scanned_entries, &existing_ids_by_relative_path)?;
+    let new_descendant_ids =
+        insert_scanned_entries(&tx, mount_id, &scanned_entries, &existing_ids_by_relative_path)?;
     tx.commit()?;
 
     Ok(ReconcileMountOutcome {
         mount_id: mount_id.to_string(),
         is_available: true,
         changed: true,
+        new_descendant_ids,
     })
 }
 
@@ -357,14 +372,16 @@ fn insert_scanned_entries(
     mount_id: &str,
     scanned_entries: &[ScannedMountEntry],
     existing_ids_by_relative_path: &HashMap<String, String>,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<Vec<String>> {
     let mut ids_by_relative_path: HashMap<String, String> = HashMap::new();
+    let mut new_ids: Vec<String> = Vec::new();
 
     for entry in scanned_entries {
-        let node_id = existing_ids_by_relative_path
+        let existing_id = existing_ids_by_relative_path
             .get(&entry.relative_path)
-            .cloned()
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
+            .cloned();
+        let is_new = existing_id.is_none();
+        let node_id = existing_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let parent_id = entry
             .parent_relative_path
             .as_ref()
@@ -413,8 +430,11 @@ fn insert_scanned_entries(
             ],
         )?;
 
+        if is_new {
+            new_ids.push(node_id.clone());
+        }
         ids_by_relative_path.insert(entry.relative_path.clone(), node_id);
     }
 
-    Ok(())
+    Ok(new_ids)
 }

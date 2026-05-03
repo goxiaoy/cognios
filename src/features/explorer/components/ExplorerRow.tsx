@@ -1,24 +1,16 @@
-import { AlertTriangle, ChevronRight, Loader } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { KeyboardEvent as KE, MouseEvent, useEffect, useRef, useState } from "react";
-import type { NodeState } from "../../../lib/contracts/vfs";
 import type { ExplorerNode } from "../types/explorer";
 import {
   formatCompactNodeMeta,
   formatTreeDisclosurePath,
   nodeIconComponent,
 } from "../utils/presentation";
+import { NodeStateDot } from "./NodeStateDot";
 
 export interface SelectModifiers {
   shift: boolean;
   toggle: boolean;
-}
-
-function NodeStateBadge({ state }: { state: NodeState }) {
-  if (state === "ready") return null;
-  if (state === "error" || state === "unavailable") {
-    return <AlertTriangle className="node-state-icon state-error" size={12} aria-label="error" />;
-  }
-  return <Loader className="node-state-icon state-pending" size={12} aria-label="loading" />;
 }
 
 function NodeIcon({ node }: { node: ExplorerNode }) {
@@ -140,7 +132,7 @@ export function ExplorerRow({
           <input
             ref={inputRef}
             className="tree-inline-input"
-            title={disclosureTitle}
+            title={menuPos ? undefined : disclosureTitle}
             onBlur={commit}
             onChange={(e) => setEditValue(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -156,7 +148,10 @@ export function ExplorerRow({
               toggle: e.metaKey || e.ctrlKey,
             })
           }
-          title={disclosureTitle}
+          // Suppress the native ``title`` tooltip while the context
+          // menu is open — macOS renders OS-level tooltips above all
+          // web content, blocking clicks on menu items underneath.
+          title={menuPos ? undefined : disclosureTitle}
           type="button"
         >
           <span className="tree-row-primary">
@@ -165,7 +160,7 @@ export function ExplorerRow({
           </span>
           <span className="tree-row-secondary">
             {compactMeta ? <span className="tree-row-meta">{compactMeta}</span> : null}
-            <NodeStateBadge state={node.state} />
+            <NodeStateDot kind={node.kind} state={node.state} />
           </span>
         </button>
       )}

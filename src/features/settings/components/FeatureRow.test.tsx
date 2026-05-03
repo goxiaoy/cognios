@@ -134,19 +134,27 @@ describe("FeatureRow", () => {
         onSettingsChange={vi.fn()}
       />
     );
-    // Picker shows local-gte + openai (both declare embedding); does
-    // NOT show qwen-dashscope (vision only) or local-gemma.
-    const picker = screen.getByRole("combobox");
-    const options = Array.from(picker.querySelectorAll("option")).map(
-      (o) => o.textContent ?? ""
+    // Open the chooser modal. The pill button is labeled by the
+    // current binding ("Change provider for ...").
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /change provider for semantic search/i,
+      })
     );
-    expect(options).toContain("Local GTE");
-    expect(options.some((t) => t.startsWith("OpenAI"))).toBe(true);
-    expect(options.some((t) => t.startsWith("Qwen"))).toBe(false);
-    expect(options.some((t) => t.startsWith("Local Gemma"))).toBe(false);
+    // Modal shows local-gte + openai (both declare embedding); does
+    // NOT show qwen-dashscope (vision only) or local-gemma. The
+    // "Local " prefix is stripped in the chooser rows.
+    const dialog = screen.getByRole("dialog");
+    const choices = Array.from(
+      dialog.querySelectorAll<HTMLElement>(".provider-choice-name")
+    ).map((el) => el.textContent ?? "");
+    expect(choices).toContain("GTE");
+    expect(choices.some((t) => t.startsWith("OpenAI"))).toBe(true);
+    expect(choices.some((t) => t.startsWith("Qwen"))).toBe(false);
+    expect(choices.some((t) => t.startsWith("Gemma"))).toBe(false);
   });
 
-  it("calls updateSettings with the new provider when picker changes", async () => {
+  it("calls updateSettings with the new provider when the chooser confirms", async () => {
     const onSettingsChange = vi.fn();
     const updateSettings = vi.fn().mockResolvedValue({
       state: "ready",
@@ -166,7 +174,16 @@ describe("FeatureRow", () => {
         onSettingsChange={onSettingsChange}
       />
     );
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "openai" } });
+    // Open the chooser, select OpenAI, confirm.
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /change provider for semantic search/i,
+      })
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /openai/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /use this provider/i })
+    );
     await waitFor(() => {
       expect(updateSettings).toHaveBeenCalled();
     });

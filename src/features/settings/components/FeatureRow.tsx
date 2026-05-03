@@ -1,4 +1,12 @@
 import { useState } from "react";
+import {
+  ChevronDown,
+  Image as ImageIcon,
+  Layers,
+  Plus,
+  Search,
+  Sparkles,
+} from "lucide-react";
 
 import type {
   FeatureConfig,
@@ -12,17 +20,25 @@ import {
   ProviderPreset,
 } from "../data/providerPresets";
 import { CloudEgressConsentDialog } from "./CloudEgressConsentDialog";
-import { ProviderEditor } from "./ProviderEditor";
+import { ProviderChooserModal } from "./ProviderChooserModal";
+
+const FEATURE_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
+  "semantic-search": Search,
+  "result-reranking": Layers,
+  "image-ocr": ImageIcon,
+  "image-captioning": Sparkles,
+};
 
 /**
- * One feature row. Renders enable toggle (or "Required" badge for
- * mandatory features), provider picker filtered by the feature's
- * capability, and an inline ProviderEditor when the user opens it.
+ * One feature row. Renders the enable toggle (or "Required" badge
+ * for mandatory features) and a provider-pill picker filtered by
+ * the feature's capability. Credentials editing happens from the
+ * Providers column on the right — there is no inline editor here.
  *
- * Phase-2 features (image-ocr, image-captioning) render disabled
- * with an "available in next release" hint — the row is in the UI
- * so users see the conceptual model, but the toggle can't flip on
- * until the extractor wiring lands.
+ * Phase-2 features (image-captioning) render disabled with an
+ * "available in next release" hint when ``comingSoon`` is true —
+ * the row stays in the UI so users see the conceptual model, but
+ * the toggle can't flip on until the extractor wiring lands.
  */
 export function FeatureRow({
   meta,
@@ -37,22 +53,31 @@ export function FeatureRow({
   client: SearchClient;
   onSettingsChange: (next: SearchSettings) => void;
 }) {
-  const [editorOpenFor, setEditorOpenFor] = useState<string | null>(null);
   const [pendingConsentFor, setPendingConsentFor] = useState<
     ProviderPreset | null
   >(null);
+  const [chooserOpen, setChooserOpen] = useState(false);
   const compatible = presetsWithCapability(meta.capability);
   const enabled = config?.enabled ?? meta.mandatory;
   const boundProviderId = config?.providerId ?? null;
   const boundPreset = boundProviderId ? presetById(boundProviderId) : undefined;
+  const Icon = FEATURE_ICON[meta.featureId] ?? Sparkles;
+  const pillDisplayName = boundPreset
+    ? boundPreset.displayName.replace(/^Local\s+/, "")
+    : null;
 
   async function handleToggle() {
     if (meta.mandatory) return;
+    // Keep the provider binding sticky across enable/disable —
+    // clearing it on disable made the card height jump (the
+    // "via <provider>" meta row collapsed) and lost the user's
+    // earlier choice. The meta row stays visible-but-muted when
+    // disabled, so we hold the binding even at rest.
     const nextFeatures: SearchSettings["features"] = {
       ...settings.features,
       [meta.featureId]: {
         enabled: !enabled,
-        providerId: !enabled ? config?.providerId ?? null : null,
+        providerId: config?.providerId ?? null,
       },
     };
     const env = await client.updateSettings({
@@ -100,80 +125,97 @@ export function FeatureRow({
   }
 
   return (
-    <li className="feature-row" aria-label={meta.displayName}>
-      <div className="feature-row-header">
-        <div className="feature-row-meta">
+    <li
+      className={`feature-card${enabled ? " is-enabled" : ""}`}
+      aria-label={meta.displayName}
+    >
+      <div className="feature-card-icon">
+        <Icon size={16} />
+      </div>
+      <div className="feature-card-body">
+        <div className="feature-card-name">
           <span className="feature-row-name">{meta.displayName}</span>
-          <span className="feature-row-description">{meta.description}</span>
-        </div>
-        <div className="feature-row-toggle">
           {meta.mandatory ? (
-            <span className="feature-row-required-badge">Required</span>
-          ) : meta.comingSoon ? (
-            <span
-              className="feature-row-coming-soon"
-              title="Available in the next release"
-            >
+            <span className="feature-badge feature-badge--required">Required</span>
+          ) : null}
+          {meta.comingSoon ? (
+            <span className="feature-badge feature-badge--soon">
               coming soon
             </span>
-          ) : (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={enabled}
-              className={`feature-row-toggle-button ${enabled ? "is-on" : "is-off"}`}
-              onClick={() => void handleToggle()}
-            >
-              {enabled ? "On" : "Off"}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {enabled && !meta.comingSoon ? (
-        <div className="feature-row-body">
-          <label className="feature-row-provider-label">
-            Provider
-            <select
-              className="feature-row-provider-picker"
-              value={boundProviderId ?? ""}
-              onChange={(e) => void handleProviderChange(e.target.value)}
-            >
-              <option value="">— pick one —</option>
-              {compatible.map((preset) => (
-                <option key={preset.providerId} value={preset.providerId}>
-                  {preset.displayName}
-                  {preset.providerType === "cloud" ? " (cloud)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          {boundPreset ? (
-            <button
-              type="button"
-              className="settings-action"
-              onClick={() =>
-                setEditorOpenFor(
-                  editorOpenFor === boundPreset.providerId
-                    ? null
-                    : boundPreset.providerId
-                )
-              }
-            >
-              {editorOpenFor === boundPreset.providerId ? "Hide" : "Edit"} provider
-            </button>
           ) : null}
         </div>
-      ) : null}
+        <p className="feature-card-blurb feature-row-description">
+          {meta.description}
+        </p>
+        {!meta.comingSoon ? (
+          <div className="feature-card-meta">
+            <span className="feature-card-via">via</span>
+            <button
+              type="button"
+              className={`feature-provider-pill${
+                boundPreset?.providerType === "cloud" ? " is-cloud" : " is-local"
+              }${boundProviderId ? "" : " is-unset"}${
+                enabled ? "" : " is-muted"
+              }`}
+              onClick={() => setChooserOpen(true)}
+              aria-haspopup="dialog"
+              aria-label={
+                boundPreset
+                  ? `Change provider for ${meta.displayName}`
+                  : `Choose provider for ${meta.displayName}`
+              }
+            >
+              {boundProviderId ? (
+                <>
+                  <span
+                    className="feature-provider-runtime-dot"
+                    aria-hidden="true"
+                  />
+                  <span className="feature-provider-name">
+                    {pillDisplayName}
+                  </span>
+                  <ChevronDown size={11} aria-hidden="true" />
+                </>
+              ) : (
+                <>
+                  <Plus size={11} aria-hidden="true" />
+                  <span className="feature-provider-name">Choose provider</span>
+                </>
+              )}
+            </button>
+          </div>
+        ) : null}
+      </div>
+      <div className="feature-card-toggle">
+        {meta.mandatory ? (
+          <span
+            className="feature-row-required-badge"
+            aria-hidden="true"
+          />
+        ) : meta.comingSoon ? null : (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={enabled}
+            className={`feature-toggle ${enabled ? "is-on" : "is-off"} feature-row-toggle-button`}
+            onClick={() => void handleToggle()}
+          >
+            <span className="sr-only">{enabled ? "On" : "Off"}</span>
+          </button>
+        )}
+      </div>
 
-      {editorOpenFor && boundPreset && editorOpenFor === boundPreset.providerId ? (
-        <ProviderEditor
-          preset={boundPreset}
-          config={settings.providers[boundPreset.providerId] ?? null}
-          settings={settings}
+      {chooserOpen ? (
+        <ProviderChooserModal
+          feature={meta}
+          providers={compatible}
+          currentProviderId={boundProviderId}
           client={client}
-          onSettingsChange={onSettingsChange}
-          onClose={() => setEditorOpenFor(null)}
+          onClose={() => setChooserOpen(false)}
+          onChoose={(providerId) => {
+            setChooserOpen(false);
+            void handleProviderChange(providerId);
+          }}
         />
       ) : null}
 

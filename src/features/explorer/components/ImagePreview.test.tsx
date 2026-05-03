@@ -145,7 +145,7 @@ describe("ImagePreview", () => {
     );
     await waitFor(() => {
       expect(
-        screen.getByText(/No OCR or caption text indexed yet/i)
+        screen.getByText(/hasn'?t been indexed yet/i)
       ).toBeInTheDocument();
     });
   });

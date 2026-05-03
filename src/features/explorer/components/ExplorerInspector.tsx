@@ -7,6 +7,7 @@ import {
   isImageNode,
 } from "../utils/presentation";
 import { InspectorImageThumbnail } from "./InspectorImageThumbnail";
+import { NodeStateDot, resolveNodeStateTone } from "./NodeStateDot";
 
 export function ExplorerInspector({
   node,
@@ -77,7 +78,13 @@ export function ExplorerInspector({
         </div>
         <div className="inspector-meta-row">
           <dt>State</dt>
-          <dd>{node.state}</dd>
+          <dd>
+            {resolveNodeStateTone(node.kind, node.state) ? (
+              <NodeStateDot kind={node.kind} state={node.state} withLabel />
+            ) : (
+              <span className="inspector-meta-muted">—</span>
+            )}
+          </dd>
         </div>
       </dl>
       {showImage ? (

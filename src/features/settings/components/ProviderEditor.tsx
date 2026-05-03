@@ -147,18 +147,6 @@ export function ProviderEditor({
 
   return (
     <div className="provider-editor" role="region" aria-label={preset.displayName}>
-      <header className="provider-editor-header">
-        <h3>{preset.displayName}</h3>
-        <button
-          type="button"
-          className="settings-action"
-          onClick={onClose}
-          aria-label="Close provider editor"
-        >
-          Close
-        </button>
-      </header>
-
       {preset.authKind === "api-key" ? (
         <section className="provider-editor-section">
           {state.kind === "editing" || (!hasSecret && state.kind === "idle") ? (

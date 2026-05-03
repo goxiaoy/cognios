@@ -135,7 +135,7 @@ describe("SettingsLayout", () => {
     });
   });
 
-  it("reveals legacy Models card when Diagnostics is toggled on", async () => {
+  it("renders the diagnostics summary and exposes model state inline (no toggle)", async () => {
     const client = makeClient({
       settings: vi.fn().mockResolvedValue(readySettings()),
     });
@@ -143,14 +143,14 @@ describe("SettingsLayout", () => {
     await waitFor(() => {
       expect(screen.getByText("Features")).toBeInTheDocument();
     });
-    // ModelManagerStatus's "Models" card title is hidden by default.
-    expect(screen.queryByText("Indexed chunks")).toBeNull();
-
-    const toggle = screen.getByRole("button", { name: /show diagnostics/i });
-    toggle.click();
-
-    await waitFor(() => {
-      expect(screen.getByText("Indexed chunks")).toBeInTheDocument();
-    });
+    // The bottom strip is always-visible — no "Show Diagnostics"
+    // toggle exists anymore.
+    expect(
+      screen.queryByRole("button", { name: /show diagnostics/i })
+    ).toBeNull();
+    expect(screen.getByText("Indexed items")).toBeInTheDocument();
+    // The local-gte provider's role is "ready" in the makeClient
+    // mock, so its row's status pill reads "Ready".
+    expect(screen.getAllByText("Ready").length).toBeGreaterThan(0);
   });
 });

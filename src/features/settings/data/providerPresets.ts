@@ -133,10 +133,11 @@ export const FEATURE_CATALOG: readonly FeatureMeta[] = [
     featureId: "image-ocr",
     displayName: "Image OCR",
     description:
-      "Extract text from screenshots and scans. Local provider " +
-      "ships bundled models; cloud providers transcribe via vision API.",
+      "Required. Extracts text from screenshots and scans. " +
+      "Local PaddleOCR ships bundled with no download; cloud providers " +
+      "transcribe via vision API.",
     capability: "ocr",
-    mandatory: false,
+    mandatory: true,
     comingSoon: false,
   },
   {

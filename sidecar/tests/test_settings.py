@@ -40,10 +40,16 @@ def test_default_settings_seeds_local_gte_and_semantic_search():
     assert (
         s.features["result-reranking"].provider_id == "local-gte-reranker"
     )
-    # Phase-2 features default off and unbound.
-    for fid in ("image-ocr", "image-captioning"):
-        assert s.features[fid].enabled is False
-        assert s.features[fid].provider_id is None
+    # Mandatory image-ocr is pre-bound to local PaddleOCR — the
+    # PaddleOCR weights ship inside the rapidocr-onnxruntime wheel,
+    # so there's no download cost to making it on-by-default.
+    assert "local-paddleocr" in s.providers
+    assert s.providers["local-paddleocr"].enabled is True
+    assert s.features["image-ocr"].enabled is True
+    assert s.features["image-ocr"].provider_id == "local-paddleocr"
+    # Image captioning is still optional pending the local Gemma path.
+    assert s.features["image-captioning"].enabled is False
+    assert s.features["image-captioning"].provider_id is None
     # No cloud providers consented to on first install.
     assert s.cloud_consent_acked == []
     assert s.first_run_skipped is False

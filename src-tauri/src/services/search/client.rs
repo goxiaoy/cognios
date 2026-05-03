@@ -260,18 +260,30 @@ pub struct LicenseAcceptResponseDto {
 // Mirror the sidecar's ``SearchSettings`` Pydantic model. Optional /
 // new fields use ``#[serde(default)]`` so a payload from an older
 // sidecar still parses cleanly.
+//
+// Wire-format casing is asymmetric on purpose:
+//   * Serialize as camelCase — matches the TS idiom on the Tauri
+//     webview AND aligns with the sidecar's Pydantic ``populate_
+//     by_name`` shape so the same body works for both consumers.
+//   * Deserialize accepts BOTH snake_case (from sidecar JSON
+//     responses) AND camelCase (from frontend ``invoke`` args) via
+//     per-field ``alias`` annotations — without these, the Tauri
+//     command boundary fails with ``missing field provider_id``
+//     when the frontend rebroadcasts the camelCase payload it
+//     just received from a GET.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct ProviderConfigDto {
+    #[serde(alias = "providerId")]
     pub provider_id: String,
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default, alias = "apiKeyRef")]
     pub api_key_ref: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "baseUrl")]
     pub base_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "modelPerCapability")]
     pub model_per_capability: std::collections::HashMap<String, String>,
 }
 
@@ -280,7 +292,7 @@ pub struct ProviderConfigDto {
 pub struct FeatureConfigDto {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default, alias = "providerId")]
     pub provider_id: Option<String>,
 }
 
@@ -293,15 +305,15 @@ pub struct SearchSettingsDto {
     pub providers: std::collections::HashMap<String, ProviderConfigDto>,
     #[serde(default)]
     pub features: std::collections::HashMap<String, FeatureConfigDto>,
-    #[serde(default)]
+    #[serde(default, alias = "cloudConsentAcked")]
     pub cloud_consent_acked: Vec<String>,
-    #[serde(default)]
+    #[serde(default, alias = "firstRunSkipped")]
     pub first_run_skipped: bool,
     /// Computed by the sidecar route; ``true`` means the on-disk
     /// settings differ from what the running sidecar booted with in
     /// some dispatcher-affecting way. The frontend uses this to
     /// surface the "Restart sidecar to apply" banner.
-    #[serde(default)]
+    #[serde(default, alias = "needsRestart")]
     pub needs_restart: bool,
 }
 
