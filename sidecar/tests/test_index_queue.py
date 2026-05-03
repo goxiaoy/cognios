@@ -145,3 +145,71 @@ def test_list_node_ids_returns_all_states(tmp_path: Path):
         assert ids == {"aaa", "bbb"}
     finally:
         queue.close()
+
+
+
+def test_concurrent_reads_and_writes_never_return_none_from_count(
+    tmp_path: Path,
+):
+    """Regression test for the runtime ``'NoneType' object is not
+    subscriptable`` crash from ``queue_depth()`` when the FastAPI
+    request thread races the runner's write loop on the same
+    connection.
+
+    Pre-fix, ``connection.execute("SELECT COUNT(*)").fetchone()``
+    occasionally returned ``None`` because CPython sqlite3 doesn't
+    serialize ``execute`` calls across threads when
+    ``check_same_thread=False`` is set. The lock on IndexingQueue
+    fixes this; this test asserts every queue_depth result is an
+    integer under heavy concurrent load.
+    """
+    import threading
+
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        stop = threading.Event()
+        depth_results: list[object] = []
+        errors: list[Exception] = []
+
+        def writer():
+            i = 0
+            while not stop.is_set():
+                try:
+                    queue.enqueue(
+                        node_id=f"node-{i % 50:04d}",
+                        kind="note",
+                        name=f"n{i}",
+                    )
+                except Exception as err:  # pragma: no cover
+                    errors.append(err)
+                i += 1
+
+        def reader():
+            while not stop.is_set():
+                try:
+                    depth_results.append(queue.queue_depth())
+                except Exception as err:  # pragma: no cover
+                    errors.append(err)
+
+        threads = [
+            threading.Thread(target=writer, daemon=True),
+            threading.Thread(target=writer, daemon=True),
+            threading.Thread(target=reader, daemon=True),
+            threading.Thread(target=reader, daemon=True),
+            threading.Thread(target=reader, daemon=True),
+        ]
+        for t in threads:
+            t.start()
+        # ~0.5s of contention is enough to surface the race deterministically
+        # against the un-locked baseline; the locked version stays clean.
+        threading.Event().wait(0.5)
+        stop.set()
+        for t in threads:
+            t.join(timeout=2.0)
+
+        assert errors == []
+        assert len(depth_results) > 100
+        for value in depth_results:
+            assert isinstance(value, int), f"queue_depth returned {value!r}"
+    finally:
+        queue.close()

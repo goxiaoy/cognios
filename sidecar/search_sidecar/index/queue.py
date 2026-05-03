@@ -21,10 +21,16 @@ Schema::
 Concurrency model: a single :class:`IndexingQueue` is shared by the
 FastAPI request handlers (which call :meth:`enqueue`) and the runner
 worker (which calls :meth:`claim_next` / :meth:`mark_indexed` /
-:meth:`mark_error`). All access is funnelled through one
-``sqlite3.Connection`` per process; SQLite serialises writes via WAL,
-and the connection's per-statement lock is sufficient for the small
-write throughput of an indexing queue.
+:meth:`mark_error`). The shared ``sqlite3.Connection`` is opened with
+``check_same_thread=False`` so it can move between threads, but
+CPython's sqlite3 module does NOT serialise ``connection.execute``
+calls across threads — concurrent execute-then-fetchone chains can
+race and surface as ``Cursor.fetchone()`` returning ``None`` on
+``SELECT COUNT(*)`` even though the table has rows. To keep behavior
+predictable, every public method funnels through ``self._lock`` (a
+re-entrant lock so internal helpers can call other public methods
+without deadlock). SQLite still does its own WAL serialisation under
+us; the Python-side lock just makes the cursor lifecycle race-free.
 
 Crash safety:
 
@@ -42,6 +48,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -90,6 +97,11 @@ class IndexingQueue:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
         self._conn.row_factory = sqlite3.Row
+        # Re-entrant so a method that delegates to another public
+        # method (e.g. tests calling close after a failed open) doesn't
+        # self-deadlock. See module docstring for why this is needed
+        # despite SQLite's own WAL serialisation.
+        self._lock = threading.RLock()
 
     # ----- write side ---------------------------------------------------
 
@@ -113,7 +125,7 @@ class IndexingQueue:
         now_str = _now_iso()
         ca = (created_at or _now()).astimezone(timezone.utc).isoformat()
         ma = (modified_at or _now()).astimezone(timezone.utc).isoformat()
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 INSERT INTO jobs (
@@ -149,7 +161,7 @@ class IndexingQueue:
 
         Returns True if a row was removed.
         """
-        with self._conn:
+        with self._lock, self._conn:
             cur = self._conn.execute(
                 "DELETE FROM jobs WHERE node_id = ?", (node_id,)
             )
@@ -160,7 +172,7 @@ class IndexingQueue:
 
         Returns ``None`` if the queue has no pending work.
         """
-        with self._conn:
+        with self._lock, self._conn:
             row = self._conn.execute(
                 """
                 SELECT * FROM jobs
@@ -187,7 +199,7 @@ class IndexingQueue:
         return _row_to_job(merged)
 
     def mark_indexed(self, node_id: str) -> None:
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 UPDATE jobs
@@ -200,7 +212,7 @@ class IndexingQueue:
     def mark_error(self, node_id: str, message: str) -> None:
         # Cap last_error at 1 KB (security FINDING-003).
         truncated = message[:1024]
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 UPDATE jobs
@@ -213,26 +225,34 @@ class IndexingQueue:
     # ----- read side ----------------------------------------------------
 
     def get(self, node_id: str) -> Optional[IndexingJob]:
-        row = self._conn.execute(
-            "SELECT * FROM jobs WHERE node_id = ?", (node_id,)
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM jobs WHERE node_id = ?", (node_id,)
+            ).fetchone()
         return _row_to_job(dict(row)) if row else None
 
     def queue_depth(self) -> int:
-        return self._conn.execute(
-            "SELECT COUNT(*) FROM jobs WHERE state = ?",
-            (JobState.PENDING.value,),
-        ).fetchone()[0]
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE state = ?",
+                (JobState.PENDING.value,),
+            ).fetchone()
+        # Belt-and-braces: ``SELECT COUNT(*)`` always returns one row,
+        # but if some future schema or pragma surprise yields ``None``
+        # we'd rather return zero than 500 the status endpoint.
+        return int(row[0]) if row is not None else 0
 
     def in_flight_node_ids(self) -> list[str]:
-        rows = self._conn.execute(
-            "SELECT node_id FROM jobs WHERE state = ?",
-            (JobState.INDEXING.value,),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT node_id FROM jobs WHERE state = ?",
+                (JobState.INDEXING.value,),
+            ).fetchall()
         return [r["node_id"] for r in rows]
 
     def list_node_ids(self) -> set[str]:
-        rows = self._conn.execute("SELECT node_id FROM jobs").fetchall()
+        with self._lock:
+            rows = self._conn.execute("SELECT node_id FROM jobs").fetchall()
         return {r["node_id"] for r in rows}
 
     def snapshot(self) -> dict[str, dict[str, str | None]]:
@@ -245,9 +265,10 @@ class IndexingQueue:
         no path) keeps the response payload small even for thousand-
         node workspaces.
         """
-        rows = self._conn.execute(
-            "SELECT node_id, state, modified_at FROM jobs"
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT node_id, state, modified_at FROM jobs"
+            ).fetchall()
         return {
             r["node_id"]: {
                 "state": r["state"],
@@ -264,7 +285,7 @@ class IndexingQueue:
         Called once at queue open. Mirrors the existing url-job pattern.
         Returns the number of rows reset.
         """
-        with self._conn:
+        with self._lock, self._conn:
             cur = self._conn.execute(
                 """
                 UPDATE jobs SET state = ?, last_error = NULL
@@ -275,10 +296,11 @@ class IndexingQueue:
         return cur.rowcount
 
     def close(self) -> None:
-        try:
-            self._conn.close()
-        except sqlite3.Error:
-            pass
+        with self._lock:
+            try:
+                self._conn.close()
+            except sqlite3.Error:
+                pass
 
 
 # ----- module-level constructor + helpers --------------------------------

@@ -18,6 +18,7 @@ from search_sidecar.settings import (
     SettingsVersionError,
     default_settings,
     load_settings,
+    migrate_mandatory_features,
     save_settings,
 )
 
@@ -198,3 +199,78 @@ def test_save_settings_idempotent_repeat(tmp_path: Path):
     second_mode = stat.S_IMODE(os.stat(path).st_mode)
     assert first_bytes == second_bytes
     assert first_mode == second_mode
+
+
+# ---- migrate_mandatory_features ---------------------------------------------
+
+
+def test_migrate_backfills_pre_mandatory_reranking_state():
+    """Pre-mandatory installs persisted ``result-reranking`` as
+    ``{enabled: false, providerId: null}``. Boot-time migration must
+    restore the default binding so the user isn't stuck with no
+    provider picker (the row is now a Required badge)."""
+    settings = SearchSettings(
+        providers={
+            "local-gte": ProviderConfig(provider_id="local-gte"),
+        },
+        features={
+            "semantic-search": FeatureConfig(
+                enabled=True, provider_id="local-gte"
+            ),
+            "result-reranking": FeatureConfig(enabled=False, provider_id=None),
+        },
+    )
+    migrated, changed = migrate_mandatory_features(settings)
+    assert changed is True
+    assert migrated.features["result-reranking"].enabled is True
+    assert (
+        migrated.features["result-reranking"].provider_id == "local-gte-reranker"
+    )
+    assert "local-gte-reranker" in migrated.providers
+
+
+def test_migrate_preserves_explicit_non_default_binding():
+    """If the user picked some other provider for a mandatory feature,
+    the migration must not undo that choice."""
+    settings = SearchSettings(
+        providers={
+            "openai": ProviderConfig(provider_id="openai", enabled=True),
+        },
+        features={
+            "semantic-search": FeatureConfig(
+                enabled=True, provider_id="openai"
+            ),
+            "result-reranking": FeatureConfig(
+                enabled=True, provider_id="local-gte-reranker"
+            ),
+        },
+    )
+    migrated, changed = migrate_mandatory_features(settings)
+    assert changed is True  # provider entry for local-gte-reranker added
+    assert migrated.features["semantic-search"].provider_id == "openai"
+
+
+def test_migrate_no_changes_for_already_migrated_settings():
+    """Calling the migration twice is idempotent — second call is a
+    no-op once mandatory features already point at their defaults."""
+    first, first_changed = migrate_mandatory_features(default_settings())
+    assert first_changed is False
+    _, second_changed = migrate_mandatory_features(first)
+    assert second_changed is False
+
+
+def test_load_settings_does_not_run_migration(tmp_path: Path):
+    """``load_settings`` is a pure file reader. PUT-then-GET must
+    return exactly what was written, even if it leaves a mandatory
+    feature unbound — the migration only fires from boot-time
+    lifecycle, not on every read."""
+    path = tmp_path / "settings.json"
+    raw = SearchSettings(
+        features={
+            "result-reranking": FeatureConfig(enabled=False, provider_id=None),
+        },
+    )
+    save_settings(path, raw)
+    loaded = load_settings(path)
+    assert loaded.features["result-reranking"].enabled is False
+    assert loaded.features["result-reranking"].provider_id is None

@@ -41,7 +41,12 @@ from .runtime_file import (
     remove_runtime_file,
     write_runtime_file,
 )
-from .settings import boot_signature, load_settings, save_settings
+from .settings import (
+    boot_signature,
+    load_settings,
+    migrate_mandatory_features,
+    save_settings,
+)
 from .storage import open_store
 
 LOG = logging.getLogger("search_sidecar.lifecycle")
@@ -80,7 +85,11 @@ def serve(storage_dir: Path) -> int:
     # at 0600 from the start; subsequent runs no-op via the load path.
     if not settings_path.exists():
         save_settings(settings_path, load_settings(settings_path))
-    settings = load_settings(settings_path)
+    settings, migrated = migrate_mandatory_features(load_settings(settings_path))
+    if migrated:
+        # Persist so the migration is one-shot and the on-disk file
+        # matches what the running process is using.
+        save_settings(settings_path, settings)
     model_manager = ModelManager(storage_dir=storage_dir, manifest=DEFAULTS)
     lancedb_store = open_store(search_dir / "index.lance")
     indexing_queue = open_queue(search_dir / "queue.db")

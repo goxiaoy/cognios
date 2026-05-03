@@ -158,6 +158,11 @@ def load_settings(path: Path) -> SearchSettings:
     callers should surface this as a "please upgrade the app" message
     rather than silently downgrade. Pydantic ``ValidationError``
     propagates as-is on malformed JSON.
+
+    Pure file reader — no migrations or defaults are layered in
+    here so ``PUT /settings`` followed by ``GET /settings`` returns
+    exactly what was written. Boot-time mandatory-feature backfill
+    is in :func:`migrate_mandatory_features`, called by the lifecycle.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -172,6 +177,54 @@ def load_settings(path: Path) -> SearchSettings:
             "Upgrade the app to load these settings."
         )
     return settings
+
+
+# Feature ids that are mandatory in v1. Kept here (not in
+# providers/presets.py) so the settings layer has zero imports from
+# the providers layer.
+_MANDATORY_FEATURE_IDS: tuple[str, ...] = ("semantic-search", "result-reranking")
+
+
+def migrate_mandatory_features(
+    settings: SearchSettings,
+) -> tuple[SearchSettings, bool]:
+    """Restore default bindings for mandatory features that ended up
+    disabled or unbound on disk.
+
+    Covers pre-mandatory installs whose ``result-reranking`` row was
+    persisted as ``{enabled: false, providerId: null}`` before the
+    feature was promoted. Only fixes the "looks like the user never
+    picked anything" case — an explicit non-default binding is left
+    alone. Also seeds any provider entries the restored bindings
+    point at so the dispatcher doesn't see a dangling ``provider_id``.
+
+    Returns ``(migrated_settings, changed)``. The lifecycle persists
+    the result back to disk when ``changed`` is True so the migration
+    runs at most once per install.
+    """
+    defaults = default_settings()
+    changed = False
+    for fid in _MANDATORY_FEATURE_IDS:
+        default_feature = defaults.features.get(fid)
+        if default_feature is None:
+            continue
+        existing = settings.features.get(fid)
+        if existing is None:
+            settings.features[fid] = default_feature.model_copy()
+            changed = True
+            continue
+        if not existing.enabled or existing.provider_id is None:
+            settings.features[fid] = default_feature.model_copy()
+            changed = True
+    for pid, pcfg in defaults.providers.items():
+        if pid not in settings.providers and any(
+            settings.features[fid].provider_id == pid
+            for fid in _MANDATORY_FEATURE_IDS
+            if fid in settings.features
+        ):
+            settings.providers[pid] = pcfg.model_copy()
+            changed = True
+    return settings, changed
 
 
 def save_settings(path: Path, settings: SearchSettings) -> None:
