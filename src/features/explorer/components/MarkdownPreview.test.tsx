@@ -13,6 +13,7 @@ function makeClient(overrides: Partial<ExplorerClient> = {}): ExplorerClient {
     createUrl: vi.fn(),
     renameNode: vi.fn(),
     deleteNode: vi.fn(),
+    reindexNode: vi.fn().mockResolvedValue({ enqueued: 0 }),
     retryUrl: vi.fn(),
     getNodeThumbnail: vi.fn(),
     getNoteContent: vi.fn(),

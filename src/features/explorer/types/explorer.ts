@@ -39,6 +39,7 @@ export interface ExplorerClient {
   createUrl(input: CreateUrlInput): Promise<ExplorerSnapshot>;
   renameNode(input: RenameNodeInput): Promise<ExplorerSnapshot>;
   deleteNode(input: DeleteNodeInput): Promise<ExplorerSnapshot>;
+  reindexNode(input: { nodeId: string }): Promise<{ enqueued: number }>;
   retryUrl(input: RetryUrlInput): Promise<void>;
   getNodeThumbnail(nodeId: string): Promise<string>;
   getNoteContent(noteId: string): Promise<string>;

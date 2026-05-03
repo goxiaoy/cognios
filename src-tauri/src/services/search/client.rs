@@ -218,6 +218,34 @@ pub struct IndexSnapshotDto {
     pub nodes: HashMap<String, IndexSnapshotEntry>,
 }
 
+/// One transition row from ``GET /index/changes?since=<seq>``.
+/// Used by the live-state mirror task to mirror sidecar transitions
+/// into ``cognios.db.nodes.state`` without polling the full snapshot
+/// (which is O(corpus); this is O(change rate)).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct IndexChangeDto {
+    pub node_id: String,
+    pub state: String,
+    #[serde(default)]
+    pub indexed_at: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub transition_seq: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct IndexChangesDto {
+    #[serde(default)]
+    pub transitions: Vec<IndexChangeDto>,
+    /// Largest ``transition_seq`` among ``transitions``. ``0`` means
+    /// no new transitions since the requested cursor — caller keeps
+    /// its cursor unchanged.
+    #[serde(default)]
+    pub next_seq: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelsStatusDto {
     /// `HashMap` iteration order is non-deterministic, so the JSON
@@ -514,6 +542,15 @@ impl SearchSidecarClient {
 
     pub async fn index_snapshot(&self) -> SidecarEnvelope<IndexSnapshotDto> {
         self.get_envelope("/index/snapshot").await
+    }
+
+    pub async fn index_changes(
+        &self,
+        since: u64,
+        limit: u32,
+    ) -> SidecarEnvelope<IndexChangesDto> {
+        let path = format!("/index/changes?since={since}&limit={limit}");
+        self.get_envelope(&path).await
     }
 
     pub async fn node_index_status(

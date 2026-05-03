@@ -11,6 +11,7 @@
 
 pub mod client;
 pub mod forwarder;
+pub mod index_state_sync;
 pub mod runtime_file;
 pub mod settings_fallback;
 pub mod supervisor;

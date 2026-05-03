@@ -5,7 +5,7 @@ import type {
   ExplorerNode,
   ExplorerSnapshot
 } from "../types/explorer";
-import { isImageNode, isMarkdownFile } from "../utils/presentation";
+import { isImageNode, isTextLikeFile } from "../utils/presentation";
 
 const EMPTY_SNAPSHOT: ExplorerSnapshot = { roots: [] };
 
@@ -136,7 +136,12 @@ export function useExplorerStore(client: ExplorerClient) {
         return;
       }
       if (node.kind === "file") {
-        if (isMarkdownFile(node)) {
+        if (isTextLikeFile(node)) {
+          // Markdown and plain-text files share the same preview
+          // slot — the renderer (MarkdownPreview) decides whether
+          // to apply markdown formatting based on the file
+          // extension. Avoiding a parallel store slot for plain
+          // text keeps the surface state machine simple.
           setActivePreviewId(node.id);
           return;
         }

@@ -178,6 +178,84 @@ pub fn find_existing_mount_by_absolute_path(
     Ok(None)
 }
 
+/// Describes a nested-mount conflict: the proposed path either lives
+/// inside an existing mount, or contains an existing mount as a
+/// descendant. Both directions are rejected because either case
+/// makes the watcher + reconcile loop write conflicting rows for
+/// the same files (one set tagged with the outer mount_id, one with
+/// the inner — and the outer's reconcile DELETE-then-INSERT would
+/// either shadow the inner's nodes or wipe them mid-cycle).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NestedMountConflict {
+    pub existing_node_id: String,
+    pub existing_name: String,
+    pub existing_path: String,
+    /// ``"inside"`` — the new path is inside ``existing_path``.
+    /// ``"contains"`` — the new path contains ``existing_path``.
+    pub direction: NestedMountDirection,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NestedMountDirection {
+    /// The proposed path is inside an existing mount.
+    Inside,
+    /// The proposed path is an ancestor of an existing mount.
+    Contains,
+}
+
+/// Returns the first existing mount that conflicts with ``candidate``
+/// in the nesting sense (ancestor or descendant). The exact-path
+/// duplicate is **not** treated as a nesting conflict — callers
+/// should run :func:`find_existing_mount_by_absolute_path` first
+/// for that case so the surfaced error is unambiguous.
+pub fn find_nested_mount_conflict(
+    conn: &Connection,
+    candidate: &std::path::Path,
+) -> rusqlite::Result<Option<NestedMountConflict>> {
+    let mut stmt = conn.prepare(
+        "
+        SELECT mounts.node_id, nodes.name, mounts.absolute_path
+        FROM mounts
+        INNER JOIN nodes ON nodes.id = mounts.node_id
+        ",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (node_id, name, path) = row?;
+        let existing = std::path::Path::new(&path);
+        if existing == candidate {
+            // Caller surfaces this via the dedicated duplicate
+            // route — skip here so we don't double-flag.
+            continue;
+        }
+        if candidate.starts_with(existing) {
+            return Ok(Some(NestedMountConflict {
+                existing_node_id: node_id,
+                existing_name: name,
+                existing_path: path,
+                direction: NestedMountDirection::Inside,
+            }));
+        }
+        if existing.starts_with(candidate) {
+            return Ok(Some(NestedMountConflict {
+                existing_node_id: node_id,
+                existing_name: name,
+                existing_path: path,
+                direction: NestedMountDirection::Contains,
+            }));
+        }
+    }
+    Ok(None)
+}
+
 pub fn reconcile_mount(
     conn: &mut Connection,
     mount_id: &str,

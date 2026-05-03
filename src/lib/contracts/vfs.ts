@@ -6,7 +6,8 @@ export type NodeState =
   | "indexing"
   | "indexed"
   | "error"
-  | "unavailable";
+  | "unavailable"
+  | "unsupported";
 
 export interface ExplorerNode {
   id: string;

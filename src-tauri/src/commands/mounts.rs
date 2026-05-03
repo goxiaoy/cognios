@@ -3,7 +3,8 @@ use tauri::State;
 
 use crate::domain::vfs::node::ExplorerSnapshotDto;
 use crate::infrastructure::db::mount_repository::{
-    find_existing_mount_by_absolute_path, list_existing_mounts, CreateMountInput, ExistingMount,
+    find_existing_mount_by_absolute_path, find_nested_mount_conflict, list_existing_mounts,
+    CreateMountInput, ExistingMount, NestedMountDirection,
 };
 use crate::services::mounts::create_mount::create_mount_snapshot;
 use crate::services::mounts::obsidian::{detect_obsidian_vaults, ObsidianVault};
@@ -25,6 +26,21 @@ pub enum CreateMountErrorDto {
         mount_id: String,
         mount_name: String,
         absolute_path: String,
+        message: String,
+    },
+    /// The proposed path is inside an existing mount, or contains
+    /// one as a descendant. Either case would make the watcher +
+    /// reconcile loop write conflicting rows for the shared files;
+    /// reject up-front so the user can resolve which mount they
+    /// really want before any DB damage.
+    NestedMount {
+        existing_mount_id: String,
+        existing_mount_name: String,
+        existing_path: String,
+        /// ``"inside"`` if the new path lives under the existing
+        /// mount, ``"contains"`` if it would swallow an existing
+        /// mount.
+        direction: String,
         message: String,
     },
     Message {
@@ -58,6 +74,39 @@ pub fn create_mount(
             mount_name: existing_mount.name,
             absolute_path: existing_mount.absolute_path,
             message: "This folder is already mounted.".into(),
+        });
+    }
+    if let Some(conflict) =
+        find_nested_mount_conflict(&conn, &normalized_path).map_err(|error| {
+            CreateMountErrorDto::Message {
+                message: error.to_string(),
+            }
+        })?
+    {
+        let (direction_label, message) = match conflict.direction {
+            NestedMountDirection::Inside => (
+                "inside".to_string(),
+                format!(
+                    "This folder lives inside an existing mount ({}). \
+                     Browse it from the existing mount instead.",
+                    conflict.existing_name
+                ),
+            ),
+            NestedMountDirection::Contains => (
+                "contains".to_string(),
+                format!(
+                    "An existing mount ({}) already lives inside this folder. \
+                     Remove the inner mount first or pick a non-overlapping path.",
+                    conflict.existing_name
+                ),
+            ),
+        };
+        return Err(CreateMountErrorDto::NestedMount {
+            existing_mount_id: conflict.existing_node_id,
+            existing_mount_name: conflict.existing_name,
+            existing_path: conflict.existing_path,
+            direction: direction_label,
+            message,
         });
     }
     let created_mount = create_mount_snapshot(&mut conn, &input)

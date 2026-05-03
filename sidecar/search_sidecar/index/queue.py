@@ -14,9 +14,17 @@ Schema::
       last_error            TEXT,
       attempts              INTEGER NOT NULL DEFAULT 0,
       created_at            TEXT NOT NULL,
-      modified_at           TEXT NOT NULL
+      modified_at           TEXT NOT NULL,
+      transition_seq        INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX idx_jobs_state ON jobs(state);
+    CREATE INDEX idx_jobs_transition_seq ON jobs(transition_seq);
+
+The ``transition_seq`` column is bumped to a fresh monotonic value
+on every state mutation. Rust polls ``GET /index/changes?since=<n>``
+to learn which nodes' states have changed since its last poll —
+the cost is proportional to the change rate, not the corpus size,
+which is the property the snapshot endpoint lacks at scale.
 
 Concurrency model: a single :class:`IndexingQueue` is shared by the
 FastAPI request handlers (which call :meth:`enqueue`) and the runner
@@ -126,12 +134,14 @@ class IndexingQueue:
         ca = (created_at or _now()).astimezone(timezone.utc).isoformat()
         ma = (modified_at or _now()).astimezone(timezone.utc).isoformat()
         with self._lock, self._conn:
+            seq = self._next_transition_seq()
             self._conn.execute(
                 """
                 INSERT INTO jobs (
                     node_id, kind, name, absolute_content_path, mount_id,
-                    state, enqueued_at, attempts, created_at, modified_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                    state, enqueued_at, attempts, created_at, modified_at,
+                    transition_seq
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
                 ON CONFLICT(node_id) DO UPDATE SET
                     kind = excluded.kind,
                     name = excluded.name,
@@ -141,7 +151,8 @@ class IndexingQueue:
                     enqueued_at = excluded.enqueued_at,
                     last_error = NULL,
                     indexed_at = NULL,
-                    modified_at = excluded.modified_at
+                    modified_at = excluded.modified_at,
+                    transition_seq = excluded.transition_seq
                 """,
                 (
                     node_id,
@@ -153,6 +164,7 @@ class IndexingQueue:
                     now_str,
                     ca,
                     ma,
+                    seq,
                 ),
             )
 
@@ -184,12 +196,14 @@ class IndexingQueue:
             ).fetchone()
             if row is None:
                 return None
+            seq = self._next_transition_seq()
             self._conn.execute(
                 """
-                UPDATE jobs SET state = ?, attempts = attempts + 1
+                UPDATE jobs SET state = ?, attempts = attempts + 1,
+                               transition_seq = ?
                 WHERE node_id = ?
                 """,
-                (JobState.INDEXING.value, row["node_id"]),
+                (JobState.INDEXING.value, seq, row["node_id"]),
             )
         # The pre-UPDATE row was captured above; reflect the
         # post-UPDATE state in the returned job so callers see the
@@ -200,27 +214,44 @@ class IndexingQueue:
 
     def mark_indexed(self, node_id: str) -> None:
         with self._lock, self._conn:
+            seq = self._next_transition_seq()
             self._conn.execute(
                 """
                 UPDATE jobs
-                SET state = ?, indexed_at = ?, last_error = NULL
+                SET state = ?, indexed_at = ?, last_error = NULL,
+                    transition_seq = ?
                 WHERE node_id = ?
                 """,
-                (JobState.INDEXED.value, _now_iso(), node_id),
+                (JobState.INDEXED.value, _now_iso(), seq, node_id),
             )
 
     def mark_error(self, node_id: str, message: str) -> None:
         # Cap last_error at 1 KB (security FINDING-003).
         truncated = message[:1024]
         with self._lock, self._conn:
+            seq = self._next_transition_seq()
             self._conn.execute(
                 """
                 UPDATE jobs
-                SET state = ?, last_error = ?
+                SET state = ?, last_error = ?, transition_seq = ?
                 WHERE node_id = ?
                 """,
-                (JobState.ERROR.value, truncated, node_id),
+                (JobState.ERROR.value, truncated, seq, node_id),
             )
+
+    def _next_transition_seq(self) -> int:
+        """Return ``MAX(transition_seq) + 1`` for the next state mutation.
+
+        Caller must hold ``self._lock`` and be inside a write
+        transaction so the read-then-write is race-free against
+        concurrent mutations on other connections (we currently use
+        a single connection but the lock + transaction are correct
+        even if that ever changes).
+        """
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(transition_seq), 0) + 1 FROM jobs"
+        ).fetchone()
+        return int(row[0])
 
     # ----- read side ----------------------------------------------------
 
@@ -255,6 +286,54 @@ class IndexingQueue:
             rows = self._conn.execute("SELECT node_id FROM jobs").fetchall()
         return {r["node_id"] for r in rows}
 
+    def changes_since(
+        self, since: int, limit: int
+    ) -> tuple[list[dict[str, str | int | None]], int]:
+        """Rows whose ``transition_seq > since``, oldest first.
+
+        Returns ``(transitions, max_seq_returned)``. ``max_seq_returned``
+        is 0 when no rows match — caller should keep its cursor in that
+        case. ``limit`` caps the response size; on a hot queue the
+        caller can advance through chunks across successive polls.
+        """
+        capped = max(1, min(int(limit), 10_000))
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT node_id, state, indexed_at, last_error,
+                       transition_seq
+                FROM jobs
+                WHERE transition_seq > ?
+                ORDER BY transition_seq ASC
+                LIMIT ?
+                """,
+                (int(since), capped),
+            ).fetchall()
+        if not rows:
+            return [], 0
+        transitions = [
+            {
+                "node_id": r["node_id"],
+                "state": r["state"],
+                "indexed_at": r["indexed_at"],
+                "error": r["last_error"],
+                "transition_seq": int(r["transition_seq"]),
+            }
+            for r in rows
+        ]
+        max_seq = int(rows[-1]["transition_seq"])
+        return transitions, max_seq
+
+    def head_seq(self) -> int:
+        """Current ``MAX(transition_seq)`` — useful for callers that
+        want to start tailing from "now" without first replaying all
+        history."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(transition_seq), 0) FROM jobs"
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
     def snapshot(self) -> dict[str, dict[str, str | None]]:
         """Per-node ``(state, modified_at)`` snapshot of the queue.
 
@@ -284,16 +363,32 @@ class IndexingQueue:
 
         Called once at queue open. Mirrors the existing url-job pattern.
         Returns the number of rows reset.
+
+        Bumps ``transition_seq`` per-row so each reset shows up as a
+        distinct transition for the Rust poll cursor; a bulk UPDATE
+        with a single seq would collapse N transitions into one and
+        risk loss-on-pagination if more than ``limit`` rows share a
+        seq value.
         """
         with self._lock, self._conn:
-            cur = self._conn.execute(
-                """
-                UPDATE jobs SET state = ?, last_error = NULL
-                WHERE state = ?
-                """,
-                (JobState.PENDING.value, JobState.INDEXING.value),
-            )
-        return cur.rowcount
+            stale_ids = [
+                r["node_id"]
+                for r in self._conn.execute(
+                    "SELECT node_id FROM jobs WHERE state = ?",
+                    (JobState.INDEXING.value,),
+                ).fetchall()
+            ]
+            for node_id in stale_ids:
+                seq = self._next_transition_seq()
+                self._conn.execute(
+                    """
+                    UPDATE jobs SET state = ?, last_error = NULL,
+                                   transition_seq = ?
+                    WHERE node_id = ?
+                    """,
+                    (JobState.PENDING.value, seq, node_id),
+                )
+        return len(stale_ids)
 
     def close(self) -> None:
         with self._lock:
@@ -368,11 +463,43 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             last_error            TEXT,
             attempts              INTEGER NOT NULL DEFAULT 0,
             created_at            TEXT NOT NULL,
-            modified_at           TEXT NOT NULL
+            modified_at           TEXT NOT NULL,
+            transition_seq        INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);
+        CREATE INDEX IF NOT EXISTS idx_jobs_transition_seq ON jobs(transition_seq);
         """
     )
+    # Idempotent migration: ALTER TABLE ADD COLUMN for installs
+    # whose queue.db predates the transition_seq column. SQLite
+    # has no "ADD COLUMN IF NOT EXISTS"; introspect first.
+    # ``row_factory`` isn't set on the connection at this point —
+    # row[1] is the column name in the default tuple shape.
+    cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+    }
+    if "transition_seq" not in cols:
+        conn.execute(
+            "ALTER TABLE jobs ADD COLUMN transition_seq INTEGER NOT NULL DEFAULT 0"
+        )
+        # Backfill: assign distinct seq values so existing rows
+        # appear once in the next /index/changes poll. Without
+        # this, all rows have seq=0 and would be invisible (the
+        # reader filters ``WHERE transition_seq > since``, with
+        # since defaulting to 0). The ROWID order is stable and
+        # gives us a deterministic backfill ordering.
+        conn.execute(
+            """
+            UPDATE jobs
+            SET transition_seq = (
+                SELECT COUNT(*) FROM jobs AS j2
+                WHERE j2.rowid <= jobs.rowid
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_transition_seq ON jobs(transition_seq)"
+        )
 
 
 def _now() -> datetime:

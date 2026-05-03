@@ -1,10 +1,20 @@
 use rusqlite::OptionalExtension;
+use serde::Serialize;
 use tauri::State;
 
 use crate::domain::vfs::node::ExplorerSnapshotDto;
 use crate::services::mutations::delete_node::{delete_node as delete_node_record, DeleteNodeInput};
+use crate::services::mutations::reindex_node::{
+    reindex_node as reindex_node_record, ReindexNodeInput,
+};
 use crate::services::mutations::rename_node::{rename_node as rename_node_record, RenameNodeInput};
 use crate::AppState;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReindexNodeResult {
+    pub enqueued: usize,
+}
 
 #[tauri::command]
 pub fn rename_node(
@@ -36,6 +46,22 @@ pub fn delete_node(
         state.mount_watchers.stop_mount(&mount_id);
     }
     Ok(snapshot)
+}
+
+#[tauri::command]
+pub fn reindex_node(
+    state: State<'_, AppState>,
+    input: ReindexNodeInput,
+) -> Result<ReindexNodeResult, String> {
+    let conn = state
+        .db
+        .connect()
+        .map_err(|error: rusqlite::Error| error.to_string())?;
+    let emitter = state.emitter.as_ref();
+    let outcome = reindex_node_record(&conn, &input, &emitter)?;
+    Ok(ReindexNodeResult {
+        enqueued: outcome.enqueued,
+    })
 }
 
 fn resolve_mount_id(conn: &rusqlite::Connection, node_id: &str) -> Result<Option<String>, String> {

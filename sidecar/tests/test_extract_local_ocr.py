@@ -36,11 +36,13 @@ def _install_fake_rapidocr(monkeypatch, fake_engine_factory):
     monkeypatch.setattr(local_ocr_mod, "can_load_local_ocr", lambda: True)
 
 
-def test_can_load_local_ocr_returns_false_when_extra_missing(monkeypatch):
-    """When the rapidocr_onnxruntime spec isn't findable, gating
-    returns False — RapidOcrExtractor() should refuse to construct."""
+def test_can_load_local_ocr_returns_false_when_module_unimportable(monkeypatch):
+    """When the rapidocr_onnxruntime spec isn't findable (broken
+    venv, missing platform wheel), gating returns False —
+    RapidOcrExtractor() should refuse to construct rather than
+    surface a less obvious ImportError."""
     monkeypatch.setattr(local_ocr_mod, "can_load_local_ocr", lambda: False)
-    with pytest.raises(RuntimeError, match="image"):
+    with pytest.raises(RuntimeError, match="rapidocr-onnxruntime"):
         RapidOcrExtractor()
 
 

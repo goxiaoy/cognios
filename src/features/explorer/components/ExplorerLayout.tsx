@@ -147,8 +147,25 @@ export function ExplorerLayout({
   // The "active file" surface — the most-recent file activation drives the
   // center pane and breadcrumbs. Mutual-exclusion enforcement: note editor
   // takes render priority if multiple fields are inadvertently set.
+  //
+  // Cannot-preview files (PDF, binary, ...) don't populate any active*
+  // slot, but the user still selected a single file — surface that in
+  // the breadcrumbs so the header doesn't disappear when you click a
+  // non-previewable item.
+  const cannotPreviewNode: ExplorerNode | null =
+    store.selectionCount === 1 &&
+    store.selectedArtifacts[0].kind === "file" &&
+    !store.activeNote &&
+    !store.activePreview &&
+    !store.activeImagePreview
+      ? store.selectedArtifacts[0]
+      : null;
   const activeFileNode: ExplorerNode | null =
-    store.activeNote ?? store.activePreview ?? store.activeImagePreview ?? null;
+    store.activeNote ??
+    store.activePreview ??
+    store.activeImagePreview ??
+    cannotPreviewNode ??
+    null;
 
   // Compute breadcrumb path for the active file node from the snapshot.
   const breadcrumbNodes = useMemo(() => {
@@ -536,8 +553,15 @@ export function ExplorerLayout({
                   />
                 ) : null}
                 {showCannotPreview ? (
-                  <div className="detail-placeholder">
-                    <p>This file type cannot be previewed</p>
+                  <div className="markdown-preview">
+                    <header className="markdown-preview-header">
+                      <h2 className="markdown-preview-title">
+                        {store.selectedArtifacts[0].name}
+                      </h2>
+                    </header>
+                    <div className="detail-placeholder">
+                      <p>This file type cannot be previewed</p>
+                    </div>
                   </div>
                 ) : null}
                 {showWelcome ? (

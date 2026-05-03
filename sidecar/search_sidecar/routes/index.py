@@ -141,6 +141,43 @@ def _chunk_index_key(row: dict) -> tuple[int, int, str]:
     return (rank, idx, chunk_id)
 
 
+@router.get("/changes")
+def get_index_changes(
+    request: Request, since: int = 0, limit: int = 1000
+) -> dict:
+    """Per-node state transitions newer than ``since``, oldest first.
+
+    Used by Rust to mirror the sidecar's ``state`` field into the
+    ``cognios.db`` ``nodes.state`` column without polling the full
+    snapshot. Cost is proportional to the change rate, not the corpus
+    size — a 100k-file workspace at idle returns an empty list every
+    poll, while the snapshot endpoint returns 100k entries each time.
+
+    Response shape::
+
+        {
+          "transitions": [
+            {"node_id": "...", "state": "indexed",
+             "indexed_at": "2026-05-03T...", "error": null,
+             "transition_seq": 42},
+            ...
+          ],
+          "next_seq": 42
+        }
+
+    ``next_seq`` is the largest ``transition_seq`` returned. The
+    caller advances its cursor to this value so the next poll picks
+    up from the next transition. ``next_seq=0`` (alongside an empty
+    ``transitions`` list) means no new transitions since ``since``;
+    the cursor stays put.
+
+    ``limit`` defaults to 1000 and is capped server-side at 10k.
+    """
+    queue = _get_queue(request)
+    transitions, next_seq = queue.changes_since(since=since, limit=limit)
+    return {"transitions": transitions, "next_seq": next_seq}
+
+
 @router.get("/snapshot")
 def get_index_snapshot(request: Request) -> dict:
     """Per-node ``(state, modified_at)`` summary the Rust resync uses

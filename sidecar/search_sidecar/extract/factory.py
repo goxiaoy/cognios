@@ -75,11 +75,14 @@ def select_ocr_extractor(
         LOG.info("OCR extractor: cloud provider %s", preset.provider_id)
         return client.extract_ocr
     # Local OCR: only the rapidocr-backed extractor in v1.
+    # ``rapidocr-onnxruntime`` is part of the main package, but the
+    # check stays as a defensive net for broken venvs / missing
+    # platform wheels — falling back to no-OCR is preferable to
+    # crashing the dispatcher path.
     if not can_load_local_ocr():
         LOG.warning(
-            "image-ocr bound to local provider %r but the `image` extra "
-            "is not installed; skipping OCR extractor "
-            "(install with `uv sync --extra image`)",
+            "image-ocr bound to local provider %r but rapidocr_onnxruntime "
+            "is not importable; skipping OCR extractor",
             preset.provider_id,
         )
         return None

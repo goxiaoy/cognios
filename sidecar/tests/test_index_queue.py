@@ -148,6 +148,90 @@ def test_list_node_ids_returns_all_states(tmp_path: Path):
 
 
 
+def test_changes_since_returns_only_new_transitions(tmp_path: Path):
+    """Each state mutation bumps ``transition_seq`` and shows up
+    exactly once in ``changes_since(prev_seq)``."""
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        queue.enqueue(node_id="aaa", kind="note", name="A")  # seq 1
+        queue.enqueue(node_id="bbb", kind="note", name="B")  # seq 2
+
+        # Both rows visible from since=0
+        transitions, next_seq = queue.changes_since(since=0, limit=10)
+        ids = [t["node_id"] for t in transitions]
+        assert ids == ["aaa", "bbb"]
+        assert next_seq == 2
+        assert all(t["state"] == "pending" for t in transitions)
+
+        # Advancing past both transitions returns empty
+        transitions, next_seq = queue.changes_since(since=next_seq, limit=10)
+        assert transitions == []
+        assert next_seq == 0
+
+        # A new transition (claim then mark_indexed) shows up
+        cursor = 2
+        queue.claim_next()  # bumps "aaa" to indexing, seq 3
+        queue.mark_indexed("aaa")  # seq 4
+        transitions, next_seq = queue.changes_since(since=cursor, limit=10)
+        # Only the latest state per node is stored — we see "indexed"
+        # (seq 4), not "indexing" (seq 3).
+        assert len(transitions) == 1
+        assert transitions[0]["node_id"] == "aaa"
+        assert transitions[0]["state"] == "indexed"
+        assert next_seq == 4
+    finally:
+        queue.close()
+
+
+def test_changes_since_paginates_via_limit(tmp_path: Path):
+    """Caller advancing through chunks must not lose transitions
+    when more rows share the cursor boundary than ``limit`` allows."""
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        for i in range(5):
+            queue.enqueue(node_id=f"id-{i}", kind="note", name=f"n{i}")
+        # First page
+        page1, max1 = queue.changes_since(since=0, limit=2)
+        assert len(page1) == 2
+        # Second page
+        page2, max2 = queue.changes_since(since=max1, limit=2)
+        assert len(page2) == 2
+        # Third page
+        page3, max3 = queue.changes_since(since=max2, limit=2)
+        assert len(page3) == 1
+        seen = [t["node_id"] for t in page1 + page2 + page3]
+        assert seen == [f"id-{i}" for i in range(5)]
+        # Drain
+        empty, _ = queue.changes_since(since=max3, limit=2)
+        assert empty == []
+    finally:
+        queue.close()
+
+
+def test_reset_stale_indexing_emits_distinct_transitions(tmp_path: Path):
+    """Restored "indexing → pending" rows must each get a unique seq
+    so the Rust poll never collapses them into one transition."""
+    db_path = tmp_path / "queue.db"
+    queue = open_queue(db_path)
+    try:
+        for i in range(3):
+            queue.enqueue(node_id=f"id-{i}", kind="note", name=f"n{i}")
+            queue.claim_next()
+        head = queue.head_seq()
+    finally:
+        queue.close()
+
+    queue = open_queue(db_path)  # reset_stale_indexing fires here
+    try:
+        transitions, _ = queue.changes_since(since=head, limit=10)
+        assert len(transitions) == 3
+        seqs = [t["transition_seq"] for t in transitions]
+        assert len(set(seqs)) == 3, f"duplicate seqs: {seqs}"
+        assert all(t["state"] == "pending" for t in transitions)
+    finally:
+        queue.close()
+
+
 def test_concurrent_reads_and_writes_never_return_none_from_count(
     tmp_path: Path,
 ):

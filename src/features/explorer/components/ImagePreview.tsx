@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { NodeContentChunk } from "../../../lib/contracts/search";
+import { VFS_EVENT_NAME, type VfsChangeEvent } from "../../../lib/tauri/events";
 import type { SearchClient } from "../../search/types/search";
 
 /**
@@ -38,36 +40,62 @@ export function ImagePreview({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    setIsLoading(true);
-    setError(null);
-    setChunks(null);
-    void (async () => {
+  const fetchChunks = useCallback(
+    async (signal: { cancelled: boolean }, withSpinner: boolean) => {
+      if (withSpinner) {
+        setIsLoading(true);
+        setError(null);
+      }
       try {
         const env = await searchClient.nodeContent(nodeId);
-        if (cancelled) return;
+        if (signal.cancelled) return;
         if (env.state === "ready" && env.data) {
           setChunks(env.data.chunks);
+          setError(null);
         } else if (env.state === "initialising") {
-          setError("Search subsystem is still starting…");
+          if (withSpinner) setError("Search subsystem is still starting…");
         } else {
-          setError(env.error ?? "Could not load indexed content.");
+          if (withSpinner) {
+            setError(env.error ?? "Could not load indexed content.");
+          }
         }
       } catch (cause) {
-        if (!cancelled) {
+        if (!signal.cancelled && withSpinner) {
           setError(
             cause instanceof Error ? cause.message : "Failed to load content."
           );
         }
       } finally {
-        if (!cancelled) setIsLoading(false);
+        if (!signal.cancelled && withSpinner) setIsLoading(false);
       }
-    })();
+    },
+    [searchClient, nodeId]
+  );
+
+  // Initial fetch + a quiet re-fetch on every vfs change event. The
+  // sidecar's index-state-sync emits ``vfs://changed`` after a batch
+  // of state transitions; without re-fetching here, the preview stays
+  // at the pre-indexing empty state even after the runner finishes
+  // OCR-ing the image. Quiet re-fetches don't toggle the spinner so
+  // the live update is invisible until new chunks actually arrive.
+  useEffect(() => {
+    const signal = { cancelled: false };
+    void fetchChunks(signal, true);
+    let unlisten: (() => void) | undefined;
+    void listen<VfsChangeEvent>(VFS_EVENT_NAME, () => {
+      void fetchChunks(signal, false);
+    }).then((fn) => {
+      if (signal.cancelled) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
+    });
     return () => {
-      cancelled = true;
+      signal.cancelled = true;
+      unlisten?.();
     };
-  }, [searchClient, nodeId]);
+  }, [fetchChunks]);
 
   const sections = buildSections(chunks ?? []);
 

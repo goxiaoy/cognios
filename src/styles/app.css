@@ -483,7 +483,8 @@ button:disabled {
 }
 
 .node-state-dot.is-unsupported {
-  background: var(--ink-4);
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ink-4);
 }
 
 /* Pill variant (inspector): dot + label, like the provider status
@@ -708,9 +709,11 @@ button:disabled {
   display: grid;
   /* brand → ops → primary nav (stretches) → footer pinned to bottom */
   grid-template-rows: auto auto 1fr auto;
-  gap: 0.85rem;
-  /* top padding clears the fixed titlebar + traffic lights */
-  padding: 2.75rem 0.75rem 1.25rem 0.75rem;
+  gap: 1rem;
+  /* top padding clears the fixed titlebar + traffic lights, plus a
+   * little breathing room so the brand glyph isn't pinned against
+   * the window chrome. */
+  padding: 3rem 0.75rem 1.25rem 0.75rem;
   background: var(--paper-2);
   border-right: 1px solid var(--line-2);
   box-shadow: none;
@@ -732,8 +735,8 @@ button:disabled {
 .app-brand {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.25rem 0.4rem 0;
+  gap: 0.55rem;
+  padding: 0.4rem 0.4rem 0.25rem;
   color: var(--ink);
   min-width: 0;
 }
@@ -747,6 +750,7 @@ button:disabled {
 .app-brand-text {
   display: flex;
   flex-direction: column;
+  gap: 0.15rem;
   min-width: 0;
   /* The 200px sidebar leaves the text column ~135px after the
    * logo + gap + paddings. "Personal knowledge OS" at 0.7rem is
@@ -757,11 +761,16 @@ button:disabled {
 
 .app-brand-mark {
   margin: 0;
+  /* Line-height needs enough headroom that the heading's descenders
+   * (the ``g`` in CogniOS) aren't clipped by the overflow:hidden we
+   * use to ellipsize. Pre-1.2 values combined with the wrapper's
+   * tight column produced visible glyph cropping. */
   font-family: var(--font-heading);
   font-size: 1.15rem;
   font-weight: 600;
   letter-spacing: -0.012em;
-  line-height: 1.05;
+  line-height: 1.25;
+  padding: 1px 0;
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
@@ -769,10 +778,14 @@ button:disabled {
 }
 
 .app-brand-copy {
-  margin: 0.1rem 0 0;
+  margin: 0;
   color: var(--ink-3);
   font-size: 0.68rem;
   letter-spacing: 0.01em;
+  /* Same descender-headroom reasoning as .app-brand-mark — ``g``
+   * in "knowledge" was getting clipped at line-height 1.0. */
+  line-height: 1.35;
+  padding: 1px 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1737,6 +1750,76 @@ body.is-resizing-pane {
   white-space: nowrap;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Inspector Actions panel ── */
+
+.inspector-actions {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.inspector-section-label {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+
+.inspector-action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.32rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink-2);
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  align-self: flex-start;
+}
+
+.inspector-action-button:hover:not(:disabled) {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.inspector-action-button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.inspector-action-icon {
+  color: var(--ink-3);
+}
+
+.inspector-action-icon.is-spinning {
+  animation: inspector-spin 800ms linear infinite;
+}
+
+@keyframes inspector-spin {
+  to { transform: rotate(360deg); }
+}
+
+.inspector-action-status {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--ink-3);
+}
+
+.inspector-action-status.is-error {
+  color: #b3261e;
 }
 
 /* ── Hierarchy header actions ── */

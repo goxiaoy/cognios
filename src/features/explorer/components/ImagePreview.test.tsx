@@ -10,6 +10,10 @@ import type { NodeContentChunk } from "../../../lib/contracts/search";
 import type { SearchClient } from "../../search/types/search";
 import { ImagePreview } from "./ImagePreview";
 
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn().mockResolvedValue(() => Promise.resolve()),
+}));
+
 afterEach(() => cleanup());
 
 function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {

@@ -19,6 +19,14 @@ const POLL_TIMEOUT_MS = 30_000;
  * missing — unless the on-disk ``firstRunSkipped`` flag is set
  * (legacy installs that explicitly cancelled the old banner).
  *
+ * Skips roles whose model is already on disk (state = ``ready``).
+ * Why: every ``startModelDownload`` invocation has the Rust
+ * supervisor read the HF token from the macOS keychain, which
+ * fires a Security Agent prompt on the first read after each
+ * binary rebuild. Calling it for already-downloaded models meant
+ * 2+ prompts on every launch in dev. Now we only ask for a token
+ * when there's actually something to fetch.
+ *
  * Quiet on failure: thrown IPC errors are swallowed; the user
  * still sees diagnostics on the Settings page if anything's off.
  */
@@ -51,16 +59,36 @@ export function useAutoModelDownload(client: SearchClient): void {
         }
         const semantic = env.data.features["semantic-search"];
         const reranking = env.data.features["result-reranking"];
-        const pendingRoles: string[] = [];
+        const candidateRoles: string[] = [];
         if (semantic?.providerId === "local-gte") {
-          pendingRoles.push("embedding");
+          candidateRoles.push("embedding");
         }
         if (
           reranking?.enabled &&
           reranking?.providerId === "local-gte-reranker"
         ) {
-          pendingRoles.push("reranker");
+          candidateRoles.push("reranker");
         }
+        if (candidateRoles.length === 0) {
+          firedRef.current = true;
+          return;
+        }
+        // Filter out roles whose model is already downloaded so we
+        // don't trigger a needless keychain read in the supervisor.
+        // If models_status isn't ready yet, retry on the next poll
+        // tick rather than firing blind.
+        const statusEnv = await client.modelsStatus();
+        if (cancelled) return;
+        if (statusEnv.state !== "ready" || !statusEnv.data) {
+          if (Date.now() < deadline) {
+            timer = window.setTimeout(attempt, POLL_INTERVAL_MS);
+          }
+          return;
+        }
+        const pendingRoles = candidateRoles.filter((role) => {
+          const r = statusEnv.data?.roles[role];
+          return !r || r.state !== "ready";
+        });
         firedRef.current = true;
         for (const role of pendingRoles) {
           try {

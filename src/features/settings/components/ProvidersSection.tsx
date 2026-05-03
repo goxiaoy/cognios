@@ -79,6 +79,14 @@ export function ProvidersSection({
   // Probe key presence for cloud providers so the row's "configured"
   // indicator reflects the OS keychain truth, not just whether
   // settings.json has the provider entry.
+  //
+  // Once on mount only. The previous version re-probed on every
+  // ``settings.providers`` reference change and on every ``openId``
+  // toggle, which fired ~4 keychain reads each time the user just
+  // *opened* Settings — and after a binary rebuild every read shows
+  // a macOS Security Agent prompt because the ACL trust resets. Now
+  // we track per-provider presence locally and update optimistically
+  // from the editor's save/remove callbacks (see ``handleEditorClose``).
   useEffect(() => {
     const cloudIds = PROVIDER_PRESETS.filter(
       (p) => p.authKind === "api-key"
@@ -98,7 +106,7 @@ export function ProvidersSection({
     return () => {
       cancelled = true;
     };
-  }, [client, settings.providers, openId]);
+  }, [client]);
 
   const rolesByName: Record<string, ModelRoleStatus> = useMemo(() => {
     if (!models || models.state !== "ready" || !models.data) return {};
@@ -233,6 +241,9 @@ export function ProvidersSection({
                 client={client}
                 onSettingsChange={onSettingsChange}
                 onClose={() => setOpenId(null)}
+                onKeyPresenceChange={(providerId, present) =>
+                  setKeyPresence((prev) => ({ ...prev, [providerId]: present }))
+                }
               />
             );
           })()

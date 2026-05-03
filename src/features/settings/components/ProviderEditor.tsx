@@ -28,6 +28,7 @@ export function ProviderEditor({
   client,
   onSettingsChange,
   onClose,
+  onKeyPresenceChange,
 }: {
   preset: ProviderPreset;
   config: ProviderConfig | null;
@@ -35,6 +36,10 @@ export function ProviderEditor({
   client: SearchClient;
   onSettingsChange: (next: SearchSettings) => void;
   onClose: () => void;
+  /** Optimistic notification to the parent section so it can update
+   * its key-presence map without re-probing the keychain (which
+   * would prompt the user on macOS after a binary rebuild). */
+  onKeyPresenceChange?: (providerId: string, present: boolean) => void;
 }) {
   const [state, setState] = useState<EditorState>({ kind: "idle" });
   const [secret, setSecret] = useState("");
@@ -108,6 +113,7 @@ export function ProviderEditor({
       }
       onSettingsChange(env.data);
       setHasSecret(true);
+      onKeyPresenceChange?.(preset.providerId, true);
       setSecret("");
       setState({ kind: "saved" });
     } catch (err) {
@@ -136,6 +142,7 @@ export function ProviderEditor({
       }
       onSettingsChange(env.data);
       setHasSecret(false);
+      onKeyPresenceChange?.(preset.providerId, false);
       onClose();
     } catch (err) {
       setState({

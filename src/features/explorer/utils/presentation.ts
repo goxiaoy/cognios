@@ -117,6 +117,21 @@ export function isMarkdownFile(node: ExplorerNode) {
   return node.kind === "file" && MARKDOWN_EXTENSIONS.has(extensionOf(node.name));
 }
 
+/** Plain-text file kinds we can render in the read-only preview
+ * (no markdown decoration, no language colouring beyond basic
+ * monospace rendering). Code extensions are intentionally excluded
+ * here — they have their own ergonomics expectation that we don't
+ * yet meet (no syntax highlight, no language picker). */
+export function isPlainTextFile(node: ExplorerNode) {
+  return node.kind === "file" && PLAIN_TEXT_EXTENSIONS.has(extensionOf(node.name));
+}
+
+/** Anything we can preview in the markdown/text pane — either
+ * rendered as markdown (md/mdx) or as plain text (txt/log/...). */
+export function isTextLikeFile(node: ExplorerNode) {
+  return isMarkdownFile(node) || isPlainTextFile(node);
+}
+
 export function nodeIconComponent(node: ExplorerNode): React.ComponentType<{ size?: number; className?: string; "aria-hidden"?: boolean }> {
   switch (node.kind) {
     case "folder":    return Folder;
@@ -157,6 +172,18 @@ function extensionOf(name: string) {
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
 const MARKDOWN_EXTENSIONS = new Set(["md", "mdx"]);
+const PLAIN_TEXT_EXTENSIONS = new Set([
+  "txt",
+  "log",
+  "csv",
+  "tsv",
+  "ini",
+  "toml",
+  "xml",
+  "rtf",
+  "cfg",
+  "conf",
+]);
 const CODE_EXTENSIONS = new Set([
   "ts",
   "tsx",

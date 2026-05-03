@@ -71,6 +71,16 @@ export async function deleteNode(
   return invoke<ExplorerSnapshot>("delete_node", { input });
 }
 
+export interface ReindexNodeResult {
+  enqueued: number;
+}
+
+export async function reindexNode(input: {
+  nodeId: string;
+}): Promise<ReindexNodeResult> {
+  return invoke<ReindexNodeResult>("reindex_node", { input });
+}
+
 export async function createNote(
   input: CreateNoteInput
 ): Promise<ExplorerSnapshot> {

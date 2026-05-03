@@ -32,6 +32,11 @@ export function resolveNodeStateTone(
   if (state === "indexed") return "indexed";
   if (state === "error" || state === "unavailable") return "error";
   if (state === "pending" || state === "indexing") return "pending";
+  // Files the sidecar recognized but had no processor for (PDF,
+  // ZIP, arbitrary binary) — render the neutral hollow dot rather
+  // than the red error tone; nothing is wrong, the file just
+  // can't be indexed today.
+  if (state === "unsupported") return "unsupported";
   if (state === "ready") {
     // Container kinds (folder/mount/directory) only carry filesystem
     // availability — they aren't indexable units themselves, so a
@@ -58,6 +63,12 @@ const TONE_LABEL: Record<Exclude<Tone, null>, string> = {
  * AlertTriangle icons. The dot is purely decorative; the
  * accompanying ``aria-label`` provides the textual state for
  * screen readers.
+ *
+ * In the **tree row** the ``indexed`` tone is suppressed — most
+ * files end up indexed in steady state, and a column of identical
+ * green dots is just noise that drowns out the actionable signals
+ * (pending / error). The inspector pane still surfaces "Indexed"
+ * with its label so a single-selected file's status is unambiguous.
  */
 export function NodeStateDot({
   kind,
@@ -74,6 +85,10 @@ export function NodeStateDot({
 }) {
   const tone = resolveNodeStateTone(kind, state);
   if (!tone) return null;
+  // Tree-row variant skips the "indexed" tone — see the docblock
+  // above. Inspector keeps it because the labelled pill provides
+  // useful context for the selected file.
+  if (!withLabel && tone === "indexed") return null;
   const label = TONE_LABEL[tone];
   const cls = `node-state-dot is-${tone}${className ? ` ${className}` : ""}`;
   if (withLabel) {

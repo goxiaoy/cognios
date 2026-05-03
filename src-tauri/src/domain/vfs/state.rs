@@ -9,6 +9,13 @@ pub enum NodeState {
     Indexed,
     Error,
     Unavailable,
+    /// File whose kind is recognized but has no extractor wired
+    /// (e.g. ``.pdf`` / ``.zip`` / arbitrary binary). Distinct
+    /// from ``Error`` because there's nothing wrong — the sidecar
+    /// just doesn't have a processor for this content. The dot
+    /// renders as a hollow neutral outline rather than the red
+    /// error tone.
+    Unsupported,
 }
 
 impl NodeState {
@@ -20,6 +27,7 @@ impl NodeState {
             Self::Indexed => "indexed",
             Self::Error => "error",
             Self::Unavailable => "unavailable",
+            Self::Unsupported => "unsupported",
         }
     }
 
@@ -30,6 +38,7 @@ impl NodeState {
             "indexed" => Self::Indexed,
             "error" => Self::Error,
             "unavailable" => Self::Unavailable,
+            "unsupported" => Self::Unsupported,
             _ => Self::Ready,
         }
     }

@@ -230,6 +230,57 @@ def test_get_node_status_returns_indexed_after_processing(stack):
     assert body["indexed_at"] is not None
 
 
+def test_get_index_changes_returns_only_new_transitions(stack):
+    """``/index/changes?since=<seq>`` returns rows newer than the
+    cursor and an advanceable ``next_seq``."""
+    app, queue, _, runner, tmp_path = stack
+    note_a = tmp_path / "a.md"
+    note_a.write_text("a")
+    note_b = tmp_path / "b.md"
+    note_b.write_text("b")
+    queue.enqueue(
+        node_id=UUID_A, kind="note", name="a.md",
+        absolute_content_path=str(note_a),
+    )
+    queue.enqueue(
+        node_id=UUID_B, kind="note", name="b.md",
+        absolute_content_path=str(note_b),
+    )
+
+    with TestClient(app) as client:
+        resp = client.get("/index/changes?since=0", headers=_auth())
+        body = resp.json()
+        assert {t["node_id"] for t in body["transitions"]} == {UUID_A, UUID_B}
+        assert all(t["state"] == "pending" for t in body["transitions"])
+        cursor = body["next_seq"]
+        assert cursor > 0
+
+        # No new transitions yet
+        empty = client.get(f"/index/changes?since={cursor}", headers=_auth()).json()
+        assert empty["transitions"] == []
+        assert empty["next_seq"] == 0
+
+        # Process A → next poll surfaces just A as indexed
+        runner.process_one()
+        new_body = client.get(f"/index/changes?since={cursor}", headers=_auth()).json()
+        assert len(new_body["transitions"]) == 1
+        assert new_body["transitions"][0]["node_id"] == UUID_A
+        assert new_body["transitions"][0]["state"] == "indexed"
+
+
+def test_get_index_changes_caps_limit_server_side(stack):
+    """A pathological ``limit`` query value can't blow up the response."""
+    app, queue, _, _, _ = stack
+    for i in range(3):
+        queue.enqueue(node_id=f"{i:08d}-1111-1111-1111-111111111111",
+                      kind="note", name=f"n{i}")
+    with TestClient(app) as client:
+        # ``limit=99999999`` must be capped, not rejected.
+        resp = client.get("/index/changes?since=0&limit=99999999", headers=_auth())
+        assert resp.status_code == 200
+        assert len(resp.json()["transitions"]) == 3
+
+
 def test_healthz_includes_queue_depth(stack):
     app, queue, _, _, _ = stack
     queue.enqueue(node_id=UUID_A, kind="note", name="A")

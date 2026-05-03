@@ -21,6 +21,7 @@ vi.mock("../lib/tauri/ipc", () => ({
   createUrl: (input: unknown) => createUrl(input),
   renameNode: vi.fn(),
   deleteNode: vi.fn(),
+    reindexNode: vi.fn().mockResolvedValue({ enqueued: 0 }),
   retryUrl: vi.fn(),
   getNoteContent: vi.fn().mockResolvedValue(""),
   saveNoteContent: vi.fn(),

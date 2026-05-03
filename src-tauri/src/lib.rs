@@ -192,6 +192,27 @@ pub fn run() {
                 });
             }
 
+            // Live state mirror: poll ``GET /index/changes`` and write
+            // sidecar transitions back into ``nodes.state`` so the
+            // explorer's index-state dot follows the actual queue
+            // state. Cost is proportional to the change rate, not
+            // the corpus size — see services::search::index_state_sync.
+            {
+                let sync_db = db.clone();
+                let sync_client = Arc::clone(&search_client);
+                let sync_supervisor = Arc::clone(&search_sidecar);
+                let sync_app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    services::search::index_state_sync::run_index_state_sync(
+                        sync_supervisor,
+                        sync_client,
+                        sync_db,
+                        sync_app_handle,
+                    )
+                    .await;
+                });
+            }
+
             app.manage(AppState {
                 db,
                 storage_dir: app_data_dir,
@@ -211,6 +232,7 @@ pub fn run() {
             commands::mounts::get_mount_setup_context,
             commands::nodes::rename_node,
             commands::nodes::delete_node,
+            commands::nodes::reindex_node,
             commands::notes::create_note,
             commands::notes::get_note_content,
             commands::notes::save_note_content,

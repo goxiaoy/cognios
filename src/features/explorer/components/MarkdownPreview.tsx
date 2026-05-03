@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -13,6 +13,13 @@ interface MarkdownPreviewProps {
   name: string;
 }
 
+const MARKDOWN_EXTENSIONS = new Set(["md", "mdx"]);
+
+function isMarkdownName(name: string): boolean {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  return MARKDOWN_EXTENSIONS.has(ext);
+}
+
 export function MarkdownPreview({
   client,
   nodeId,
@@ -21,7 +28,15 @@ export function MarkdownPreview({
   const [body, setBody] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [mode, setMode] = useState<ViewMode>("preview");
+  // Plain text files (.txt / .log / .csv / ...) share this surface
+  // but bypass the markdown renderer — rendering ``**bold**`` in a
+  // .txt file would silently mutate the user's content. The toggle
+  // is hidden for plain-text since "Source" is the only mode that
+  // makes sense.
+  const isMarkdown = useMemo(() => isMarkdownName(name), [name]);
+  const [mode, setMode] = useState<ViewMode>(
+    isMarkdown ? "preview" : "source"
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -49,30 +64,32 @@ export function MarkdownPreview({
     <div className="markdown-preview">
       <header className="markdown-preview-header">
         <h2 className="markdown-preview-title">{name}</h2>
-        <div
-          className="markdown-preview-mode-toggle"
-          role="tablist"
-          aria-label="View mode"
-        >
-          <button
-            aria-pressed={mode === "preview"}
-            className={`markdown-preview-mode-button${mode === "preview" ? " is-active" : ""}`}
-            onClick={() => setMode("preview")}
-            role="tab"
-            type="button"
+        {isMarkdown ? (
+          <div
+            className="markdown-preview-mode-toggle"
+            role="tablist"
+            aria-label="View mode"
           >
-            Preview
-          </button>
-          <button
-            aria-pressed={mode === "source"}
-            className={`markdown-preview-mode-button${mode === "source" ? " is-active" : ""}`}
-            onClick={() => setMode("source")}
-            role="tab"
-            type="button"
-          >
-            Source
-          </button>
-        </div>
+            <button
+              aria-pressed={mode === "preview"}
+              className={`markdown-preview-mode-button${mode === "preview" ? " is-active" : ""}`}
+              onClick={() => setMode("preview")}
+              role="tab"
+              type="button"
+            >
+              Preview
+            </button>
+            <button
+              aria-pressed={mode === "source"}
+              className={`markdown-preview-mode-button${mode === "source" ? " is-active" : ""}`}
+              onClick={() => setMode("source")}
+              role="tab"
+              type="button"
+            >
+              Source
+            </button>
+          </div>
+        ) : null}
       </header>
 
       <div className="markdown-preview-body">

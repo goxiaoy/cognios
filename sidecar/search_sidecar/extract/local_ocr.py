@@ -4,8 +4,9 @@
 ONNX-converted distribution of PaddleOCR's PP-OCRv4 detection +
 recognition pipeline. It ships its model files inside the package
 (no separate HuggingFace download), so this extractor does NOT
-participate in :class:`ModelManager`'s download lifecycle — installing
-the ``image`` extra is enough to make local OCR work.
+participate in :class:`ModelManager`'s download lifecycle — being a
+declared dependency of the main package is enough to make local OCR
+work out of the box.
 
 The class is constructed once per sidecar boot (RapidOCR does its own
 model loading on init); subsequent ``__call__`` invocations are a
@@ -29,8 +30,15 @@ LOG = logging.getLogger("search_sidecar.extract.local_ocr")
 
 
 def can_load_local_ocr() -> bool:
-    """Cheap check (no module import) for whether the optional
-    ``image`` extra is installed."""
+    """Cheap check (no module import) for whether ``rapidocr_onnxruntime``
+    is importable.
+
+    The dep is part of the main package, so this returns ``True`` in
+    every healthy install. Kept as a defensive net for venvs whose
+    install partially failed or platforms where the wheel isn't
+    available — the factory uses it to skip the OCR extractor and
+    log instead of crashing the dispatcher path.
+    """
     return importlib.util.find_spec("rapidocr_onnxruntime") is not None
 
 
@@ -47,12 +55,12 @@ class RapidOcrExtractor:
     def __init__(self, *, min_confidence: float = 0.3) -> None:
         if not can_load_local_ocr():
             raise RuntimeError(
-                "rapidocr-onnxruntime not installed. "
-                "Run `uv sync --extra image` to enable local OCR."
+                "rapidocr-onnxruntime is not importable in this environment "
+                "(it is a declared dep of the main package; check the venv)."
             )
-        # Lazy import — keeps the cheap can_load_local_ocr() check
-        # importable even when the extra is missing, and avoids paying
-        # rapidocr's module-load cost in test runs that don't touch OCR.
+        # Lazy import — defers rapidocr's module-load cost out of
+        # process startup into the first OCR job (so test runs that
+        # never construct an extractor don't pay it).
         from rapidocr_onnxruntime import RapidOCR  # type: ignore[import-not-found]
 
         self._engine: Any = RapidOCR()

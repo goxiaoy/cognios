@@ -32,6 +32,7 @@ export function ProviderEditorModal({
   client,
   onSettingsChange,
   onClose,
+  onKeyPresenceChange,
 }: {
   preset: ProviderPreset;
   config: ProviderConfig | null;
@@ -39,6 +40,7 @@ export function ProviderEditorModal({
   client: SearchClient;
   onSettingsChange: (next: SearchSettings) => void;
   onClose: () => void;
+  onKeyPresenceChange?: (providerId: string, present: boolean) => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -117,6 +119,7 @@ export function ProviderEditorModal({
             client={client}
             onSettingsChange={onSettingsChange}
             onClose={onClose}
+            onKeyPresenceChange={onKeyPresenceChange}
           />
           <p className="provider-modal-privacy">
             <span className="provider-modal-privacy-icon" aria-hidden="true" />
