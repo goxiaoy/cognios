@@ -20,6 +20,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
+from ..providers import invalidate_provider_secret_cache
 from ..settings import (
     SearchSettings,
     boot_signature,
@@ -102,6 +103,12 @@ def put_settings(body: SearchSettings, request: Request) -> dict:
     path = _get_settings_path(request)
     save_settings(path, body)
     settings = load_settings(path)  # re-load to confirm round-trip
+    # Invalidate cached provider secrets on every PUT — the user may
+    # have rotated a key on the Rust side (set_provider_secret IPC)
+    # between PUTs, and the per-process cache in
+    # ``providers.keychain`` would otherwise serve the stale value
+    # until the next sidecar restart.
+    invalidate_provider_secret_cache()
     needs_restart = _compute_needs_restart(request, settings)
     _set_runner_pause(request, needs_restart)
     return _settings_response(needs_restart, settings)

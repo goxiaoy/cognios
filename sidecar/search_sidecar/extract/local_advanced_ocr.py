@@ -35,7 +35,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 LOG = logging.getLogger("search_sidecar.extract.local_advanced_ocr")
 
@@ -207,13 +207,24 @@ class PpStructureV3Extractor:
 
 
 def _results_to_markdown(results: Any) -> str:
-    """Best-effort flattener: turn paddleocr's PP-StructureV3 result
-    object into a single Markdown string.
+    """Flatten paddleocr's PP-StructureV3 result object into a
+    single Markdown string.
 
-    paddleocr 3.x exposes a ``markdown`` attribute / method on each
-    result entry; if that's available we use it directly. Older
-    formats fall back to a structured walk that emits whatever text
-    we can recover.
+    paddleocr 3.x's result type (paddlex's ``LayoutParsingResultV2``)
+    is iterable yielding per-page ``MarkdownMixin`` instances. Each
+    instance's ``.markdown`` property returns a dict of the shape::
+
+        {
+          "markdown_texts": "# Title\\n\\n...",
+          "markdown_images": {"path/to.png": <PIL.Image>},
+          "page_index": int | None,
+          "input_path": str,
+        }
+
+    We only consume ``markdown_texts``; the embedded images are
+    discarded because the chunker only ingests text and our
+    storage layer doesn't reference images by their internal
+    paddleocr-rendered paths.
 
     Returns an empty string when the pipeline produces no output —
     matches the basic OCR contract (the runner doesn't retry empty
@@ -224,35 +235,75 @@ def _results_to_markdown(results: Any) -> str:
     fragments: list[str] = []
     iterable = results if _is_iterable(results) else [results]
     for entry in iterable:
-        # Preferred path: PaddleOCR 3.x ``markdown`` accessor.
-        md = _try_attr_or_call(entry, "markdown")
-        if md:
-            fragments.append(md.strip())
-            continue
-        # Older shapes: dict with ``markdown`` key.
-        if isinstance(entry, dict) and isinstance(entry.get("markdown"), str):
-            fragments.append(entry["markdown"].strip())
-            continue
-        # Fallback: stringify whatever the entry exposes — better
-        # than dropping the result on the floor.
-        text = _try_attr_or_call(entry, "text") or str(entry)
+        text = _extract_markdown_text(entry)
         if text:
             fragments.append(text.strip())
     return "\n\n".join(f for f in fragments if f)
 
 
-def _try_attr_or_call(obj: Any, name: str) -> str | None:
-    """Read ``obj.name`` (or ``obj.name()`` if callable). Returns the
-    string when it ends up as a string; ``None`` otherwise."""
+def _extract_markdown_text(entry: Any) -> str | None:
+    """Pull markdown text out of one paddleocr result entry.
+
+    Prefers the canonical ``MarkdownMixin.markdown`` property
+    (returns a dict shaped like
+    ``Dict[str, Union[str, Dict[str, Any]]]``) and reads its
+    ``markdown_texts`` key. Falls back to other shapes for
+    forward-compatibility.
+    """
+    md = _read_attr(entry, "markdown")
+    text = _dict_str(md, "markdown_texts")
+    if text is not None:
+        return text
+    if isinstance(md, str):
+        return md
+    # Older / serialised shapes: a plain dict with markdown already
+    # extracted, or a dict whose ``markdown`` key holds the dict.
+    text = _dict_str(entry, "markdown_texts")
+    if text is not None:
+        return text
+    nested = _read_dict_key(entry, "markdown")
+    text = _dict_str(nested, "markdown_texts")
+    if text is not None:
+        return text
+    if isinstance(nested, str):
+        return nested
+    return None
+
+
+def _dict_str(obj: Any, key: str) -> str | None:
+    """If ``obj`` is a dict and ``obj[key]`` is a string, return it.
+    Otherwise ``None``. Takes ``Any`` and does both isinstance
+    checks internally so callers can pass freshly-narrowed values
+    without losing track of the type."""
+    if not isinstance(obj, dict):
+        return None
+    typed: dict[Any, Any] = cast("dict[Any, Any]", obj)
+    val: Any = typed.get(key)
+    return val if isinstance(val, str) else None
+
+
+def _read_dict_key(obj: Any, key: str) -> Any:
+    """If ``obj`` is a dict, return ``obj[key]``; else ``None``."""
+    if not isinstance(obj, dict):
+        return None
+    typed: dict[Any, Any] = cast("dict[Any, Any]", obj)
+    return typed.get(key)
+
+
+def _read_attr(obj: Any, name: str) -> Any:
+    """Read ``obj.name`` (or ``obj.name()`` if callable). Returns
+    whatever value was produced (no type filtering here — the
+    caller decides how to interpret it). Swallows exceptions so a
+    malformed property doesn't crash the dispatcher."""
     if not hasattr(obj, name):
         return None
-    val = getattr(obj, name)
     try:
+        val = getattr(obj, name)
         if callable(val):
             val = val()
     except Exception:
         return None
-    return val if isinstance(val, str) else None
+    return val
 
 
 def _is_iterable(obj: Any) -> bool:

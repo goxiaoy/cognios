@@ -49,7 +49,13 @@ def in_memory_backend(monkeypatch):
     backend = _InMemoryBackend()
     monkeypatch.setattr(keyring, "get_keyring", lambda: backend)
     keyring.set_keyring(backend)
-    yield backend
+    # Process-lifetime cache leaks across tests within one pytest
+    # session. Wipe on entry + exit so each test sees a clean slate.
+    keychain.invalidate_provider_secret_cache()
+    try:
+        yield backend
+    finally:
+        keychain.invalidate_provider_secret_cache()
 
 
 def test_service_name_matches_rust_constant():
@@ -144,3 +150,86 @@ def test_keychain_unavailable_when_keyring_missing(monkeypatch):
     monkeypatch.setattr(keychain, "_import_keyring", fake_import_keyring)
     with pytest.raises(KeychainUnavailableError):
         get_provider_secret("openai")
+
+
+def test_env_override_bypasses_keychain(in_memory_backend, monkeypatch):
+    """Setting ``COGNIOS_PROVIDER_<ID>_KEY`` returns that value
+    without touching the keychain — the dev-mode bypass that makes
+    macOS Security Agent prompts go away across rebuilds."""
+    keychain.invalidate_provider_secret_cache()
+    monkeypatch.setenv("COGNIOS_PROVIDER_OPENAI_KEY", "sk-from-env")
+    in_memory_backend.set_password(SERVICE_NAME, "provider:openai", "sk-from-keychain")
+    assert get_provider_secret("openai") == "sk-from-env"
+
+
+def test_env_override_handles_hyphenated_provider_ids(monkeypatch):
+    """Hyphens become underscores in the env var name —
+    ``qwen-dashscope`` → ``COGNIOS_PROVIDER_QWEN_DASHSCOPE_KEY``."""
+    keychain.invalidate_provider_secret_cache()
+    monkeypatch.setenv("COGNIOS_PROVIDER_QWEN_DASHSCOPE_KEY", "sk-qwen")
+    assert get_provider_secret("qwen-dashscope") == "sk-qwen"
+
+
+def test_env_override_empty_value_falls_through_to_keychain(
+    in_memory_backend, monkeypatch,
+):
+    """Whitespace-only env var doesn't shadow the keychain — useful
+    so a stale ``export FOO=`` in a shell doesn't break the user's
+    real configuration."""
+    keychain.invalidate_provider_secret_cache()
+    monkeypatch.setenv("COGNIOS_PROVIDER_OPENAI_KEY", "   ")
+    in_memory_backend.set_password(SERVICE_NAME, "provider:openai", "sk-real")
+    assert get_provider_secret("openai") == "sk-real"
+
+
+def test_cache_serves_subsequent_reads_from_memory(in_memory_backend):
+    """First read hits the keychain; subsequent reads in the same
+    process return the cached value without touching the backend.
+    Verified by mutating the backend after the first read."""
+    keychain.invalidate_provider_secret_cache()
+    in_memory_backend.set_password(SERVICE_NAME, "provider:openai", "sk-original")
+    assert get_provider_secret("openai") == "sk-original"
+
+    # Mutate the keychain behind the cache's back. Cached value
+    # must win — that's the whole point of the cache.
+    in_memory_backend.set_password(SERVICE_NAME, "provider:openai", "sk-rotated")
+    assert get_provider_secret("openai") == "sk-original"
+
+
+def test_invalidate_provider_secret_cache_drops_specific_entry(in_memory_backend):
+    keychain.invalidate_provider_secret_cache()
+    in_memory_backend.set_password(SERVICE_NAME, "provider:openai", "sk-a")
+    in_memory_backend.set_password(SERVICE_NAME, "provider:qwen-dashscope", "sk-b")
+    assert get_provider_secret("openai") == "sk-a"
+    assert get_provider_secret("qwen-dashscope") == "sk-b"
+
+    in_memory_backend.set_password(SERVICE_NAME, "provider:openai", "sk-rotated")
+    keychain.invalidate_provider_secret_cache("openai")
+    assert get_provider_secret("openai") == "sk-rotated"
+    # qwen entry was untouched — cache still serves the original.
+    in_memory_backend.set_password(SERVICE_NAME, "provider:qwen-dashscope", "sk-c")
+    assert get_provider_secret("qwen-dashscope") == "sk-b"
+
+
+def test_invalidate_all_clears_every_entry(in_memory_backend):
+    keychain.invalidate_provider_secret_cache()
+    in_memory_backend.set_password(SERVICE_NAME, "provider:openai", "sk-a")
+    in_memory_backend.set_password(SERVICE_NAME, "provider:qwen-dashscope", "sk-b")
+    get_provider_secret("openai")
+    get_provider_secret("qwen-dashscope")
+
+    in_memory_backend.set_password(SERVICE_NAME, "provider:openai", "sk-a2")
+    in_memory_backend.set_password(SERVICE_NAME, "provider:qwen-dashscope", "sk-b2")
+    keychain.invalidate_provider_secret_cache()
+    assert get_provider_secret("openai") == "sk-a2"
+    assert get_provider_secret("qwen-dashscope") == "sk-b2"
+
+
+def test_delete_provider_secret_invalidates_cache(in_memory_backend):
+    """A delete through the Python path drops the cached entry so a
+    subsequent get returns ``None`` instead of the just-deleted value."""
+    keychain.invalidate_provider_secret_cache()
+    in_memory_backend.set_password(SERVICE_NAME, "provider:openai", "sk-original")
+    assert get_provider_secret("openai") == "sk-original"
+    delete_provider_secret("openai")
+    assert get_provider_secret("openai") is None

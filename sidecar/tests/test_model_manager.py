@@ -326,6 +326,80 @@ async def test_unknown_role_raises(tmp_path: Path):
         await _drain(manager.download("nonexistent"))
 
 
+async def test_transient_download_failure_is_retried(
+    tmp_path: Path, monkeypatch
+):
+    """Transport-level ``DownloadFailed`` (HuggingFace's CDN dropping
+    a connection mid-stream) should be retried automatically with
+    backoff. The role still completes successfully on a later
+    attempt without the user seeing an error event."""
+    import asyncio as _asyncio
+
+    from search_sidecar.models import manager as manager_mod
+
+    body = b"x" * 4096
+    spec = _make_spec("embedding", {"a.bin": body})
+
+    # Replace the asyncio sleep with a no-op so the retry backoff
+    # doesn't drag the test out across multiple seconds.
+    async def fast_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(manager_mod.asyncio, "sleep", fast_sleep)
+
+    with fixture_server({"/a.bin": body}) as base_url:
+        m = _make_manager(tmp_path, spec, base_url=base_url)
+        # Patch ``_download_file`` to fail twice then delegate to
+        # the real implementation. Mirrors a CDN that drops two
+        # connections before recovering.
+        real = m._download_file
+        attempts = {"n": 0}
+
+        async def flaky_download_file(spec_, file_):
+            attempts["n"] += 1
+            if attempts["n"] <= 2:
+                raise manager_mod.DownloadFailed(
+                    f"simulated transport failure (attempt {attempts['n']})"
+                )
+            async for ev in real(spec_, file_):
+                yield ev
+
+        monkeypatch.setattr(m, "_download_file", flaky_download_file)
+        events = await _drain(m.download("embedding"))
+
+    assert events[-1].state == "ready", events
+    assert attempts["n"] == 3, f"expected 3 attempts (2 fail + 1 success), got {attempts['n']}"
+    # No error event surfaced to the caller — the retries were silent.
+    assert not any(ev.state == "error" for ev in events)
+
+
+async def test_integrity_failure_is_not_retried(tmp_path: Path):
+    """``IntegrityError`` (manifest mismatch) is a config issue, not
+    transient. The download fails fast with a single error event
+    rather than burning through 4 retry attempts."""
+    body = b"x" * 1024
+    # Pin a wrong SHA so the integrity check fails.
+    bad_spec = ModelSpec(
+        role="embedding",
+        repo="fixture/repo",
+        commit="abc123",
+        files=(FileSpec(name="a.bin", sha256="0" * 64),),
+    )
+    with fixture_server({"/a.bin": body}) as base_url:
+        m = ModelManager(
+            storage_dir=tmp_path,
+            manifest={"embedding": bad_spec},
+            url_override={
+                "fixture/repo@abc123/a.bin": f"{base_url}/a.bin",
+            },
+        )
+        events = await _drain(m.download("embedding"))
+
+    error_events = [e for e in events if e.state == "error"]
+    assert len(error_events) == 1, error_events
+    assert "sha256 mismatch" in error_events[0].error
+
+
 async def test_concurrent_downloads_capped_at_max(tmp_path: Path):
     """When more than ``MAX_CONCURRENT_DOWNLOADS`` callers issue
     download() at once (e.g. PP-StructureV3's 13 stages firing

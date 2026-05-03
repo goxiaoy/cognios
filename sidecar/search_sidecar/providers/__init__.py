@@ -19,6 +19,7 @@ from .keychain import (
     delete_provider_secret,
     get_provider_secret,
     has_provider_secret,
+    invalidate_provider_secret_cache,
 )
 from .presets import (
     PRESETS,
@@ -39,5 +40,6 @@ __all__ = [
     "delete_provider_secret",
     "get_provider_secret",
     "has_provider_secret",
+    "invalidate_provider_secret_cache",
     "presets_with_capability",
 ]

@@ -30,26 +30,40 @@ export function SettingsLayout({ client }: { client: SearchClient }) {
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    let timer: number | null = null;
+    // Poll while the sidecar is still ``initialising``. Without
+    // this the Settings page sticks at "Loading settings…" if the
+    // user opens it during sidecar boot — the previous version
+    // handled ``ready`` and ``unavailable`` but silently fell
+    // through on ``initialising``.
+    const POLL_INTERVAL_MS = 500;
+
+    async function attempt() {
+      if (cancelled) return;
       try {
         const env = await client.settings();
         if (cancelled) return;
         if (env.state === "ready" && env.data) {
           setSettings(env.data);
           setError(null);
-        } else if (env.state === "unavailable") {
-          // Try the Rust-side fallback so the user can at least see
-          // what's configured.
-          try {
-            const fallback = await client.readSettingsFallback();
-            if (!cancelled) {
-              setSettings(fallback);
-              setError("Sidecar unavailable — settings shown read-only.");
-            }
-          } catch {
-            if (!cancelled) {
-              setError(env.error ?? "Settings unavailable.");
-            }
+          return;
+        }
+        if (env.state === "initialising") {
+          // Schedule another attempt; keep the spinner.
+          timer = window.setTimeout(attempt, POLL_INTERVAL_MS);
+          return;
+        }
+        // ``unavailable`` — try the Rust-side direct-disk fallback
+        // so the user can at least see what's configured.
+        try {
+          const fallback = await client.readSettingsFallback();
+          if (!cancelled) {
+            setSettings(fallback);
+            setError("Sidecar unavailable — settings shown read-only.");
+          }
+        } catch {
+          if (!cancelled) {
+            setError(env.error ?? "Settings unavailable.");
           }
         }
       } catch (err) {
@@ -57,9 +71,12 @@ export function SettingsLayout({ client }: { client: SearchClient }) {
           setError(err instanceof Error ? err.message : String(err));
         }
       }
-    })();
+    }
+
+    void attempt();
     return () => {
       cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
     };
   }, [client]);
 

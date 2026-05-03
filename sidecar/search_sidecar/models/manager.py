@@ -43,6 +43,14 @@ LOG = logging.getLogger("search_sidecar.models")
 
 CHUNK_SIZE = 64 * 1024  # 64 KiB — balances syscall overhead and memory.
 
+# Retry policy for transient ``DownloadFailed`` errors. Mirrors the
+# pin script's retry shape so dev + ops behave the same way against
+# HuggingFace's CDN (which drops a noticeable fraction of long
+# downloads under load). 4 attempts × backoff [1, 3, 7, 15]s gives
+# the network ~26 s of headroom before surfacing as a hard error.
+MAX_DOWNLOAD_ATTEMPTS = 4
+DOWNLOAD_BACKOFF_SECONDS: tuple[float, ...] = (1.0, 3.0, 7.0, 15.0)
+
 
 class IntegrityError(RuntimeError):
     """Raised when a downloaded file's SHA-256 does not match the
@@ -275,15 +283,70 @@ class ModelManager:
     async def _download_role(
         self, spec: ModelSpec
     ) -> AsyncIterator[ProgressEvent]:
-        try:
-            for file in spec.files:
-                async for ev in self._download_file(spec, file):
-                    yield ev
-            self._activate(spec.role, spec.commit)
-            yield ProgressEvent(role=spec.role, state="ready")
-        except (IntegrityError, DownloadFailed) as err:
-            LOG.warning("download for %s failed: %s", spec.role, err)
-            yield ProgressEvent(role=spec.role, state="error", error=str(err))
+        """Download every file in the role, retrying transient
+        ``DownloadFailed`` errors with exponential backoff.
+
+        Retry policy:
+          * ``DownloadFailed`` (transport / HTTP / connection drops) →
+            retry up to ``MAX_DOWNLOAD_ATTEMPTS`` times with backoff
+            ``DOWNLOAD_BACKOFF_SECONDS``. The per-file Range-resume
+            already preserves partial progress, so each retry picks
+            up where the previous attempt left off — no wasted bytes.
+          * ``IntegrityError`` (SHA mismatch on a finished file) →
+            fail fast. The partial has already been deleted by the
+            time we get here, but integrity failures are usually a
+            manifest mismatch rather than transient corruption, and
+            blindly redownloading just spends time arriving at the
+            same conclusion. The user sees the error in Settings
+            and can re-pin / re-bind.
+        """
+        last_err: Exception | None = None
+        for attempt in range(MAX_DOWNLOAD_ATTEMPTS):
+            try:
+                for file in spec.files:
+                    async for ev in self._download_file(spec, file):
+                        yield ev
+                self._activate(spec.role, spec.commit)
+                yield ProgressEvent(role=spec.role, state="ready")
+                return
+            except DownloadFailed as err:
+                last_err = err
+                if attempt + 1 >= MAX_DOWNLOAD_ATTEMPTS:
+                    break
+                sleep_for = DOWNLOAD_BACKOFF_SECONDS[
+                    min(attempt, len(DOWNLOAD_BACKOFF_SECONDS) - 1)
+                ]
+                LOG.info(
+                    "download for %s transient failure (attempt %d/%d): %s; "
+                    "retrying in %.0fs",
+                    spec.role,
+                    attempt + 1,
+                    MAX_DOWNLOAD_ATTEMPTS,
+                    err,
+                    sleep_for,
+                )
+                await asyncio.sleep(sleep_for)
+            except IntegrityError as err:
+                LOG.warning(
+                    "download for %s integrity check failed (no retry): %s",
+                    spec.role,
+                    err,
+                )
+                yield ProgressEvent(
+                    role=spec.role, state="error", error=str(err)
+                )
+                return
+        LOG.warning(
+            "download for %s exhausted %d retries: %s",
+            spec.role,
+            MAX_DOWNLOAD_ATTEMPTS,
+            last_err,
+        )
+        yield ProgressEvent(
+            role=spec.role,
+            state="error",
+            error=str(last_err) if last_err else "download failed",
+        )
 
     async def _download_file(
         self, spec: ModelSpec, file

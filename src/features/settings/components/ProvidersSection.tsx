@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { Cloud, Cpu } from "lucide-react";
 
 import type {
@@ -18,6 +17,7 @@ import {
 } from "../data/providerPresets";
 import type { ProgressByRole } from "../hooks/useModelDownloadProgress";
 import { ProviderEditorModal } from "./ProviderEditorModal";
+import { ProviderStagesModal } from "./ProviderStagesModal";
 
 const CAPABILITY_LABEL: Record<Capability, string> = {
   embedding: "Embedding",
@@ -245,11 +245,24 @@ export function ProvidersSection({
               (p) => p.providerId === openId
             );
             if (!preset) return null;
-            // Local providers expand inline (see ProviderRow's
-            // ``provider-row-expansion`` block) — no modal. The
-            // editor modal is for cloud-provider credential entry,
-            // which isn't applicable to ``authKind: "none"``.
-            if (preset.providerType === "local") return null;
+            // Local providers open the stages modal — they have
+            // no credentials to edit, only per-stage download
+            // state to surface. Cloud providers route through the
+            // credentials editor.
+            if (preset.providerType === "local") {
+              const owned = Object.values(rolesByName).filter((role) =>
+                presetOwnsRole(preset, role.role)
+              );
+              return (
+                <ProviderStagesModal
+                  preset={preset}
+                  ownedRoles={owned}
+                  progressByRole={progress}
+                  client={client}
+                  onClose={() => setOpenId(null)}
+                />
+              );
+            }
             return (
               <ProviderEditorModal
                 preset={preset}
@@ -368,8 +381,6 @@ function ProviderRow({
     .join(", ");
 
   const status = derivePresetStatus(preset, role, isConfigured);
-  const hasStageDetails =
-    preset.providerType === "local" && ownedRoles.length > 0;
 
   return (
     <li className={`provider-row provider-card${isInUse ? " is-in-use" : ""}${isOpen ? " is-open" : ""}`}>
@@ -390,12 +401,10 @@ function ProviderRow({
           </span>
           <span className="provider-card-meta-sep">·</span>
           <span>{capLabel}</span>
-          {role?.repo ? (
-            <>
-              <span className="provider-card-meta-sep">·</span>
-              <ProviderRepoBadge role={role} />
-            </>
-          ) : null}
+          {/* Repo badge moved into the per-stage list inside
+           * ProviderStagesModal — keeps the row meta scannable
+           * (especially for multi-stage providers where one badge
+           * doesn't represent the whole bundle). */}
         </div>
         {role?.error ? (
           <p className="provider-card-error" title={role.error}>
@@ -423,162 +432,8 @@ function ProviderRow({
           onToggle={onToggle}
         />
       </div>
-      {isOpen && hasStageDetails ? (
-        <ProviderStageList
-          preset={preset}
-          ownedRoles={ownedRoles}
-          progressByRole={progressByRole}
-          client={client}
-        />
-      ) : null}
     </li>
   );
-}
-
-/** Inline expansion under a local provider row. Lists every model
- * role this preset owns with its individual state, progress, and a
- * Retry button when in error. Shown when the user clicks "Details"
- * on a local provider — local providers don't open the editor
- * modal (no credentials to enter), so the expansion is the only
- * way to see per-stage detail.
- */
-function ProviderStageList({
-  preset,
-  ownedRoles,
-  progressByRole,
-  client,
-}: {
-  preset: ProviderPreset;
-  ownedRoles: ModelRoleStatus[];
-  progressByRole: ProgressByRole;
-  client: SearchClient;
-}) {
-  const allReady = ownedRoles.every((r) => r.state === "ready");
-  const anyMissing = ownedRoles.some(
-    (r) => r.state === "missing" || r.state === "error"
-  );
-  const sorted = [...ownedRoles].sort((a, b) => a.role.localeCompare(b.role));
-
-  async function handleRetryAll() {
-    const missing = ownedRoles.filter(
-      (r) => r.state === "missing" || r.state === "error"
-    );
-    for (const r of missing) {
-      void client.startModelDownload({ role: r.role }).catch(() => {});
-    }
-  }
-
-  return (
-    <div className="provider-row-expansion">
-      <div className="provider-stage-summary">
-        <span className="provider-stage-summary-label">
-          {ownedRoles.length === 1
-            ? "Model"
-            : `${ownedRoles.length} stages`}
-        </span>
-        <span className="provider-stage-summary-state">
-          {allReady
-            ? "All ready"
-            : `${ownedRoles.filter((r) => r.state === "ready").length} / ${ownedRoles.length} ready`}
-        </span>
-        {anyMissing && !allReady ? (
-          <button
-            type="button"
-            className="provider-stage-retry"
-            onClick={() => void handleRetryAll()}
-          >
-            Download missing
-          </button>
-        ) : null}
-      </div>
-      <ul className="provider-stage-list">
-        {sorted.map((r) => (
-          <ProviderStageRow
-            key={r.role}
-            preset={preset}
-            role={r}
-            progress={progressByRole[r.role]}
-          />
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function ProviderStageRow({
-  preset,
-  role,
-  progress,
-}: {
-  preset: ProviderPreset;
-  role: ModelRoleStatus;
-  progress: ModelDownloadEvent | undefined;
-}) {
-  const liveState = progress?.state;
-  const effectiveState = liveState ?? role.state;
-  const label = stageLabelFor(preset, role.role);
-  const pct = progressPercent(progress);
-  const isActive =
-    effectiveState === "downloading" || effectiveState === "verifying";
-  return (
-    <li className={`provider-stage-item is-${effectiveState}`}>
-      <span className="provider-stage-name" title={role.role}>
-        {label}
-      </span>
-      <span className="provider-stage-state">
-        {STATE_LABEL[effectiveState] ?? effectiveState}
-      </span>
-      {isActive ? (
-        <span
-          className="provider-stage-bar"
-          aria-label={`${label}: ${pct}%`}
-        >
-          <span
-            className="provider-stage-bar-fill"
-            style={{ width: `${pct}%` }}
-          />
-        </span>
-      ) : null}
-      {role.error ? (
-        <span className="provider-stage-error" title={role.error}>
-          {truncate(role.error, 60)}
-        </span>
-      ) : null}
-    </li>
-  );
-}
-
-const STATE_LABEL: Record<string, string> = {
-  ready: "Ready",
-  missing: "Missing",
-  downloading: "Downloading",
-  verifying: "Verifying",
-  queued: "Queued",
-  error: "Error",
-};
-
-/** Strip the provider's role prefix and humanise the remainder.
- * ``advanced-ocr-table-cells-wired`` → ``Table cells (wired)``. */
-function stageLabelFor(preset: ProviderPreset, roleId: string): string {
-  let stem = roleId;
-  if (preset.localRoleId && preset.localRoleId.endsWith("-")) {
-    stem = roleId.slice(preset.localRoleId.length);
-  } else if (preset.localRoleId) {
-    stem = preset.localRoleId;
-  }
-  // Special-case the wired/wireless table variants so the suffix
-  // reads naturally.
-  const wiredMatch = stem.match(/^(.*)-(wired|wireless)$/);
-  if (wiredMatch) {
-    return `${humanize(wiredMatch[1])} (${wiredMatch[2]})`;
-  }
-  return humanize(stem);
-}
-
-function humanize(s: string): string {
-  if (!s) return s;
-  const spaced = s.replace(/-/g, " ");
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
 type DerivedStatus = { label: string; toneClass: string };
@@ -718,39 +573,6 @@ function ProviderActions({
       aria-expanded={isOpen}
     >
       {isOpen ? "Close" : isConfigured ? "Edit" : "Add"}
-    </button>
-  );
-}
-
-function ProviderRepoBadge({ role }: { role: ModelRoleStatus }) {
-  const commit = role.commit && !role.commit.startsWith("<") ? role.commit : null;
-  const url = role.repo
-    ? commit
-      ? `https://huggingface.co/${role.repo}/tree/${commit}`
-      : `https://huggingface.co/${role.repo}`
-    : null;
-
-  async function handleClick() {
-    if (!url) return;
-    try {
-      await openExternal(url);
-    } catch {
-      // Tauri's shell-open failures are rare in practice and not
-      // recoverable from the UI.
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      className="provider-card-repo"
-      onClick={() => void handleClick()}
-      title={url ?? role.repo}
-    >
-      {role.repo}
-      {commit ? (
-        <span className="provider-card-repo-commit">@{commit.slice(0, 7)}</span>
-      ) : null}
     </button>
   );
 }

@@ -145,6 +145,26 @@ impl SearchSidecarSupervisor {
         // a no-op.
         terminate_orphan_if_alive(&self.lock_path);
 
+        // Defensive: remove any stale runtime file before the
+        // polling task starts. If the previous sidecar was SIGKILL'd
+        // (orphan path that fell through to KILL, or a hard crash)
+        // its lifecycle.py ``finally`` block didn't run, so the file
+        // points at a now-dead port. Without this delete the polling
+        // task succeeds on its first read with the OLD ``(port,
+        // token)``, the supervisor reports Running, and the first
+        // request hits a refused connection ("network: error sending
+        // request"). The new sidecar still writes a fresh file moments
+        // later but the supervisor never re-reads.
+        if let Err(err) = std::fs::remove_file(&self.runtime_path) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                log::warn!(
+                    "supervisor: failed to remove stale runtime file at {}: {}",
+                    self.runtime_path.display(),
+                    err
+                );
+            }
+        }
+
         let storage_dir_str = self.storage_dir.to_string_lossy().into_owned();
         let (mut rx, child) = match spawn_first_available_sidecar(app, &storage_dir_str) {
             Ok(spawned) => spawned,

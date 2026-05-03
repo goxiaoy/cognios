@@ -16,9 +16,23 @@ import argparse
 import logging
 import os
 import sys
+import warnings
 from pathlib import Path
 
-from .lifecycle import serve
+# Suppress paddle's chatty "No ccache found" warning. ccache is a
+# C++ build cache that only matters if you're recompiling paddle's
+# native extensions; we use the precompiled wheel and never trigger
+# JIT compilation, so the warning is pure noise that bloats the
+# supervisor's stderr capture. Filtered before paddleocr is
+# imported so the message never gets emitted.
+warnings.filterwarnings(
+    "ignore",
+    message="No ccache found.*",
+    category=UserWarning,
+    module="paddle.utils.cpp_extension.*",
+)
+
+from .lifecycle import serve  # noqa: E402 — must follow filterwarnings
 
 LOG = logging.getLogger("search_sidecar")
 

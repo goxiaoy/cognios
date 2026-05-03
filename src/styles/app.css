@@ -4868,6 +4868,17 @@ body.is-resizing-pane {
   transform: none;
   transition: background 120ms ease, color 120ms ease;
   padding: 0;
+  /* Anchor to the last column of ``.provider-modal-head``'s
+   * 3-column grid (auto 1fr auto). The editor modal renders all
+   * three children (avatar / text / close) and naturally lands
+   * the button in col 3; the chooser modal renders only two
+   * (text / close) and used to leave col 3 empty with the close
+   * stuck in the middle of the 1fr cell. ``grid-column-end: -1``
+   * pins it to the trailing column regardless of sibling count.
+   * ``justify-self: end`` keeps the 28×28 button flush right when
+   * its cell is wider than its intrinsic size. */
+  grid-column-end: -1;
+  justify-self: end;
 }
 
 .provider-modal-close:not(:disabled):hover {
