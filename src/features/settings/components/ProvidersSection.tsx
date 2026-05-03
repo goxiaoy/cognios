@@ -25,17 +25,22 @@ const CAPABILITY_LABEL: Record<Capability, string> = {
   reranking: "Reranking",
   vision: "Vision",
   ocr: "OCR",
+  "advanced-ocr": "Advanced OCR",
 };
 
 /** Capability → ModelRoleName. Capabilities are the user-facing
  * "what does this do" vocabulary; roles are the sidecar-internal
  * "which model slot" name. They differ because reranking maps to a
- * model called "reranker" and vision maps to "captioner". */
+ * model called "reranker" and vision maps to "captioner". For
+ * advanced-ocr the underlying ModelManager exposes 13 ``advanced-ocr-*``
+ * sub-roles; the Settings UI groups them under the "advanced-ocr-"
+ * prefix so a single capability cell shows aggregate progress. */
 const CAPABILITY_TO_ROLE: Record<Capability, string> = {
   embedding: "embedding",
   reranking: "reranker",
   vision: "captioner",
   ocr: "ocr",
+  "advanced-ocr": "advanced-ocr",
 };
 
 type FilterId =

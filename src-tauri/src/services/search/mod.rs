@@ -9,6 +9,7 @@
 //! runtime-file pattern but live in separate files because their
 //! argument shapes differ materially.
 
+pub mod advanced_ocr_watcher;
 pub mod client;
 pub mod forwarder;
 pub mod index_state_sync;

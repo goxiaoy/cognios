@@ -12,7 +12,12 @@ from typing import Protocol
 
 from ..storage import LanceDBStore
 from .embedder import Embedder
-from .processors.image import CaptionExtract, ImageProcessor, OcrExtract
+from .processors.image import (
+    AdvancedOcrExtract,
+    CaptionExtract,
+    ImageProcessor,
+    OcrExtract,
+)
 from .processors.pdf import PdfProcessor
 from .processors.text import TextProcessor
 from .processors.url_cache import URLCacheProcessor
@@ -38,6 +43,7 @@ class Dispatcher:
         embedder: Embedder,
         ocr_extract: OcrExtract | None = None,
         caption_extract: CaptionExtract | None = None,
+        advanced_ocr_extract: AdvancedOcrExtract | None = None,
     ) -> None:
         self._processors: list[Processor] = [
             TextProcessor(store, embedder),
@@ -47,6 +53,7 @@ class Dispatcher:
                 embedder,
                 ocr_extract=ocr_extract,
                 caption_extract=caption_extract,
+                advanced_ocr_extract=advanced_ocr_extract,
             ),
             URLCacheProcessor(store, embedder),
         ]

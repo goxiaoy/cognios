@@ -203,6 +203,12 @@ def default_settings() -> SearchSettings:
                 provider_id="local-paddleocr",
             ),
             "image-captioning": FeatureConfig(enabled=False, provider_id=None),
+            # Layout-aware OCR (PP-StructureV3 local, structured-prompt
+            # vision for cloud). Off by default — local needs a 12-model
+            # download (~600MB) and cloud incurs per-image API cost.
+            # When enabled and bound, ImageProcessor routes through the
+            # advanced extractor; basic image-ocr stays as the fallback.
+            "advanced-ocr": FeatureConfig(enabled=False, provider_id=None),
         },
     )
 

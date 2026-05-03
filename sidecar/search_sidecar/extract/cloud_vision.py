@@ -68,6 +68,26 @@ _CAPTION_PROMPT = (
     '"This image shows".'
 )
 
+# Layout-aware OCR — invoices, receipts, forms, statements, screenshots
+# of structured pages. Asking for markdown lets us reuse the existing
+# chunker without a schema change: tables become markdown tables,
+# formulas inline as ``$...$``, plain prose stays as paragraphs.
+#
+# The "no commentary, no preamble" guard mirrors _OCR_PROMPT — the
+# index doesn't want "Here is the document content:" boilerplate
+# polluting the searchable body.
+_ADVANCED_OCR_PROMPT = (
+    "Extract all content from this document image as Markdown.\n"
+    "- Reproduce paragraphs verbatim.\n"
+    "- Convert tables to GitHub-flavored Markdown tables (`| col | col |`).\n"
+    "- Convert inline math to `$...$` and display math to `$$...$$`.\n"
+    "- Preserve heading hierarchy with `#`, `##`, etc.\n"
+    "- Preserve list / numbered list structure.\n"
+    "- Do not describe images or figures; transcribe their captions if any.\n"
+    "- Output only the document content. No preamble, no closing remarks, "
+    'no "Here is the content".'
+)
+
 
 class OpenAICompatVisionClient:
     """OCR + captioning over an OpenAI-compatible vision endpoint.
@@ -102,6 +122,19 @@ class OpenAICompatVisionClient:
         """Return a one-or-two-sentence description of ``path``."""
         return self._chat_with_image(
             path, prompt=_CAPTION_PROMPT, max_tokens=300
+        )
+
+    def extract_advanced_ocr(self, path: Path) -> str:
+        """Return layout-aware OCR text as Markdown for ``path``.
+
+        Wider response budget than ``extract_ocr`` because structured
+        document content (multi-column papers, dense receipts, full
+        invoices) routinely runs longer than plain prose. The prompt
+        instructs the model to emit GFM tables and LaTeX math so the
+        existing chunker can ingest the result without a schema change.
+        """
+        return self._chat_with_image(
+            path, prompt=_ADVANCED_OCR_PROMPT, max_tokens=8192
         )
 
     def close(self) -> None:

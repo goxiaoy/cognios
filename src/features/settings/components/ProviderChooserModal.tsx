@@ -13,6 +13,7 @@ const CAPABILITY_LABEL: Record<Capability, string> = {
   reranking: "Reranking",
   vision: "Vision",
   ocr: "OCR",
+  "advanced-ocr": "Advanced OCR",
 };
 
 /**

@@ -50,6 +50,11 @@ def test_default_settings_seeds_local_gte_and_semantic_search():
     # Image captioning is still optional pending the local Gemma path.
     assert s.features["image-captioning"].enabled is False
     assert s.features["image-captioning"].provider_id is None
+    # Advanced OCR (PP-StructureV3 local, structured-prompt vision
+    # for cloud) is opt-in: local needs ~600MB of model downloads
+    # and cloud incurs per-image API cost. Off + unbound by default.
+    assert s.features["advanced-ocr"].enabled is False
+    assert s.features["advanced-ocr"].provider_id is None
     # No cloud providers consented to on first install.
     assert s.cloud_consent_acked == []
     assert s.first_run_skipped is False

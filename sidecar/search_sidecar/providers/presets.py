@@ -34,7 +34,12 @@ from typing import Literal
 
 # v1 capability vocabulary. Adding a new value here is a coordinated
 # change with the consumer code that knows how to use it.
-Capability = Literal["embedding", "reranking", "vision", "ocr"]
+#
+# ``advanced-ocr`` is a layout-aware OCR pipeline (PP-StructureV3 for
+# local, structured-prompted vision for cloud) that produces markdown
+# with embedded tables and LaTeX formulas — distinct from the basic
+# ``ocr`` capability which only returns flat detected text.
+Capability = Literal["embedding", "reranking", "vision", "ocr", "advanced-ocr"]
 ProviderType = Literal["local", "cloud"]
 AuthKind = Literal["none", "hf-token", "api-key"]
 
@@ -111,17 +116,40 @@ PRESETS: dict[str, ProviderPreset] = {
         },
         auth_kind="none",
     ),
+    "local-paddleocr-advanced": ProviderPreset(
+        provider_id="local-paddleocr-advanced",
+        display_name="Local PaddleOCR Advanced",
+        provider_type="local",
+        capabilities=frozenset({"advanced-ocr"}),
+        # PP-StructureV3 pipeline (Apache-2.0). 12 sub-models cover
+        # detection / recognition / layout / region / orientation /
+        # unwarping / table classification + structure + cells (wired
+        # and wireless) / formula recognition. Selecting this provider
+        # triggers the ModelManager to download all 12 from
+        # huggingface.co/PaddlePaddle/* — the model name below is the
+        # umbrella label shown in Settings; per-stage model ids are
+        # encoded in the manifest under role-prefixed names
+        # (``advanced-ocr-detection``, ``advanced-ocr-recognition``, ...).
+        default_model_per_capability={
+            "advanced-ocr": "PP-StructureV3",
+        },
+        auth_kind="none",
+    ),
     "openai": ProviderPreset(
         provider_id="openai",
         display_name="OpenAI",
         provider_type="cloud",
-        capabilities=frozenset({"embedding", "vision", "ocr"}),
+        capabilities=frozenset({"embedding", "vision", "ocr", "advanced-ocr"}),
         default_model_per_capability={
             # 3-small natively returns 1536-dim; the cloud Embedder
             # always passes ``dimensions=768`` to coerce via Matryoshka.
             "embedding": "text-embedding-3-small",
             "vision": "gpt-4o-mini",
             "ocr": "gpt-4o-mini",
+            # 4o-mini handles structured-prompt OCR well enough at
+            # the entry tier; users can override per-feature in
+            # Settings if they want 4o or a beefier upgrade path.
+            "advanced-ocr": "gpt-4o-mini",
         },
         auth_kind="api-key",
         base_url="https://api.openai.com/v1",
@@ -132,10 +160,13 @@ PRESETS: dict[str, ProviderPreset] = {
         provider_id="qwen-dashscope",
         display_name="Qwen DashScope",
         provider_type="cloud",
-        capabilities=frozenset({"vision", "ocr"}),
+        capabilities=frozenset({"vision", "ocr", "advanced-ocr"}),
         default_model_per_capability={
             "vision": "qwen-vl-plus",
             "ocr": "qwen-vl-plus",
+            # qwen-vl-plus handles structured invoice/receipt prompts
+            # competitively with 4o-mini on Chinese-language docs.
+            "advanced-ocr": "qwen-vl-plus",
         },
         auth_kind="api-key",
         # OpenAI-compatible mode endpoint; Qwen embedding/reranking

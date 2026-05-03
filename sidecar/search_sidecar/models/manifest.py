@@ -78,16 +78,187 @@ DEFAULTS: dict[str, ModelSpec] = {
             FileSpec("config.json", "dfa5713436ecb4616eaa576795c8d3efd1f03122031a1ad4973d0b6b7e7edfd3"),
         ),
     ),
-    # OCR + captioner roles intentionally absent from the manifest:
+    # OCR + captioner roles intentionally absent from the basic manifest:
     #
-    # - Local OCR is served by ``rapidocr-onnxruntime`` (PP-OCRv4 ONNX
-    #   port) which bundles its model files inside the wheel. There's
-    #   nothing for ModelManager to download or pin.
+    # - Local OCR (basic) is served by ``rapidocr-onnxruntime`` (PP-OCRv4
+    #   ONNX port) which bundles its model files inside the wheel.
+    #   There's nothing for ModelManager to download or pin.
     # - Local captioning (Gemma vision) is deferred past v1 — needs
-    #   multi-repo manifest support (mmproj lives in a separate HF
-    #   repo) and a llama-server runtime. Cloud captioning is the
-    #   only path in v1; cloud needs no on-disk model files.
+    #   multi-repo manifest support and a llama-server runtime. Cloud
+    #   captioning is the only path in v1.
+    #
+    # Local **advanced** OCR (PP-StructureV3) uses the 12-stage roles
+    # below. They're added to ``DEFAULTS`` further down so the basic
+    # role table stays readable on its own.
 }
+
+
+# PP-StructureV3 model bundle — the 13 stages PaddleOCR 3.x runs in
+# series (or in parallel where independent) to produce layout-aware
+# OCR with table structure and formula recognition. Each stage is its
+# own HuggingFace repo under PaddlePaddle/*; we expose them as 13
+# role-prefixed entries so the existing per-role download lifecycle
+# (progress, retry, license-acceptance, integrity check) works without
+# a schema change.
+#
+# The Settings UI groups any role starting with ``advanced-ocr-`` under
+# a single "Local PaddleOCR Advanced" surface; the underlying model
+# manager treats them as 12 independent downloads.
+#
+# Commits + SHA-256s are placeholders; release-build CI pins them
+# (same flow as the basic embedding/reranker roles). The file lists
+# capture the typical paddleocr inference layout: ``inference.json``
+# describes the model, ``inference.pdmodel`` / ``inference.pdiparams``
+# are the weights. Some stages publish ONNX-converted variants — we
+# stick with the canonical paddle format because the ``paddleocr``
+# Python package loads from those file names by default.
+ADVANCED_OCR_ROLES: dict[str, ModelSpec] = {
+    "advanced-ocr-detection": ModelSpec(
+        role="advanced-ocr-detection",
+        repo="PaddlePaddle/PP-OCRv4_mobile_det",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "advanced-ocr-recognition": ModelSpec(
+        role="advanced-ocr-recognition",
+        repo="PaddlePaddle/PP-OCRv4_mobile_rec",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "advanced-ocr-layout": ModelSpec(
+        role="advanced-ocr-layout",
+        repo="PaddlePaddle/PP-DocLayout_plus-L",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "advanced-ocr-region": ModelSpec(
+        role="advanced-ocr-region",
+        repo="PaddlePaddle/PP-DocBlockLayout",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "advanced-ocr-doc-orientation": ModelSpec(
+        role="advanced-ocr-doc-orientation",
+        repo="PaddlePaddle/PP-LCNet_x1_0_doc_ori",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "advanced-ocr-textline-orientation": ModelSpec(
+        role="advanced-ocr-textline-orientation",
+        repo="PaddlePaddle/PP-LCNet_x1_0_textline_ori",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "advanced-ocr-doc-unwarping": ModelSpec(
+        role="advanced-ocr-doc-unwarping",
+        repo="PaddlePaddle/UVDoc",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "advanced-ocr-table-classification": ModelSpec(
+        role="advanced-ocr-table-classification",
+        repo="PaddlePaddle/PP-LCNet_x1_0_table_cls",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "advanced-ocr-table-structure-wired": ModelSpec(
+        role="advanced-ocr-table-structure-wired",
+        repo="PaddlePaddle/SLANeXt_wired",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "advanced-ocr-table-structure-wireless": ModelSpec(
+        role="advanced-ocr-table-structure-wireless",
+        repo="PaddlePaddle/SLANet_plus",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "advanced-ocr-table-cells-wired": ModelSpec(
+        role="advanced-ocr-table-cells-wired",
+        repo="PaddlePaddle/RT-DETR-L_wired_table_cell_det",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "advanced-ocr-table-cells-wireless": ModelSpec(
+        role="advanced-ocr-table-cells-wireless",
+        repo="PaddlePaddle/RT-DETR-L_wireless_table_cell_det",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+    "advanced-ocr-formula": ModelSpec(
+        role="advanced-ocr-formula",
+        repo="PaddlePaddle/PP-FormulaNet_plus-L",
+        commit=PLACEHOLDER_COMMIT,
+        files=(
+            FileSpec("inference.json", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdmodel", PLACEHOLDER_SHA256),
+            FileSpec("inference.pdiparams", PLACEHOLDER_SHA256),
+        ),
+    ),
+}
+
+# Merge the advanced-ocr stages into the public DEFAULTS table so
+# ModelManager treats them like any other role. Caller-side grouping
+# (the UI / state-sync) keys on the ``advanced-ocr-`` prefix.
+DEFAULTS.update(ADVANCED_OCR_ROLES)
+
+
+def advanced_ocr_role_ids() -> tuple[str, ...]:
+    """Stable order for the 12 PP-StructureV3 stages.
+
+    The state-sync layer uses this to decide "are all stages ready?"
+    before triggering an auto-reindex; the UI uses it to render the
+    grouped progress indicator under "Local PaddleOCR Advanced".
+    """
+    return tuple(ADVANCED_OCR_ROLES.keys())
 
 
 def is_pinned(spec: ModelSpec) -> bool:

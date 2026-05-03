@@ -43,6 +43,15 @@ embedding = [
   "optimum[onnxruntime]>=1.24,<2.0",
   "transformers>=4.45,<5.0",
 ]
+# Layout-aware OCR (PP-StructureV3). Genuinely heavy — paddleocr +
+# paddlepaddle pull ~600 MB of native deps and the 13-stage model
+# bundle adds another ~600 MB on first download. Off by default; the
+# Settings UI surfaces an install hint when the user enables advanced
+# OCR with a local provider but the extra isn't present.
+advanced-ocr = [
+  "paddleocr>=3.0,<4.0",
+  "paddlepaddle>=3.0,<4.0",
+]
 
 [project.scripts]
 search-sidecar = "search_sidecar.__main__:main"

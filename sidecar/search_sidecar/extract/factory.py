@@ -1,6 +1,6 @@
 """Image-extractor factories.
 
-Two parallel selectors, one per feature, mirroring the embedder /
+Three parallel selectors, one per feature, mirroring the embedder /
 reranker factory pattern:
 
 - :func:`select_ocr_extractor` reads ``settings.features["image-ocr"]``
@@ -13,17 +13,25 @@ reranker factory pattern:
   ``settings.features["image-captioning"]``. v1 ships cloud-only
   captioning; binding to a local provider currently logs and returns
   ``None`` so the row falls back to OCR-only output.
+- :func:`select_advanced_ocr_extractor` reads
+  ``settings.features["advanced-ocr"]`` and returns either a
+  :class:`PpStructureV3Extractor` (local PP-StructureV3 bundle) or
+  a bound method on :class:`OpenAICompatVisionClient` (cloud
+  structured-prompt vision). The local path also requires the
+  13-stage model bundle to have finished downloading — the factory
+  asks the model manager and returns ``None`` until it has.
 
 The factories never raise on misconfiguration. Logging + ``None``
-keeps the dispatcher path resilient — a wrong API key shouldn't
-park the indexing queue, it should produce empty extracts and let
-the user fix Settings.
+keeps the dispatcher path resilient — a wrong API key or a half-
+downloaded model bundle shouldn't park the indexing queue, it
+should produce empty extracts and let the user fix Settings.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable
 
 from ..providers import (
     PRESETS,
@@ -32,12 +40,20 @@ from ..providers import (
 )
 from ..settings import SearchSettings
 from .cloud_vision import OpenAICompatVisionClient
+from .local_advanced_ocr import PpStructureV3Extractor, can_load_local_advanced_ocr
 from .local_ocr import RapidOcrExtractor, can_load_local_ocr
+
+if TYPE_CHECKING:
+    from ..models import ModelManager
 
 LOG = logging.getLogger("search_sidecar.extract.factory")
 
-# Type alias for the callable shape ImageProcessor expects.
-Extractor = Callable[[object], str]
+# Type alias for the callable shape ImageProcessor expects. The
+# concrete callables (RapidOcrExtractor, OpenAICompatVisionClient
+# methods, PpStructureV3Extractor) all take ``Path`` and return str —
+# match that signature so type-checkers don't widen ``object`` over
+# the actual contract.
+Extractor = Callable[[Path], str]
 
 
 def select_ocr_extractor(
@@ -131,6 +147,110 @@ def select_caption_extractor(
         return None
     LOG.info("captioner: cloud provider %s", preset.provider_id)
     return client.generate_caption
+
+
+def select_advanced_ocr_extractor(
+    settings: SearchSettings | None,
+    model_manager: "ModelManager | None" = None,
+) -> Extractor | None:
+    """Return a layout-aware OCR callable or ``None``.
+
+    Routes by ``settings.features["advanced-ocr"].provider_id``:
+
+    - cloud preset with ``advanced-ocr`` capability → a
+      ``OpenAICompatVisionClient.extract_advanced_ocr`` bound method.
+    - ``local-paddleocr-advanced`` → a :class:`PpStructureV3Extractor`
+      configured against the model directories the manager has
+      downloaded; ``None`` until every PP-StructureV3 stage is ready.
+    - feature off / unbound / paddleocr extra missing / model bundle
+      not finished downloading → ``None``.
+
+    ``model_manager`` is required for the local path so we can look
+    up where each stage's files live on disk. Cloud doesn't need it.
+    """
+    if settings is None:
+        return None
+    feature = settings.features.get("advanced-ocr")
+    if feature is None or not feature.enabled or feature.provider_id is None:
+        LOG.debug("advanced-ocr disabled or unbound; skipping extractor")
+        return None
+    preset = PRESETS.get(feature.provider_id)
+    if preset is None or "advanced-ocr" not in preset.capabilities:
+        LOG.warning(
+            "advanced-ocr bound to %r which does not advertise advanced-ocr; "
+            "skipping extractor",
+            feature.provider_id,
+        )
+        return None
+    if preset.provider_type == "cloud":
+        client = _build_cloud_client(preset, settings, capability="advanced-ocr")
+        if client is None:
+            return None
+        LOG.info("advanced-ocr extractor: cloud provider %s", preset.provider_id)
+        return client.extract_advanced_ocr
+    # Local path: paddleocr deps + every PP-StructureV3 stage ready.
+    if not can_load_local_advanced_ocr():
+        LOG.warning(
+            "advanced-ocr bound to local provider %r but paddleocr / "
+            "paddlepaddle are not importable; install with "
+            "`uv sync --extra advanced-ocr`. Skipping extractor.",
+            preset.provider_id,
+        )
+        return None
+    if model_manager is None:
+        LOG.warning(
+            "advanced-ocr bound to local provider %r but no model_manager "
+            "is wired; skipping extractor",
+            preset.provider_id,
+        )
+        return None
+    stage_dirs = _collect_advanced_ocr_stage_dirs(model_manager)
+    if stage_dirs is None:
+        return None
+    try:
+        extractor = PpStructureV3Extractor(stage_dirs)
+    except Exception as err:
+        LOG.warning("local PP-StructureV3 construction failed: %s", err)
+        return None
+    LOG.info("advanced-ocr extractor: local PP-StructureV3 (%s)", preset.provider_id)
+    return extractor
+
+
+def _collect_advanced_ocr_stage_dirs(
+    model_manager: "ModelManager",
+) -> dict[str, Path] | None:
+    """Walk every PP-StructureV3 stage role and return the directory
+    holding its inference files. Returns ``None`` (with a warning) if
+    any stage isn't yet downloaded — the caller surfaces that as
+    "advanced OCR will activate once downloads finish".
+
+    Uses the ``<role_dir>/current`` symlink the manager maintains
+    after a successful download — that resolves to the active
+    commit's directory, which is where ``inference.json`` /
+    ``inference.pdmodel`` / ``inference.pdiparams`` live.
+    """
+    statuses = model_manager.status()
+    stage_dirs: dict[str, Path] = {}
+    for role in PpStructureV3Extractor.STAGE_TO_KWARG:
+        status = statuses.get(role)
+        if status is None or status.state != "ready":
+            LOG.info(
+                "advanced-ocr: stage %r not ready (%s); waiting for download",
+                role,
+                status.state if status else "missing",
+            )
+            return None
+        directory = model_manager.role_dir(role) / "current"
+        if not directory.exists():
+            LOG.warning(
+                "advanced-ocr: stage %r reports ready but %s is missing; "
+                "skipping extractor",
+                role,
+                directory,
+            )
+            return None
+        stage_dirs[role] = directory
+    return stage_dirs
 
 
 # ----- internals -------------------------------------------------------------

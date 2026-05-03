@@ -213,6 +213,28 @@ pub fn run() {
                 });
             }
 
+            // Advanced-OCR watcher: when the 13-stage PP-StructureV3
+            // bundle finishes downloading, fan out a reindex over
+            // every image node so existing photos / receipts / scans
+            // pick up the layout-aware pipeline without manual user
+            // action. Cloud advanced-OCR doesn't trigger this — keys
+            // are usable immediately.
+            {
+                let watch_db = db.clone();
+                let watch_client = Arc::clone(&search_client);
+                let watch_supervisor = Arc::clone(&search_sidecar);
+                let watch_emitter = Arc::clone(&emitter);
+                tauri::async_runtime::spawn(async move {
+                    services::search::advanced_ocr_watcher::run_advanced_ocr_watcher(
+                        watch_supervisor,
+                        watch_client,
+                        watch_db,
+                        watch_emitter,
+                    )
+                    .await;
+                });
+            }
+
             app.manage(AppState {
                 db,
                 storage_dir: app_data_dir,

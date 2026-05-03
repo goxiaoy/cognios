@@ -16,12 +16,14 @@ def test_v1_presets_cover_known_providers():
     """The v1 preset set is fixed by the brainstorm — any addition or
     removal should be a deliberate scope change, not an accident.
     ``local-gemma`` was dropped from v1 (multi-repo manifest +
-    llama-server runtime deferred); local captioning is unavailable
-    in v1 — captioning routes through cloud providers only."""
+    llama-server runtime deferred); local captioning routes through
+    cloud providers only. ``local-paddleocr-advanced`` (PP-StructureV3)
+    was added when layout-aware OCR became its own feature."""
     assert set(PRESETS) == {
         "local-gte",
         "local-gte-reranker",
         "local-paddleocr",
+        "local-paddleocr-advanced",
         "openai",
         "qwen-dashscope",
     }
@@ -33,6 +35,7 @@ def test_each_preset_is_well_formed():
         "reranking",
         "vision",
         "ocr",
+        "advanced-ocr",
     }
     valid_types: set[ProviderType] = {"local", "cloud"}
     valid_auth: set[AuthKind] = {"none", "hf-token", "api-key"}
@@ -79,18 +82,21 @@ def test_capability_matrix_matches_v1_decision():
     - local-gte → embedding
     - local-gte-reranker → reranking
     - local-paddleocr → ocr
-    - openai → embedding + vision + ocr (cloud OCR uses the same
-      vision endpoint with a transcribe-only prompt)
-    - qwen-dashscope → vision + ocr
+    - local-paddleocr-advanced → advanced-ocr (PP-StructureV3 bundle)
+    - openai → embedding + vision + ocr + advanced-ocr
+    - qwen-dashscope → vision + ocr + advanced-ocr
     """
     assert PRESETS["local-gte"].capabilities == frozenset({"embedding"})
     assert PRESETS["local-gte-reranker"].capabilities == frozenset({"reranking"})
     assert PRESETS["local-paddleocr"].capabilities == frozenset({"ocr"})
+    assert PRESETS["local-paddleocr-advanced"].capabilities == frozenset(
+        {"advanced-ocr"}
+    )
     assert PRESETS["openai"].capabilities == frozenset(
-        {"embedding", "vision", "ocr"}
+        {"embedding", "vision", "ocr", "advanced-ocr"}
     )
     assert PRESETS["qwen-dashscope"].capabilities == frozenset(
-        {"vision", "ocr"}
+        {"vision", "ocr", "advanced-ocr"}
     )
 
 
@@ -116,6 +122,14 @@ def test_presets_with_capability_filters_correctly():
     ocr_providers = presets_with_capability("ocr")
     ocr_ids = {p.provider_id for p in ocr_providers}
     assert ocr_ids == {"local-paddleocr", "openai", "qwen-dashscope"}
+
+    advanced_ocr_providers = presets_with_capability("advanced-ocr")
+    advanced_ocr_ids = {p.provider_id for p in advanced_ocr_providers}
+    assert advanced_ocr_ids == {
+        "local-paddleocr-advanced",
+        "openai",
+        "qwen-dashscope",
+    }
 
 
 def test_openai_embedding_default_is_3_small():

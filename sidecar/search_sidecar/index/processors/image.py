@@ -1,27 +1,31 @@
 """Image processor.
 
-Indexes images by extracting text via OCR (and, in a follow-up,
-captions via a multimodal LLM). The processor is intentionally
-free of any paddleocr / llama-server import — those are pulled in by
-the **extractor callables** the lifecycle injects, so this module
-stays cheap to import and easy to test against mocks.
+Indexes images by extracting text via OCR + captions via a multimodal
+LLM. The processor stays free of any paddleocr / llama-server import —
+those are pulled in by the **extractor callables** the lifecycle
+injects, so this module is cheap to import and easy to test against
+mocks.
 
 Architecture:
 
-- ``ocr_extract: Callable[[Path], str]`` — runs OCR on the image and
-  returns a single text string. Chunked through ``chunk_text(...)``
-  and stored as ``role="body"`` rows with ids ``<node_id>:<int>``.
-- ``caption_extract: Callable[[Path], str]`` — calls the local
-  ``llama-server`` for an image caption. Chunked the same way and
-  stored as ``role="summary"`` rows with ids
-  ``<node_id>:summary:<int>``. Captions today fit in a single row;
-  the schema absorbs longer future summaries without further work.
+- ``ocr_extract: Callable[[Path], str]`` — basic OCR (detect+recognize).
+  Chunked through ``chunk_text(...)`` and stored as ``role="body"``
+  rows. Falls back path when no advanced extractor is wired or it
+  returns empty.
+- ``advanced_ocr_extract: Callable[[Path], str]`` — layout-aware OCR
+  (PP-StructureV3 local, structured-prompt vision for cloud). Emits
+  Markdown with embedded GFM tables and LaTeX formulas, which the
+  chunker ingests as text. When wired and successful, takes priority
+  over ``ocr_extract`` for the body chunks; basic OCR fills in only
+  if advanced returns empty.
+- ``caption_extract: Callable[[Path], str]`` — short description of
+  the image. Stored as ``role="summary"`` rows.
 
-The two extractors run independently — one failing or returning
-empty does not block the other from contributing. If both return
-nothing, the processor records the image as "indexed" with 0
-chunks (matches TextProcessor's empty-file contract; the runner
-won't retry).
+The OCR (basic + advanced) and caption stages run independently — a
+failure in one does not block the other from contributing. If
+nothing produces text, the processor records the image as "indexed"
+with 0 chunks (matches TextProcessor's empty-file contract; the
+runner won't retry).
 """
 
 from __future__ import annotations
@@ -57,6 +61,7 @@ SUPPORTED_EXTENSIONS = (
 # only what it looks like once it arrives.
 OcrExtract = Callable[[Path], str]
 CaptionExtract = Callable[[Path], str]
+AdvancedOcrExtract = Callable[[Path], str]
 
 
 class ImageProcessor:
@@ -75,11 +80,13 @@ class ImageProcessor:
         *,
         ocr_extract: OcrExtract | None = None,
         caption_extract: CaptionExtract | None = None,
+        advanced_ocr_extract: AdvancedOcrExtract | None = None,
     ) -> None:
         self._store = store
         self._embedder = embedder
         self._ocr_extract = ocr_extract
         self._caption_extract = caption_extract
+        self._advanced_ocr_extract = advanced_ocr_extract
 
     def can_handle(self, job: IndexingJob) -> bool:
         if job.kind not in self.KINDS:
@@ -100,9 +107,18 @@ class ImageProcessor:
         # row from the *other* role behind.
         self._store.delete_by_node_id(job.node_id)
 
+        # Body text: prefer the advanced extractor (Markdown with
+        # tables / formulas); fall through to basic OCR when advanced
+        # is unavailable or returns empty. Chunked together — the
+        # downstream search and preview surfaces don't need to know
+        # which extractor produced which line.
         body_text = _safe_extract(
-            self._ocr_extract, path, label="OCR"
+            self._advanced_ocr_extract, path, label="AdvancedOCR"
         )
+        if not body_text:
+            body_text = _safe_extract(
+                self._ocr_extract, path, label="OCR"
+            )
         summary_text = _safe_extract(
             self._caption_extract, path, label="Caption"
         )

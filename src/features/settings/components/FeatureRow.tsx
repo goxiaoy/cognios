@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   ChevronDown,
+  FileSearch,
   Image as ImageIcon,
   Layers,
   Plus,
@@ -27,6 +28,7 @@ const FEATURE_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
   "result-reranking": Layers,
   "image-ocr": ImageIcon,
   "image-captioning": Sparkles,
+  "advanced-ocr": FileSearch,
 };
 
 /**

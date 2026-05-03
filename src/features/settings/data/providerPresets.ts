@@ -12,7 +12,12 @@
 
 export type ProviderType = "local" | "cloud";
 export type AuthKind = "none" | "hf-token" | "api-key";
-export type Capability = "embedding" | "reranking" | "vision" | "ocr";
+export type Capability =
+  | "embedding"
+  | "reranking"
+  | "vision"
+  | "ocr"
+  | "advanced-ocr";
 
 export interface ProviderPreset {
   providerId: string;
@@ -55,14 +60,29 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authKind: "none",
   },
   {
+    // PP-StructureV3 — layout-aware OCR with table + formula
+    // recognition. Selecting this provider triggers a 13-stage
+    // model download (~600MB) and requires the optional
+    // ``advanced-ocr`` Python extra (paddleocr + paddlepaddle).
+    providerId: "local-paddleocr-advanced",
+    displayName: "Local PaddleOCR Advanced",
+    providerType: "local",
+    capabilities: ["advanced-ocr"],
+    defaultModelPerCapability: {
+      "advanced-ocr": "PP-StructureV3",
+    },
+    authKind: "none",
+  },
+  {
     providerId: "openai",
     displayName: "OpenAI",
     providerType: "cloud",
-    capabilities: ["embedding", "vision", "ocr"],
+    capabilities: ["embedding", "vision", "ocr", "advanced-ocr"],
     defaultModelPerCapability: {
       embedding: "text-embedding-3-small",
       vision: "gpt-4o-mini",
       ocr: "gpt-4o-mini",
+      "advanced-ocr": "gpt-4o-mini",
     },
     authKind: "api-key",
     baseUrl: "https://api.openai.com/v1",
@@ -73,10 +93,11 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     providerId: "qwen-dashscope",
     displayName: "Qwen DashScope",
     providerType: "cloud",
-    capabilities: ["vision", "ocr"],
+    capabilities: ["vision", "ocr", "advanced-ocr"],
     defaultModelPerCapability: {
       vision: "qwen-vl-plus",
       ocr: "qwen-vl-plus",
+      "advanced-ocr": "qwen-vl-plus",
     },
     authKind: "api-key",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -147,6 +168,18 @@ export const FEATURE_CATALOG: readonly FeatureMeta[] = [
       "Generate searchable descriptions of images. Cloud-only in v1 " +
       "(OpenAI / Qwen DashScope).",
     capability: "vision",
+    mandatory: false,
+    comingSoon: false,
+  },
+  {
+    featureId: "advanced-ocr",
+    displayName: "Advanced OCR",
+    description:
+      "Layout-aware OCR for invoices, receipts, tables and formulas. " +
+      "Cloud uses structured-prompt vision; local PP-StructureV3 " +
+      "downloads a 13-model bundle (~600MB) on enable, then " +
+      "auto-reindexes existing images.",
+    capability: "advanced-ocr",
     mandatory: false,
     comingSoon: false,
   },
