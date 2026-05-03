@@ -20,7 +20,14 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
     search: vi.fn().mockResolvedValue({ state: "initialising" }),
     indexStatus: vi.fn().mockResolvedValue({
       state: "ready",
-      data: { queueDepth: 2, inFlight: ["x"], indexedChunks: 50 },
+      data: {
+        queueDepth: 2,
+        inFlight: ["x"],
+        indexedChunks: 50,
+        enhancementPending: 0,
+        enhancementFailed: 0,
+        enhancementTotalImages: 0,
+      },
     }),
     nodeIndexStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
     modelsStatus: vi.fn().mockResolvedValue({
@@ -149,5 +156,42 @@ describe("SettingsLayout", () => {
     // The local-gte provider's role is "ready" in the makeClient
     // mock, so its row's status pill reads "Ready".
     expect(screen.getAllByText("Ready").length).toBeGreaterThan(0);
+  });
+
+  it("renders image OCR enhancement diagnostics when advanced OCR is ready", async () => {
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(readySettings()),
+      indexStatus: vi.fn().mockResolvedValue({
+        state: "ready",
+        data: {
+          queueDepth: 0,
+          inFlight: [],
+          indexedChunks: 20,
+          enhancementPending: 4,
+          enhancementFailed: 1,
+          enhancementTotalImages: 10,
+        },
+      }),
+      modelsStatus: vi.fn().mockResolvedValue({
+        state: "ready",
+        data: {
+          roles: {
+            "advanced-ocr-detection": {
+              role: "advanced-ocr-detection",
+              state: "ready",
+              repo: "PaddlePaddle/PP-OCRv4_mobile_det",
+              commit: "abcdef0123",
+            },
+          },
+        },
+      }),
+    });
+    render(<SettingsLayout client={client} />);
+    await waitFor(() => {
+      expect(screen.getByText("Image OCR enhancement")).toBeInTheDocument();
+    });
+    expect(screen.getByText("5 / 10")).toBeInTheDocument();
+    expect(screen.getByText("4 remaining")).toBeInTheDocument();
+    expect(screen.getByText("1 failed")).toBeInTheDocument();
   });
 });

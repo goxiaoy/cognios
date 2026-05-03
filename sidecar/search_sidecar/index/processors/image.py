@@ -15,9 +15,8 @@ Architecture:
 - ``advanced_ocr_extract: Callable[[Path], str]`` — layout-aware OCR
   (PP-StructureV3 local, structured-prompt vision for cloud). Emits
   Markdown with embedded GFM tables and LaTeX formulas, which the
-  chunker ingests as text. When wired and successful, takes priority
-  over ``ocr_extract`` for the body chunks; basic OCR fills in only
-  if advanced returns empty.
+  chunker ingests as text. Runs only during background enhancement
+  and replaces body chunks when it produces useful output.
 - ``caption_extract: Callable[[Path], str]`` — short description of
   the image. Stored as ``role="summary"`` rows.
 
@@ -30,15 +29,18 @@ runner won't retry).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
+
+import httpx
 
 from ...storage import LanceDBStore, NodeChunk
 from ..chunking import chunk_text
 from ..embedder import Embedder
-from ..queue import IndexingJob
+from ..queue import IndexingJob, IndexingQueue, MAX_ENHANCEMENT_ATTEMPTS
 
 LOG = logging.getLogger("search_sidecar.index.processors.image")
 
@@ -78,12 +80,14 @@ class ImageProcessor:
         store: LanceDBStore,
         embedder: Embedder,
         *,
+        queue: IndexingQueue | None = None,
         ocr_extract: OcrExtract | None = None,
         caption_extract: CaptionExtract | None = None,
         advanced_ocr_extract: AdvancedOcrExtract | None = None,
     ) -> None:
         self._store = store
         self._embedder = embedder
+        self._queue = queue
         self._ocr_extract = ocr_extract
         self._caption_extract = caption_extract
         self._advanced_ocr_extract = advanced_ocr_extract
@@ -107,18 +111,9 @@ class ImageProcessor:
         # row from the *other* role behind.
         self._store.delete_by_node_id(job.node_id)
 
-        # Body text: prefer the advanced extractor (Markdown with
-        # tables / formulas); fall through to basic OCR when advanced
-        # is unavailable or returns empty. Chunked together — the
-        # downstream search and preview surfaces don't need to know
-        # which extractor produced which line.
-        body_text = _safe_extract(
-            self._advanced_ocr_extract, path, label="AdvancedOCR"
-        )
-        if not body_text:
-            body_text = _safe_extract(
-                self._ocr_extract, path, label="OCR"
-            )
+        # Basic pass only. Advanced OCR is a separate background
+        # enhancement so every image becomes searchable quickly.
+        body_text = _safe_extract(self._ocr_extract, path, label="OCR")
         summary_text = _safe_extract(
             self._caption_extract, path, label="Caption"
         )
@@ -130,6 +125,70 @@ class ImageProcessor:
             # results because they're a valid steady state.
             return 0
 
+        rows = self._build_rows(job, body_chunks, summary_chunks)
+        self._store.upsert(rows)
+        if body_chunks and self.has_advanced_ocr() and self._queue is not None:
+            self._queue.set_enhancement_pending(job.node_id)
+        return len(rows)
+
+    def has_advanced_ocr(self) -> bool:
+        return self._advanced_ocr_extract is not None
+
+    def process_enhancement(self, job: IndexingJob, claim_seq: int) -> None:
+        """Run the advanced OCR pass and replace body chunks only."""
+        path = Path(job.absolute_content_path or "")
+        if not path.is_file():
+            raise FileNotFoundError(f"missing image: {path}")
+        if self._queue is None:
+            raise RuntimeError("ImageProcessor enhancement requires queue")
+        extractor = self._advanced_ocr_extract
+        if extractor is None:
+            return
+
+        try:
+            advanced_text = extractor(path) or ""
+        except Exception as err:
+            self._handle_enhancement_error(job.node_id, err)
+            return
+
+        body_chunks = _meaningful_chunks(advanced_text)
+        if not body_chunks:
+            self._queue.clear_enhancement_pending(job.node_id)
+            return
+
+        rows = self._build_rows(job, body_chunks, [])
+        self._store.delete_chunks_by_role(job.node_id, "body")
+        self._store.upsert(rows)
+
+        if not self._queue.clear_enhancement_pending_if_transition_seq(
+            job.node_id, claim_seq
+        ):
+            self._store.delete_by_node_id(job.node_id)
+            return
+
+    def _handle_enhancement_error(self, node_id: str, err: Exception) -> None:
+        if _classify_enhancement_error(err) == "transient":
+            attempts = (
+                self._queue.bump_enhancement_attempts(node_id)
+                if self._queue
+                else 0
+            )
+            if attempts < MAX_ENHANCEMENT_ATTEMPTS:
+                raise EnhancementTransientError(str(err)) from err
+        if self._queue is not None:
+            self._queue.mark_enhancement_failed(node_id)
+        LOG.warning(
+            "advanced-OCR enhancement failed terminally for %s: %s",
+            node_id,
+            err,
+        )
+
+    def _build_rows(
+        self,
+        job: IndexingJob,
+        body_chunks: list[str],
+        summary_chunks: list[str],
+    ) -> list[NodeChunk]:
         now = datetime.now(timezone.utc)
         modified_at = job.modified_at or now
         rows: list[NodeChunk] = []
@@ -148,9 +207,7 @@ class ImageProcessor:
                     modified_at=modified_at,
                     role="body",
                 )
-                for i, (chunk, vec) in enumerate(
-                    zip(body_chunks, body_vectors)
-                )
+                for i, (chunk, vec) in enumerate(zip(body_chunks, body_vectors))
             )
         if summary_chunks:
             summary_vectors = self._embed(summary_chunks)
@@ -167,20 +224,57 @@ class ImageProcessor:
                     modified_at=modified_at,
                     role="summary",
                 )
-                for i, (chunk, vec) in enumerate(
-                    zip(summary_chunks, summary_vectors)
-                )
+                for i, (chunk, vec) in enumerate(zip(summary_chunks, summary_vectors))
             )
-        self._store.upsert(rows)
-        return len(rows)
+        return rows
 
     def _embed(self, chunks: list[str]) -> list[list[float]]:
         vectors = self._embedder.embed(chunks)
         if len(vectors) != len(chunks):
             raise ValueError(
                 f"embedder returned {len(vectors)} vectors for {len(chunks)} chunks"
-            )
+        )
         return vectors
+
+
+class EnhancementTransientError(Exception):
+    """Raised after a retryable enhancement failure is recorded."""
+
+
+def _classify_enhancement_error(
+    exc: Exception,
+) -> Literal["transient", "terminal"]:
+    if isinstance(
+        exc,
+        (
+            httpx.TransportError,
+            httpx.ConnectError,
+            httpx.ReadTimeout,
+            httpx.WriteTimeout,
+            asyncio.TimeoutError,
+            ConnectionError,
+        ),
+    ):
+        return "transient"
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status in (429, 500, 502, 503, 504):
+            return "transient"
+        return "terminal"
+
+    message = str(exc)
+    if isinstance(exc, RuntimeError):
+        if any(token in message for token in ("429", "500", "502", "503", "504")):
+            return "transient"
+        return "terminal"
+    return "terminal"
+
+
+def _meaningful_chunks(text: str) -> list[str]:
+    """Chunk advanced output and drop punctuation-only garbage."""
+    return [
+        chunk for chunk in chunk_text(text) if any(ch.isalnum() for ch in chunk)
+    ]
 
 
 def _safe_extract(

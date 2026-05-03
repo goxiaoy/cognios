@@ -176,7 +176,7 @@ sequenceDiagram
 
 ## Implementation Units
 
-- [ ] **Unit 1: Queue schema + enhancement claim API**
+- [x] **Unit 1: Queue schema + enhancement claim API**
 
 **Goal:** Persist enhancement state on `jobs` and expose claim/transition methods. No behavior change yet — runner still ignores them.
 
@@ -220,7 +220,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 2: LanceDB role-aware delete**
+- [x] **Unit 2: LanceDB role-aware delete**
 
 **Goal:** Provide `LanceDBStore.delete_chunks_by_role(node_id, role)` so enhancement can replace body chunks while preserving summary chunks.
 
@@ -251,7 +251,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 3: ImageProcessor split + factory assertion**
+- [x] **Unit 3: ImageProcessor split + factory assertion**
 
 **Goal:** Replace the monolithic `process` with basic-only + a separate `process_enhancement`. Basic flags for enhancement on success. Folds in the `image-ocr`-must-be-local-paddleocr factory assertion (originally Unit 8).
 
@@ -306,7 +306,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 4: Dispatcher accessor + runner two-tier drain**
+- [x] **Unit 4: Dispatcher accessor + runner two-tier drain**
 
 **Goal:** Wire the runner to drain pending first, fall back to enhancement, skip enhancement when advanced isn't available (R13). Hold the constructor-change for `ImageProcessor`.
 
@@ -354,7 +354,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 5: Backfill IPC + sidecar startup auto-fire**
+- [x] **Unit 5: Backfill IPC + sidecar startup auto-fire**
 
 **Goal:** Expose the idempotent backfill endpoint and trigger it from sidecar startup when advanced is already available (cross-version-upgrade case).
 
@@ -393,7 +393,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 6: Diagnostics counter (sidecar + UI)**
+- [x] **Unit 6: Diagnostics counter (sidecar + UI)**
 
 **Goal:** Surface `done / total` enhancement counter in Settings → Diagnostics with a separate failed-count signal.
 
@@ -440,7 +440,7 @@ sequenceDiagram
 
 ---
 
-- [ ] **Unit 7: Watcher repurpose (local-bundle only)**
+- [x] **Unit 7: Watcher repurpose (local-bundle only)**
 
 **Goal:** Replace the watcher's per-image `node-saved` fan-out with a single backfill IPC call. **Cloud-binding triggers are out of scope for v1** (Scope Boundaries) — eliminates the cloud-readiness signal blocker.
 

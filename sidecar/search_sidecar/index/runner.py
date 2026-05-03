@@ -19,6 +19,7 @@ import time
 from typing import Optional
 
 from .dispatch import Dispatcher
+from .processors.image import EnhancementTransientError
 from .queue import IndexingJob, IndexingQueue
 
 LOG = logging.getLogger("search_sidecar.index.runner")
@@ -34,9 +35,16 @@ class IndexingRunner:
     exercise the dispatch + persistence chain without the polling loop.
     """
 
-    def __init__(self, *, queue: IndexingQueue, dispatcher: Dispatcher) -> None:
+    def __init__(
+        self,
+        *,
+        queue: IndexingQueue,
+        dispatcher: Dispatcher,
+        enable_enhancement: bool = True,
+    ) -> None:
         self._queue = queue
         self._dispatcher = dispatcher
+        self._enable_enhancement = enable_enhancement
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         # When True, the runner stops claiming new jobs but keeps
@@ -68,16 +76,29 @@ class IndexingRunner:
         self._thread = threading.Thread(
             target=self._loop,
             name="search-sidecar-index-runner",
-            daemon=True,
+            daemon=False,
         )
         self._thread.start()
 
-    def stop(self, *, timeout: float = 5.0) -> None:
+    def stop(self, *, timeout: Optional[float] = None) -> bool:
+        """Request shutdown and wait for the current job to finish.
+
+        The runner never interrupts an in-flight processor call. This
+        matters for native OCR libraries: exiting Python while Paddle
+        is initializing in a daemon thread can surface as a macOS
+        "Python quit unexpectedly" crash report. Returning ``False``
+        means the caller's timeout elapsed and the runner is still
+        draining the active job.
+        """
         self._stop.set()
         thread = self._thread
-        if thread is not None:
-            thread.join(timeout=timeout)
-        self._thread = None
+        if thread is None:
+            return True
+        thread.join(timeout=timeout)
+        stopped = not thread.is_alive()
+        if stopped:
+            self._thread = None
+        return stopped
 
     def process_one(self) -> bool:
         """Run a single dispatch tick. Returns ``True`` if a job was
@@ -89,10 +110,12 @@ class IndexingRunner:
         if self._paused.is_set():
             return False
         job = self._queue.claim_next()
-        if job is None:
-            return False
-        self._handle(job)
-        return True
+        if job is not None:
+            self._handle(job)
+            return True
+        if self._try_process_enhancement():
+            return True
+        return False
 
     # ----- internals ----------------------------------------------------
 
@@ -106,6 +129,30 @@ class IndexingRunner:
             if not processed:
                 # Idle wait — Event.wait so stop() is responsive.
                 self._stop.wait(IDLE_POLL_INTERVAL_SECONDS)
+
+    def _try_process_enhancement(self) -> bool:
+        if not self._enable_enhancement:
+            return False
+        image_processor = self._dispatcher.image_processor
+        if not image_processor.has_advanced_ocr():
+            return False
+        result = self._queue.claim_next_enhancement()
+        if result is None:
+            return False
+        job, claim_seq = result
+        try:
+            image_processor.process_enhancement(job, claim_seq)
+        except EnhancementTransientError:
+            LOG.info("advanced-OCR enhancement transient failure for %s", job.node_id)
+        except Exception as err:
+            LOG.warning(
+                "advanced-OCR enhancement failed for %s (%s): %s",
+                job.node_id,
+                job.kind,
+                err,
+            )
+            self._queue.mark_enhancement_failed(job.node_id)
+        return True
 
     def _handle(self, job: IndexingJob) -> None:
         proc = self._dispatcher.find(job)

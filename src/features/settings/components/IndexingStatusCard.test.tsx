@@ -13,6 +13,18 @@ function ready(data: IndexStatus): SidecarEnvelope<IndexStatus> {
   return { state: "ready", data };
 }
 
+function status(overrides: Partial<IndexStatus> = {}): IndexStatus {
+  return {
+    queueDepth: 0,
+    inFlight: [],
+    indexedChunks: 0,
+    enhancementPending: 0,
+    enhancementFailed: 0,
+    enhancementTotalImages: 0,
+    ...overrides,
+  };
+}
+
 describe("IndexingStatusCard", () => {
   it("shows a loading hint while the envelope is null", () => {
     render(<IndexingStatusCard envelope={null} />);
@@ -22,7 +34,9 @@ describe("IndexingStatusCard", () => {
   it("renders queue depth, in-flight count, and indexed chunk count", () => {
     render(
       <IndexingStatusCard
-        envelope={ready({ queueDepth: 4, inFlight: ["a", "b"], indexedChunks: 87 })}
+        envelope={ready(
+          status({ queueDepth: 4, inFlight: ["a", "b"], indexedChunks: 87 })
+        )}
       />
     );
     // Three stat cells in the same DOM all rendering numbers — query
@@ -41,7 +55,7 @@ describe("IndexingStatusCard", () => {
   it("shows an idle hint when both queue and in-flight are empty", () => {
     render(
       <IndexingStatusCard
-        envelope={ready({ queueDepth: 0, inFlight: [], indexedChunks: 12 })}
+        envelope={ready(status({ queueDepth: 0, inFlight: [], indexedChunks: 12 }))}
       />
     );
     expect(screen.getByText(/idle/i)).toBeInTheDocument();
@@ -50,7 +64,7 @@ describe("IndexingStatusCard", () => {
   it("pluralises the working hint correctly", () => {
     render(
       <IndexingStatusCard
-        envelope={ready({ queueDepth: 1, inFlight: [], indexedChunks: 0 })}
+        envelope={ready(status({ queueDepth: 1, inFlight: [], indexedChunks: 0 }))}
       />
     );
     expect(screen.getByText(/1 pending node\b/i)).toBeInTheDocument();

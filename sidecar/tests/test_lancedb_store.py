@@ -77,6 +77,73 @@ def test_delete_by_node_id_removes_all_chunks(tmp_path: Path):
     assert store.list_node_ids() == {"node-b"}
 
 
+def test_delete_chunks_by_role_preserves_summary(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    store.upsert(
+        [
+            _make_chunk("node-a", idx=0, text="body 0", role="body"),
+            _make_chunk("node-a", idx=1, text="body 1", role="body"),
+            _make_chunk("node-a", idx=2, text="body 2", role="body"),
+            NodeChunk(
+                id="node-a:summary:0",
+                node_id="node-a",
+                kind="file",
+                name="img",
+                text="caption",
+                vector=[0.0] * EMBEDDING_DIMENSION,
+                role="summary",
+            ),
+        ]
+    )
+    store.delete_chunks_by_role("node-a", "body")
+    rows = store.scan("node-a")
+    assert len(rows) == 1
+    assert role_or_default(rows[0]) == "summary"
+    assert rows[0]["text"] == "caption"
+
+
+def test_delete_chunks_by_role_is_noop_for_missing_role(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    store.upsert([_make_chunk("node-a", idx=0, role="body")])
+    store.delete_chunks_by_role("node-a", "summary")
+    assert store.count() == 1
+
+
+def test_delete_chunks_by_role_does_not_touch_other_nodes(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    store.upsert(
+        [
+            _make_chunk("node-a", idx=0, role="body"),
+            _make_chunk("node-b", idx=0, role="body"),
+        ]
+    )
+    store.delete_chunks_by_role("node-a", "body")
+    assert store.list_node_ids() == {"node-b"}
+
+
+def test_delete_chunks_by_role_escapes_node_id(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    bad_id = "x' OR 1=1; --"
+    store.upsert(
+        [
+            NodeChunk(
+                id=f"{bad_id}:0",
+                node_id=bad_id,
+                kind="file",
+                name="bad",
+                text="bad body",
+                vector=[0.0] * EMBEDDING_DIMENSION,
+                role="body",
+            ),
+            _make_chunk("node-b", idx=0, role="body"),
+        ]
+    )
+    store.delete_chunks_by_role(bad_id, "body")
+    rows = store.scan("node-b")
+    assert len(rows) == 1
+    assert store.list_node_ids() == {"node-b"}
+
+
 def test_delete_by_node_ids_handles_empty_input(tmp_path: Path):
     store = open_store(tmp_path / "index.lance")
     store.upsert([_make_chunk("node-a")])

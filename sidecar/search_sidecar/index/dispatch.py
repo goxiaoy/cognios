@@ -21,7 +21,7 @@ from .processors.image import (
 from .processors.pdf import PdfProcessor
 from .processors.text import TextProcessor
 from .processors.url_cache import URLCacheProcessor
-from .queue import IndexingJob
+from .queue import IndexingJob, IndexingQueue
 
 
 class Processor(Protocol):
@@ -41,20 +41,23 @@ class Dispatcher:
         *,
         store: LanceDBStore,
         embedder: Embedder,
+        queue: IndexingQueue | None = None,
         ocr_extract: OcrExtract | None = None,
         caption_extract: CaptionExtract | None = None,
         advanced_ocr_extract: AdvancedOcrExtract | None = None,
     ) -> None:
+        self.image_processor = ImageProcessor(
+            store,
+            embedder,
+            queue=queue,
+            ocr_extract=ocr_extract,
+            caption_extract=caption_extract,
+            advanced_ocr_extract=advanced_ocr_extract,
+        )
         self._processors: list[Processor] = [
             TextProcessor(store, embedder),
             PdfProcessor(store, embedder),
-            ImageProcessor(
-                store,
-                embedder,
-                ocr_extract=ocr_extract,
-                caption_extract=caption_extract,
-                advanced_ocr_extract=advanced_ocr_extract,
-            ),
+            self.image_processor,
             URLCacheProcessor(store, embedder),
         ]
 

@@ -8,7 +8,6 @@ from __future__ import annotations
 from unittest import mock
 
 import search_sidecar.extract.factory as factory
-from search_sidecar.extract.cloud_vision import OpenAICompatVisionClient
 from search_sidecar.extract.factory import (
     select_caption_extractor,
     select_ocr_extractor,
@@ -54,28 +53,22 @@ def test_ocr_returns_none_when_provider_lacks_ocr_capability():
     assert select_ocr_extractor(s) is None
 
 
-def test_ocr_returns_cloud_extractor_for_openai_binding():
+def test_ocr_returns_none_for_openai_binding():
     s = _settings_with(
         features={"image-ocr": FeatureConfig(enabled=True, provider_id="openai")},
         providers={"openai": ProviderConfig(provider_id="openai")},
     )
-    extractor = select_ocr_extractor(s)
-    assert extractor is not None
-    # The extractor is OpenAICompatVisionClient.extract_ocr — bound method.
-    assert getattr(extractor, "__self__", None).__class__ is OpenAICompatVisionClient
-    assert extractor.__name__ == "extract_ocr"
+    assert select_ocr_extractor(s) is None
 
 
-def test_ocr_returns_cloud_extractor_for_qwen_dashscope_binding():
+def test_ocr_returns_none_for_qwen_dashscope_binding():
     s = _settings_with(
         features={
             "image-ocr": FeatureConfig(enabled=True, provider_id="qwen-dashscope")
         },
         providers={"qwen-dashscope": ProviderConfig(provider_id="qwen-dashscope")},
     )
-    extractor = select_ocr_extractor(s)
-    assert extractor is not None
-    assert extractor.__name__ == "extract_ocr"
+    assert select_ocr_extractor(s) is None
 
 
 def test_ocr_local_path_skips_when_extra_missing():

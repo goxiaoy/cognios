@@ -4,11 +4,9 @@ Three parallel selectors, one per feature, mirroring the embedder /
 reranker factory pattern:
 
 - :func:`select_ocr_extractor` reads ``settings.features["image-ocr"]``
-  and returns either a :class:`RapidOcrExtractor` (local), a bound
-  method on :class:`OpenAICompatVisionClient` (cloud), or ``None``
-  when the feature is disabled / unbound / unsupported. ``None`` is
-  the signal to ImageProcessor that body chunks won't be produced
-  for images.
+  and returns a :class:`RapidOcrExtractor` for ``local-paddleocr`` or
+  ``None`` when disabled / unbound / unsupported. Cloud OCR bindings
+  flow through ``advanced-ocr`` only.
 - :func:`select_caption_extractor` does the same for
   ``settings.features["image-captioning"]``. v1 ships cloud-only
   captioning; binding to a local provider currently logs and returns
@@ -63,10 +61,7 @@ def select_ocr_extractor(
 
     Routes by ``settings.features["image-ocr"].provider_id``:
 
-    - cloud preset with ``ocr`` capability → the matching method on
-      a fresh :class:`OpenAICompatVisionClient`
-    - local-paddleocr (or any local preset with ``ocr``) → a fresh
-      :class:`RapidOcrExtractor`
+    - local-paddleocr → a fresh :class:`RapidOcrExtractor`
     - any other condition (feature disabled, unbound, unknown
       provider, missing extra) → ``None``
     """
@@ -84,12 +79,13 @@ def select_ocr_extractor(
             feature.provider_id,
         )
         return None
-    if preset.provider_type == "cloud":
-        client = _build_cloud_client(preset, settings, capability="ocr")
-        if client is None:
-            return None
-        LOG.info("OCR extractor: cloud provider %s", preset.provider_id)
-        return client.extract_ocr
+    if feature.provider_id != "local-paddleocr":
+        LOG.error(
+            "settings_error feature=image-ocr provider=%r code=invalid_image_ocr_provider "
+            "image-ocr must stay bound to local-paddleocr; cloud OCR uses advanced-ocr",
+            feature.provider_id,
+        )
+        return None
     # Local OCR: only the rapidocr-backed extractor in v1.
     # ``rapidocr-onnxruntime`` is part of the main package, but the
     # check stays as a defensive net for broken venvs / missing

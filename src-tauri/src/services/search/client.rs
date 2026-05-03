@@ -187,6 +187,17 @@ pub struct IndexStatusDto {
     pub queue_depth: u64,
     pub in_flight: Vec<String>,
     pub indexed_chunks: u64,
+    #[serde(default)]
+    pub enhancement_pending: u64,
+    #[serde(default)]
+    pub enhancement_failed: u64,
+    #[serde(default)]
+    pub enhancement_total_images: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackfillResultDto {
+    pub flagged: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -532,6 +543,13 @@ impl SearchSidecarClient {
         self.get_envelope("/index/status").await
     }
 
+    pub async fn backfill_advanced_ocr_enhancement(
+        &self,
+    ) -> SidecarEnvelope<BackfillResultDto> {
+        self.post_envelope("/index/backfill-enhancement", &serde_json::json!({}))
+            .await
+    }
+
     pub async fn index_snapshot(&self) -> SidecarEnvelope<IndexSnapshotDto> {
         self.get_envelope("/index/snapshot").await
     }
@@ -827,12 +845,22 @@ mod tests {
 
     #[test]
     fn index_status_round_trips_snake_to_camel() {
-        let from_python = r#"{"queue_depth": 3, "in_flight": ["a"], "indexed_chunks": 100}"#;
+        let from_python = r#"{
+            "queue_depth": 3,
+            "in_flight": ["a"],
+            "indexed_chunks": 100,
+            "enhancement_pending": 4,
+            "enhancement_failed": 1,
+            "enhancement_total_images": 10
+        }"#;
         let parsed: IndexStatusDto = serde_json::from_str(from_python).expect("decode");
         assert_eq!(parsed.queue_depth, 3);
+        assert_eq!(parsed.enhancement_pending, 4);
         let to_ts = serde_json::to_value(&parsed).unwrap();
         assert_eq!(to_ts["queueDepth"], 3);
         assert_eq!(to_ts["indexedChunks"], 100);
+        assert_eq!(to_ts["enhancementPending"], 4);
+        assert_eq!(to_ts["enhancementTotalImages"], 10);
     }
 
     #[test]

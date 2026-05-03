@@ -56,6 +56,9 @@ export interface IndexStatus {
   queueDepth: number;
   inFlight: string[];
   indexedChunks: number;
+  enhancementPending: number;
+  enhancementFailed: number;
+  enhancementTotalImages: number;
 }
 
 export type NodeIndexState =

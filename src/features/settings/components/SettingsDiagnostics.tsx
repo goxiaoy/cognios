@@ -35,6 +35,12 @@ export function SettingsDiagnostics({
     indexing && indexing.state === "ready" && indexing.data
       ? indexing.data
       : null;
+  const hasAdvancedOcrReady = modelData
+    ? Object.values(modelData.roles).some(
+        (role) => role.role.startsWith("advanced-ocr-") && role.state === "ready",
+      )
+    : false;
+  const enhancement = getEnhancementDisplay(indexData, hasAdvancedOcrReady);
 
   return (
     <section className="settings-diag" aria-label="Diagnostics summary">
@@ -89,6 +95,22 @@ export function SettingsDiagnostics({
           <div className="v">{indexData ? indexData.inFlight.length : "—"}</div>
           <div className="sub">jobs running</div>
         </div>
+
+        {enhancement ? (
+          <div className="settings-diag-cell">
+            <div className="k">Image OCR enhancement</div>
+            <div className="v">{enhancement.value}</div>
+            <div className="sub">{enhancement.subLabel}</div>
+            {enhancement.failedLabel ? (
+              <div className="sub is-warning">{enhancement.failedLabel}</div>
+            ) : null}
+            {enhancement.percent !== null ? (
+              <div className="bar">
+                <i style={{ width: `${enhancement.percent}%` }} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -101,4 +123,46 @@ function countConfigured(settings: SearchSettings): number {
       ? count + 1
       : count;
   }, 0);
+}
+
+function getEnhancementDisplay(
+  indexData: IndexStatus | null,
+  hasAdvancedOcrReady: boolean,
+):
+  | {
+      value: string;
+      subLabel: string;
+      failedLabel: string | null;
+      percent: number | null;
+    }
+  | null {
+  if (!hasAdvancedOcrReady) return null;
+  if (!indexData) {
+    return {
+      value: "—",
+      subLabel: "loading…",
+      failedLabel: null,
+      percent: null,
+    };
+  }
+  const total = indexData.enhancementTotalImages;
+  if (total === 0) return null;
+  const pending = indexData.enhancementPending;
+  const failed = indexData.enhancementFailed;
+  const completed = Math.max(total - pending - failed, 0);
+  const percent = total > 0 ? (completed / total) * 100 : 0;
+  if (pending > 0) {
+    return {
+      value: `${completed} / ${total}`,
+      subLabel: `${pending} remaining`,
+      failedLabel: failed > 0 ? `${failed} failed` : null,
+      percent,
+    };
+  }
+  return {
+    value: `${completed} / ${total}`,
+    subLabel: failed > 0 ? `complete with ${failed} failed` : "complete",
+    failedLabel: null,
+    percent: 100,
+  };
 }

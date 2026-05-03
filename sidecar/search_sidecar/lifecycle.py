@@ -20,6 +20,7 @@ is rejected by the bearer middleware.
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import threading
 import time
@@ -37,6 +38,7 @@ from .extract import (
 )
 from .index import IndexingRunner
 from .index.dispatch import Dispatcher
+from .index.processors.image import SUPPORTED_EXTENSIONS
 from .index.queue import open_queue
 from .models import DEFAULTS, ModelManager
 from .rerank import select_reranker
@@ -58,6 +60,8 @@ LOG = logging.getLogger("search_sidecar.lifecycle")
 
 STARTUP_DEADLINE_SECONDS = 30.0
 STARTUP_POLL_INTERVAL_SECONDS = 0.05
+ADVANCED_OCR_AUTORUN_ENV = "COGNIOS_ADVANCED_OCR_AUTORUN"
+_FALSE_ENV_VALUES = {"0", "false", "no", "off"}
 
 
 def prepare_search_dir(storage_dir: Path) -> Path:
@@ -135,11 +139,22 @@ def serve(storage_dir: Path) -> int:
     dispatcher = Dispatcher(
         store=lancedb_store,
         embedder=embedder,
+        queue=indexing_queue,
         ocr_extract=ocr_extract,
         caption_extract=caption_extract,
         advanced_ocr_extract=advanced_ocr_extract,
     )
-    indexing_runner = IndexingRunner(queue=indexing_queue, dispatcher=dispatcher)
+    advanced_ocr_autorun = advanced_ocr_autorun_enabled()
+    _run_advanced_ocr_backfill_on_boot(
+        indexing_queue,
+        dispatcher,
+        enabled=advanced_ocr_autorun,
+    )
+    indexing_runner = IndexingRunner(
+        queue=indexing_queue,
+        dispatcher=dispatcher,
+        enable_enhancement=advanced_ocr_autorun,
+    )
     indexing_runner.start()
     reranker = select_reranker(model_manager=model_manager, settings=settings)
     if reranker is not None:
@@ -216,6 +231,7 @@ def serve(storage_dir: Path) -> int:
     try:
         server_thread.join()
     finally:
+        LOG.info("search-sidecar shutdown requested; waiting for indexing runner")
         indexing_runner.stop()
         indexing_queue.close()
         remove_runtime_file(runtime_path)
@@ -235,6 +251,35 @@ def _run_reembed_sweep(store, embedder) -> None:  # type: ignore[no-untyped-def]
         reembed_stale_chunks(store, embedder)
     except Exception as err:
         LOG.warning("re-embed sweep crashed: %s", err)
+
+
+def advanced_ocr_autorun_enabled() -> bool:
+    """Whether the background runner may auto-drain advanced OCR work."""
+    value = os.environ.get(ADVANCED_OCR_AUTORUN_ENV, "1").strip().lower()
+    return value not in _FALSE_ENV_VALUES
+
+
+def _run_advanced_ocr_backfill_on_boot(
+    queue,
+    dispatcher,
+    *,
+    enabled: bool = True,
+) -> None:  # type: ignore[no-untyped-def]
+    """Flag indexed images when advanced OCR is already available at boot."""
+    if not enabled:
+        LOG.info("advanced-OCR boot backfill skipped: autorun disabled")
+        return
+    try:
+        image_processor = getattr(dispatcher, "image_processor", None)
+        if image_processor is None or not image_processor.has_advanced_ocr():
+            return
+        flagged = queue.backfill_enhancement_pending(SUPPORTED_EXTENSIONS)
+        LOG.info(
+            "advanced-OCR boot backfill flagged %d indexed image(s)",
+            flagged,
+        )
+    except Exception as err:
+        LOG.warning("advanced-OCR boot backfill failed: %s", err)
 
 
 def _read_bound_port(server: uvicorn.Server) -> int | None:

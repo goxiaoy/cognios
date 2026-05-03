@@ -196,6 +196,21 @@ class LanceDBStore:
         """
         self._table.delete(f"node_id = '{_quote(node_id)}'")
 
+    def delete_chunks_by_role(
+        self, node_id: str, role: Literal["body", "summary"]
+    ) -> None:
+        """Remove only one role for a node.
+
+        Prefer this during image-OCR enhancement, where advanced OCR
+        replaces body chunks while preserving summary/caption chunks.
+        Use :meth:`delete_by_node_id` for a full node re-index.
+        """
+        if role not in ROLE_VALUES:
+            raise ValueError(f"role {role!r} not in {sorted(ROLE_VALUES)!r}")
+        self._table.delete(
+            f"node_id = '{_quote(node_id)}' AND role = '{_quote(role)}'"
+        )
+
     def delete_by_node_ids(self, node_ids: Iterable[str]) -> None:
         ids = [i for i in node_ids if i]
         if not ids:

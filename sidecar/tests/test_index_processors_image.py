@@ -13,12 +13,22 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 import pytest
 
 from search_sidecar.index.dispatch import Dispatcher
 from search_sidecar.index.embedder import StubEmbedder
-from search_sidecar.index.processors.image import ImageProcessor
-from search_sidecar.index.queue import IndexingJob, JobState
+from search_sidecar.index.processors.image import (
+    EnhancementTransientError,
+    ImageProcessor,
+    _classify_enhancement_error,
+)
+from search_sidecar.index.queue import (
+    MAX_ENHANCEMENT_ATTEMPTS,
+    IndexingJob,
+    JobState,
+    open_queue,
+)
 from search_sidecar.storage import open_store, role_or_default
 
 UUID_A = "11111111-1111-1111-1111-111111111111"
@@ -40,6 +50,36 @@ def _make_job(path: Path, *, node_id: str = UUID_A) -> IndexingJob:
         created_at=now,
         modified_at=now,
     )
+
+
+def _claim_image_job(queue, path: Path, *, node_id: str = UUID_A) -> IndexingJob:
+    queue.enqueue(
+        node_id=node_id,
+        kind="file",
+        name=path.name,
+        absolute_content_path=str(path),
+    )
+    job = queue.claim_next()
+    assert job is not None
+    return job
+
+
+def _enhancement_state(queue, node_id: str = UUID_A) -> tuple[int, int, int]:
+    row = queue._conn.execute(
+        """
+        SELECT enhancement_pending, enhancement_attempts, enhancement_failed
+        FROM jobs WHERE node_id = ?
+        """,
+        (node_id,),
+    ).fetchone()
+    assert row is not None
+    return tuple(row)
+
+
+def _http_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://example.test/v1")
+    response = httpx.Response(status, request=request)
+    return httpx.HTTPStatusError("boom", request=request, response=response)
 
 
 @pytest.fixture
@@ -278,6 +318,256 @@ def test_process_returns_zero_when_all_extractors_yield_empty(
     img.write_bytes(b"")
     assert proc.process(_make_job(img)) == 0
     assert store.count() == 0
+
+
+def test_basic_pass_flags_for_enhancement_when_body_non_empty(
+    store, tmp_path: Path
+):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        img = tmp_path / "x.png"
+        img.write_bytes(b"")
+        job = _claim_image_job(queue, img)
+        proc = ImageProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            ocr_extract=lambda _p: "basic text",
+            advanced_ocr_extract=lambda _p: "advanced text",
+        )
+        proc.process(job)
+        queue.mark_indexed(job.node_id)
+        assert queue.claim_next_enhancement() is not None
+    finally:
+        queue.close()
+
+
+def test_basic_pass_does_not_flag_empty_body_or_missing_advanced(
+    store, tmp_path: Path
+):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        img = tmp_path / "x.png"
+        img.write_bytes(b"")
+        job = _claim_image_job(queue, img)
+        proc = ImageProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            ocr_extract=lambda _p: "",
+            advanced_ocr_extract=lambda _p: "advanced text",
+        )
+        proc.process(job)
+        queue.mark_indexed(job.node_id)
+        assert queue.claim_next_enhancement() is None
+
+        job2 = _claim_image_job(queue, img, node_id=UUID_A.replace("1", "2", 1))
+        proc2 = ImageProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            ocr_extract=lambda _p: "basic text",
+        )
+        proc2.process(job2)
+        queue.mark_indexed(job2.node_id)
+        assert queue.claim_next_enhancement() is None
+    finally:
+        queue.close()
+
+
+def test_process_enhancement_replaces_body_and_preserves_summary(
+    store, tmp_path: Path
+):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        img = tmp_path / "x.png"
+        img.write_bytes(b"")
+        job = _claim_image_job(queue, img)
+        proc = ImageProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            ocr_extract=lambda _p: "basic OCR text",
+            caption_extract=lambda _p: "A caption that should survive.",
+            advanced_ocr_extract=lambda _p: "advanced table text",
+        )
+        proc.process(job)
+        queue.mark_indexed(job.node_id)
+        claim = queue.claim_next_enhancement()
+        assert claim is not None
+        enhancement_job, claim_seq = claim
+
+        proc.process_enhancement(enhancement_job, claim_seq)
+
+        rows = store.scan(UUID_A)
+        body = [r for r in rows if role_or_default(r) == "body"]
+        summary = [r for r in rows if role_or_default(r) == "summary"]
+        assert len(body) == 1
+        assert "advanced table text" in body[0]["text"]
+        assert len(summary) == 1
+        assert "caption" in summary[0]["text"]
+        assert _enhancement_state(queue) == (0, 0, 0)
+    finally:
+        queue.close()
+
+
+def test_process_enhancement_empty_after_chunking_keeps_basic(
+    store, tmp_path: Path
+):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        img = tmp_path / "x.png"
+        img.write_bytes(b"")
+        job = _claim_image_job(queue, img)
+        proc = ImageProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            ocr_extract=lambda _p: "basic OCR text",
+            advanced_ocr_extract=lambda _p: "-",
+        )
+        proc.process(job)
+        queue.mark_indexed(job.node_id)
+        claim = queue.claim_next_enhancement()
+        assert claim is not None
+        proc.process_enhancement(*claim)
+
+        rows = store.scan(UUID_A)
+        assert "basic OCR text" in " ".join(r["text"] for r in rows)
+        assert _enhancement_state(queue) == (0, 0, 0)
+    finally:
+        queue.close()
+
+
+def test_process_enhancement_transient_error_bumps_attempts(
+    store, tmp_path: Path
+):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        img = tmp_path / "x.png"
+        img.write_bytes(b"")
+        job = _claim_image_job(queue, img)
+        queue.mark_indexed(job.node_id)
+        queue.set_enhancement_pending(job.node_id)
+        claim = queue.claim_next_enhancement()
+        assert claim is not None
+
+        def raise_429(_p: Path) -> str:
+            raise _http_error(429)
+
+        proc = ImageProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            advanced_ocr_extract=raise_429,
+        )
+        with pytest.raises(EnhancementTransientError):
+            proc.process_enhancement(*claim)
+        assert _enhancement_state(queue) == (1, 1, 0)
+    finally:
+        queue.close()
+
+
+def test_process_enhancement_transient_cap_exhaustion_marks_failed(
+    store, tmp_path: Path
+):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        img = tmp_path / "x.png"
+        img.write_bytes(b"")
+        job = _claim_image_job(queue, img)
+        queue.mark_indexed(job.node_id)
+        queue.set_enhancement_pending(job.node_id)
+        for _ in range(MAX_ENHANCEMENT_ATTEMPTS - 1):
+            queue.bump_enhancement_attempts(job.node_id)
+        claim = queue.claim_next_enhancement()
+        assert claim is not None
+
+        proc = ImageProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            advanced_ocr_extract=lambda _p: (_ for _ in ()).throw(_http_error(429)),
+        )
+        proc.process_enhancement(*claim)
+        assert _enhancement_state(queue) == (0, MAX_ENHANCEMENT_ATTEMPTS, 1)
+    finally:
+        queue.close()
+
+
+def test_process_enhancement_terminal_error_marks_failed_once(
+    store, tmp_path: Path
+):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        img = tmp_path / "x.png"
+        img.write_bytes(b"")
+        job = _claim_image_job(queue, img)
+        queue.mark_indexed(job.node_id)
+        queue.set_enhancement_pending(job.node_id)
+        claim = queue.claim_next_enhancement()
+        assert claim is not None
+
+        proc = ImageProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            advanced_ocr_extract=lambda _p: (_ for _ in ()).throw(_http_error(401)),
+        )
+        proc.process_enhancement(*claim)
+        assert _enhancement_state(queue) == (0, 0, 1)
+    finally:
+        queue.close()
+
+
+def test_process_enhancement_transition_seq_race_wipes_store(
+    store, tmp_path: Path
+):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        img = tmp_path / "x.png"
+        img.write_bytes(b"")
+        job = _claim_image_job(queue, img)
+        proc = ImageProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            ocr_extract=lambda _p: "basic OCR text",
+            advanced_ocr_extract=lambda _p: "advanced stale text",
+        )
+        proc.process(job)
+        queue.mark_indexed(job.node_id)
+        claim = queue.claim_next_enhancement()
+        assert claim is not None
+        enhancement_job, claim_seq = claim
+
+        def reenqueue_then_extract(_p: Path) -> str:
+            queue.enqueue(
+                node_id=job.node_id,
+                kind="file",
+                name=img.name,
+                absolute_content_path=str(img),
+            )
+            return "advanced stale text"
+
+        proc_racy = ImageProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            advanced_ocr_extract=reenqueue_then_extract,
+        )
+        proc_racy.process_enhancement(enhancement_job, claim_seq)
+        assert store.scan(UUID_A) == []
+        assert queue.get(UUID_A).state == JobState.PENDING
+    finally:
+        queue.close()
+
+
+def test_classify_enhancement_errors():
+    assert _classify_enhancement_error(_http_error(429)) == "transient"
+    assert _classify_enhancement_error(_http_error(503)) == "transient"
+    assert _classify_enhancement_error(_http_error(401)) == "terminal"
+    assert _classify_enhancement_error(RuntimeError("paddleocr crashed")) == "terminal"
 
 
 def test_process_replaces_previous_chunks_on_re_index(store, tmp_path: Path):

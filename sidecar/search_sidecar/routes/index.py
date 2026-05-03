@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
+from ..index.processors.image import SUPPORTED_EXTENSIONS
 from ..index.queue import IndexingQueue, JobState
 from ..storage import LanceDBStore, role_or_default
 
@@ -39,7 +40,20 @@ def get_index_status(request: Request) -> dict:
         "queue_depth": queue.queue_depth(),
         "in_flight": queue.in_flight_node_ids(),
         "indexed_chunks": store.count() if store is not None else 0,
+        "enhancement_pending": queue.count_enhancement_pending(),
+        "enhancement_failed": queue.count_enhancement_failed(),
+        "enhancement_total_images": queue.count_enhancement_eligible_total(
+            SUPPORTED_EXTENSIONS
+        ),
     }
+
+
+@router.post("/backfill-enhancement")
+def post_backfill_enhancement(request: Request) -> dict:
+    """Flag indexed image rows for advanced-OCR enhancement."""
+    queue = _get_queue(request)
+    flagged = queue.backfill_enhancement_pending(SUPPORTED_EXTENSIONS)
+    return {"flagged": flagged}
 
 
 @router.get("/status/{node_id}")

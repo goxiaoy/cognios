@@ -15,7 +15,10 @@ Schema::
       attempts              INTEGER NOT NULL DEFAULT 0,
       created_at            TEXT NOT NULL,
       modified_at           TEXT NOT NULL,
-      transition_seq        INTEGER NOT NULL DEFAULT 0
+      transition_seq        INTEGER NOT NULL DEFAULT 0,
+      enhancement_pending   INTEGER NOT NULL DEFAULT 0,
+      enhancement_attempts  INTEGER NOT NULL DEFAULT 0,
+      enhancement_failed    INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX idx_jobs_state ON jobs(state);
     CREATE INDEX idx_jobs_transition_seq ON jobs(transition_seq);
@@ -25,6 +28,17 @@ on every state mutation. Rust polls ``GET /index/changes?since=<n>``
 to learn which nodes' states have changed since its last poll —
 the cost is proportional to the change rate, not the corpus size,
 which is the property the snapshot endpoint lacks at scale.
+
+The ``enhancement_*`` columns power the two-pass image OCR flow.
+The basic OCR pass runs on every image and lands chunks fast; the
+slow advanced OCR pass (PP-StructureV3) runs as a background
+enhancement that replaces only the body chunks. ``enhancement_pending``
+is the runner's claim filter; ``enhancement_attempts`` caps transient
+retries; ``enhancement_failed`` is a sticky terminal sentinel that
+prevents the cap-exhausted row from being re-flagged by the next
+backfill (so the diagnostics counter can distinguish "enhanced" from
+"gave up"). Only ``enqueue`` (file mod) and the user-triggered
+Reindex action clear the failed bit.
 
 Concurrency model: a single :class:`IndexingQueue` is shared by the
 FastAPI request handlers (which call :meth:`enqueue`) and the runner
@@ -65,6 +79,15 @@ from pathlib import Path
 from typing import Optional
 
 LOG = logging.getLogger("search_sidecar.index.queue")
+
+
+# Bounded retry for transient errors during the advanced-OCR
+# enhancement pass (cloud rate limits, network blips, etc.). Once a
+# row reaches this many transient failures, the runner promotes the
+# failure to terminal and sets ``enhancement_failed=1``; the row is
+# then ineligible for both ``claim_next_enhancement`` and the
+# backfill IPC until the user triggers a reindex.
+MAX_ENHANCEMENT_ATTEMPTS = 3
 
 
 class JobState(str, Enum):
@@ -129,6 +152,12 @@ class IndexingQueue:
         If a row already exists (any state), it is reset to ``pending``
         so the runner re-processes it. ``attempts`` is preserved; the
         caller can use it to detect runaway retries.
+
+        The enhancement bookkeeping (``enhancement_pending``,
+        ``enhancement_attempts``, ``enhancement_failed``) is reset to
+        zero on every revive — a file modification or user-triggered
+        reindex re-runs the full two-pass flow from scratch, including
+        re-arming a previously cap-exhausted row.
         """
         now_str = _now_iso()
         ca = (created_at or _now()).astimezone(timezone.utc).isoformat()
@@ -140,8 +169,9 @@ class IndexingQueue:
                 INSERT INTO jobs (
                     node_id, kind, name, absolute_content_path, mount_id,
                     state, enqueued_at, attempts, created_at, modified_at,
-                    transition_seq
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                    transition_seq, enhancement_pending,
+                    enhancement_attempts, enhancement_failed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, 0, 0)
                 ON CONFLICT(node_id) DO UPDATE SET
                     kind = excluded.kind,
                     name = excluded.name,
@@ -152,7 +182,10 @@ class IndexingQueue:
                     last_error = NULL,
                     indexed_at = NULL,
                     modified_at = excluded.modified_at,
-                    transition_seq = excluded.transition_seq
+                    transition_seq = excluded.transition_seq,
+                    enhancement_pending = 0,
+                    enhancement_attempts = 0,
+                    enhancement_failed = 0
                 """,
                 (
                     node_id,
@@ -238,6 +271,269 @@ class IndexingQueue:
                 """,
                 (JobState.ERROR.value, truncated, seq, node_id),
             )
+
+    # ----- enhancement (two-pass image OCR) ----------------------------
+
+    def claim_next_enhancement(
+        self,
+    ) -> tuple[IndexingJob, int] | None:
+        """Pick the oldest indexed image that's flagged for enhancement.
+
+        Filters: ``state='indexed' AND enhancement_pending=1 AND
+        enhancement_failed=0 AND enhancement_attempts <
+        MAX_ENHANCEMENT_ATTEMPTS``. Does NOT mutate state — the row
+        stays ``indexed`` while the enhancement runs (the basic chunks
+        are still there and still searchable). The caller passes the
+        returned ``claim_seq`` (current ``transition_seq``) back into
+        ``peek_transition_seq`` AFTER the lance write to detect a
+        mid-flight re-enqueue.
+
+        Returns ``None`` when no enhancement work is available.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT * FROM jobs
+                WHERE state = ?
+                  AND enhancement_pending = 1
+                  AND enhancement_failed = 0
+                  AND enhancement_attempts < ?
+                ORDER BY indexed_at ASC
+                LIMIT 1
+                """,
+                (JobState.INDEXED.value, MAX_ENHANCEMENT_ATTEMPTS),
+            ).fetchone()
+        if row is None:
+            return None
+        return _row_to_job(dict(row)), int(row["transition_seq"])
+
+    def set_enhancement_pending(self, node_id: str) -> None:
+        """Idempotent: flag a row for advanced-OCR enhancement.
+
+        Refuses to flag rows that are terminally failed
+        (``enhancement_failed=1``) — only ``enqueue`` (file mod) or the
+        Reindex action clears that bit. This keeps a basic-pass
+        completion handler from accidentally re-arming a row the
+        runner has already given up on.
+
+        The basic pass calls this while the runner still has the row
+        in ``state='indexing'``; ``claim_next_enhancement`` still
+        requires ``state='indexed'`` so the row only becomes drainable
+        after the runner records basic-pass success.
+        """
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                UPDATE jobs
+                SET enhancement_pending = 1
+                WHERE node_id = ?
+                  AND enhancement_failed = 0
+                """,
+                (node_id,),
+            )
+
+    def clear_enhancement_pending(self, node_id: str) -> None:
+        """Drop the enhancement flag (success or empty result).
+
+        No-op for rows that are already cleared; safe to call
+        defensively after every code path in ``process_enhancement``.
+        Does NOT touch ``enhancement_attempts`` or
+        ``enhancement_failed`` — those are owned by their own helpers.
+        """
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE jobs SET enhancement_pending = 0 WHERE node_id = ?",
+                (node_id,),
+            )
+
+    def mark_enhancement_failed(self, node_id: str) -> None:
+        """Sticky terminal failure: clears pending + sets failed.
+
+        Distinguishes "tried and gave up" from "haven't tried yet" —
+        the diagnostics counter and the backfill predicate both rely
+        on this distinction. Cleared only by ``enqueue`` (which
+        zeroes all three columns on revive).
+        """
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                UPDATE jobs
+                SET enhancement_pending = 0, enhancement_failed = 1
+                WHERE node_id = ?
+                """,
+                (node_id,),
+            )
+
+    def bump_enhancement_attempts(self, node_id: str) -> int:
+        """Increment ``enhancement_attempts`` after a transient error.
+
+        Returns the new attempt count so the caller can decide whether
+        to keep retrying or promote to terminal. Leaves
+        ``enhancement_pending=1`` so the runner re-claims on the next
+        tick (or after a sleep — caller's choice).
+        """
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                UPDATE jobs
+                SET enhancement_attempts = enhancement_attempts + 1
+                WHERE node_id = ?
+                """,
+                (node_id,),
+            )
+            row = self._conn.execute(
+                "SELECT enhancement_attempts FROM jobs WHERE node_id = ?",
+                (node_id,),
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def peek_transition_seq(self, node_id: str) -> int | None:
+        """Read the row's current ``transition_seq`` under the queue lock.
+
+        Used by ``ImageProcessor.process_enhancement`` AFTER the lance
+        write to detect a mid-flight re-enqueue (file modified between
+        claim and commit). The lance store doesn't share this lock, so
+        a re-check here is the only way to catch the race; the caller
+        compares against the ``claim_seq`` returned by
+        ``claim_next_enhancement``.
+
+        Returns ``None`` when the row no longer exists (e.g., node was
+        deleted mid-flight).
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT transition_seq FROM jobs WHERE node_id = ?",
+                (node_id,),
+            ).fetchone()
+        return int(row[0]) if row is not None else None
+
+    def clear_enhancement_pending_if_transition_seq(
+        self, node_id: str, expected_seq: int
+    ) -> bool:
+        """Atomically clear pending only if ``transition_seq`` matches.
+
+        Returns ``False`` when the row disappeared or was re-enqueued
+        after enhancement claim. The caller must treat that as a stale
+        enhancement write and clean up the store.
+        """
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT transition_seq FROM jobs WHERE node_id = ?",
+                (node_id,),
+            ).fetchone()
+            if row is None or int(row[0]) != expected_seq:
+                return False
+            self._conn.execute(
+                "UPDATE jobs SET enhancement_pending = 0 WHERE node_id = ?",
+                (node_id,),
+            )
+            return True
+
+    def backfill_enhancement_pending(
+        self, image_extensions: tuple[str, ...]
+    ) -> int:
+        """Idempotent: flag every eligible indexed image for enhancement.
+
+        Called from the Rust watcher on the local-bundle ready
+        transition AND from the sidecar startup hook (cross-version
+        upgrade case). ``image_extensions`` is a tuple of suffixes
+        WITHOUT the leading dot (e.g. ``("png", "jpg", ...)``).
+
+        Predicate excludes already-pending rows AND terminally-failed
+        rows AND already-cap-exhausted rows. The exclusion of
+        ``enhancement_failed=1`` is load-bearing: without it, a watcher
+        re-trigger (e.g., sidecar restart) would replay every
+        previously-given-up row indefinitely.
+
+        Returns the number of rows newly flagged.
+        """
+        if not image_extensions:
+            return 0
+        # Build a parameterised LOWER(name) LIKE OR-chain. Doing the
+        # extension match in SQL avoids loading the entire jobs table
+        # into Python just to filter on suffixes.
+        like_clauses = " OR ".join(
+            ["LOWER(name) LIKE ?" for _ in image_extensions]
+        )
+        params: list[object] = [
+            f"%.{ext.lower().lstrip('.')}" for ext in image_extensions
+        ]
+        params.append(JobState.INDEXED.value)
+        params.append(MAX_ENHANCEMENT_ATTEMPTS)
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                f"""
+                UPDATE jobs
+                SET enhancement_pending = 1
+                WHERE kind = 'file'
+                  AND ({like_clauses})
+                  AND state = ?
+                  AND enhancement_pending = 0
+                  AND enhancement_failed = 0
+                  AND enhancement_attempts < ?
+                """,
+                params,
+            )
+            return cur.rowcount
+
+    def count_enhancement_pending(self) -> int:
+        """Backlog size (rows the runner can still pick up)."""
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT COUNT(*) FROM jobs
+                WHERE state = ?
+                  AND enhancement_pending = 1
+                  AND enhancement_failed = 0
+                """,
+                (JobState.INDEXED.value,),
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def count_enhancement_failed(self) -> int:
+        """Terminal-failure tally (rows that gave up; not retried)."""
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT COUNT(*) FROM jobs
+                WHERE state = ?
+                  AND enhancement_failed = 1
+                """,
+                (JobState.INDEXED.value,),
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def count_enhancement_eligible_total(
+        self, image_extensions: tuple[str, ...]
+    ) -> int:
+        """Denominator for the diagnostics counter: indexed images.
+
+        Mirrors the predicate of ``backfill_enhancement_pending`` minus
+        the eligibility filters — every indexed image counts, including
+        ones that are still pending and ones that terminally failed.
+        ``image_extensions`` has the same shape (without leading dot)
+        for symmetry with the backfill helper.
+        """
+        if not image_extensions:
+            return 0
+        like_clauses = " OR ".join(
+            ["LOWER(name) LIKE ?" for _ in image_extensions]
+        )
+        params: list[object] = [
+            f"%.{ext.lower().lstrip('.')}" for ext in image_extensions
+        ]
+        params.append(JobState.INDEXED.value)
+        with self._lock:
+            row = self._conn.execute(
+                f"""
+                SELECT COUNT(*) FROM jobs
+                WHERE kind = 'file'
+                  AND ({like_clauses})
+                  AND state = ?
+                """,
+                params,
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
 
     def _next_transition_seq(self) -> int:
         """Return ``MAX(transition_seq) + 1`` for the next state mutation.
@@ -464,17 +760,20 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             attempts              INTEGER NOT NULL DEFAULT 0,
             created_at            TEXT NOT NULL,
             modified_at           TEXT NOT NULL,
-            transition_seq        INTEGER NOT NULL DEFAULT 0
+            transition_seq        INTEGER NOT NULL DEFAULT 0,
+            enhancement_pending   INTEGER NOT NULL DEFAULT 0,
+            enhancement_attempts  INTEGER NOT NULL DEFAULT 0,
+            enhancement_failed    INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);
         CREATE INDEX IF NOT EXISTS idx_jobs_transition_seq ON jobs(transition_seq);
         """
     )
-    # Idempotent migration: ALTER TABLE ADD COLUMN for installs
-    # whose queue.db predates the transition_seq column. SQLite
-    # has no "ADD COLUMN IF NOT EXISTS"; introspect first.
-    # ``row_factory`` isn't set on the connection at this point —
-    # row[1] is the column name in the default tuple shape.
+    # Idempotent migration: ALTER TABLE ADD COLUMN for installs whose
+    # queue.db predates each column. SQLite has no "ADD COLUMN IF NOT
+    # EXISTS"; introspect first. ``row_factory`` isn't set on the
+    # connection at this point — row[1] is the column name in the
+    # default tuple shape.
     cols = {
         row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
     }
@@ -499,6 +798,22 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_jobs_transition_seq ON jobs(transition_seq)"
+        )
+    # Two-pass image OCR columns. Defaults are correct for legacy
+    # rows: every existing image starts as "not enhanced, not failed,
+    # zero attempts" and the watcher / startup auto-fire flips
+    # enhancement_pending=1 for eligible rows on the next cycle.
+    if "enhancement_pending" not in cols:
+        conn.execute(
+            "ALTER TABLE jobs ADD COLUMN enhancement_pending INTEGER NOT NULL DEFAULT 0"
+        )
+    if "enhancement_attempts" not in cols:
+        conn.execute(
+            "ALTER TABLE jobs ADD COLUMN enhancement_attempts INTEGER NOT NULL DEFAULT 0"
+        )
+    if "enhancement_failed" not in cols:
+        conn.execute(
+            "ALTER TABLE jobs ADD COLUMN enhancement_failed INTEGER NOT NULL DEFAULT 0"
         )
 
 

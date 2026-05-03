@@ -36,7 +36,12 @@ const RUNTIME_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const RUNTIME_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const SIDECAR_BINARY_NAME: &str = "search-sidecar";
 
-const ORPHAN_SIGTERM_GRACE: Duration = Duration::from_secs(3);
+// Native OCR shutdown is cooperative: Python handles SIGTERM on the
+// main thread, asks the runner to stop, then waits for any in-flight
+// Paddle enhancement call to return. Keep this comfortably above the
+// expected 5-15 s PP-StructureV3 init/extract window so dev restarts
+// do not hard-kill Python mid-native-call and trigger macOS crash UI.
+const ORPHAN_SIGTERM_GRACE: Duration = Duration::from_secs(90);
 const ORPHAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 struct SidecarCommandCandidate {
@@ -442,32 +447,40 @@ fn sidecar_command_candidates(app: &AppHandle, storage_dir: &str) -> Vec<Sidecar
     #[cfg(debug_assertions)]
     {
         let sidecar_dir = dev_sidecar_dir();
+        let mut uv_command = app.shell().command("uv").current_dir(&sidecar_dir).args([
+            "run",
+            "search-sidecar",
+            "serve",
+            "--storage-dir",
+            storage_dir,
+        ]);
+        for (key, value) in dev_sidecar_env() {
+            uv_command = uv_command.env(key, value);
+        }
         candidates.push(SidecarCommandCandidate {
             label: "local Python sidecar via uv",
-            command: app.shell().command("uv").current_dir(&sidecar_dir).args([
-                "run",
-                "search-sidecar",
-                "serve",
-                "--storage-dir",
-                storage_dir,
-            ]),
+            command: uv_command,
         });
 
         let venv_python = dev_venv_python_path(&sidecar_dir);
         if venv_python.exists() {
+            let mut venv_command = app
+                .shell()
+                .command(venv_python)
+                .current_dir(&sidecar_dir)
+                .args([
+                    "-m",
+                    "search_sidecar",
+                    "serve",
+                    "--storage-dir",
+                    storage_dir,
+                ]);
+            for (key, value) in dev_sidecar_env() {
+                venv_command = venv_command.env(key, value);
+            }
             candidates.push(SidecarCommandCandidate {
                 label: "local Python sidecar via sidecar/.venv",
-                command: app
-                    .shell()
-                    .command(venv_python)
-                    .current_dir(&sidecar_dir)
-                    .args([
-                        "-m",
-                        "search_sidecar",
-                        "serve",
-                        "--storage-dir",
-                        storage_dir,
-                    ]),
+                command: venv_command,
             });
         }
     }
@@ -490,6 +503,14 @@ fn dev_sidecar_dir() -> PathBuf {
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
         .join("sidecar")
+}
+
+#[cfg(debug_assertions)]
+fn dev_sidecar_env() -> Vec<(&'static str, String)> {
+    vec![(
+        "COGNIOS_ADVANCED_OCR_AUTORUN",
+        std::env::var("COGNIOS_ADVANCED_OCR_AUTORUN").unwrap_or_else(|_| "1".to_string()),
+    )]
 }
 
 #[cfg(all(debug_assertions, windows))]
@@ -527,10 +548,7 @@ mod tests {
     #[test]
     fn read_lock_holder_pid_returns_none_for_missing_file() {
         let dir = tempfile::tempdir().expect("tempdir");
-        assert_eq!(
-            read_lock_holder_pid(&dir.path().join("absent.lock")),
-            None
-        );
+        assert_eq!(read_lock_holder_pid(&dir.path().join("absent.lock")), None);
     }
 
     #[test]
@@ -599,5 +617,14 @@ mod tests {
             Some("sidecar")
         );
         assert!(dir.join("pyproject.toml").exists());
+    }
+
+    #[test]
+    fn dev_sidecar_env_enables_advanced_ocr_autorun_by_default() {
+        let expected =
+            std::env::var("COGNIOS_ADVANCED_OCR_AUTORUN").unwrap_or_else(|_| "1".to_string());
+        assert!(dev_sidecar_env()
+            .iter()
+            .any(|(key, value)| *key == "COGNIOS_ADVANCED_OCR_AUTORUN" && *value == expected));
     }
 }

@@ -199,6 +199,71 @@ def test_get_index_status_aggregates_state(stack):
     assert body["queue_depth"] == 1
     assert len(body["in_flight"]) == 1
     assert body["indexed_chunks"] == 0
+    assert body["enhancement_pending"] == 0
+    assert body["enhancement_failed"] == 0
+    assert body["enhancement_total_images"] == 0
+
+
+def test_get_index_status_includes_enhancement_counts(stack):
+    app, queue, _, _, _ = stack
+    for node_id, name in [
+        (UUID_A, "a.png"),
+        (UUID_B, "b.png"),
+        ("33333333-3333-3333-3333-333333333333", "c.png"),
+        ("44444444-4444-4444-4444-444444444444", "notes.pdf"),
+    ]:
+        queue.enqueue(node_id=node_id, kind="file", name=name)
+        queue.claim_next()
+        queue.mark_indexed(node_id)
+    queue.set_enhancement_pending(UUID_A)
+    queue.mark_enhancement_failed(UUID_B)
+
+    with TestClient(app) as client:
+        resp = client.get("/index/status", headers=_auth())
+    body = resp.json()
+    assert body["enhancement_pending"] == 1
+    assert body["enhancement_failed"] == 1
+    assert body["enhancement_total_images"] == 3
+
+
+def test_post_backfill_enhancement_flags_indexed_images(stack):
+    app, queue, _, _, _ = stack
+    for node_id, name in [
+        (UUID_A, "a.png"),
+        (UUID_B, "b.JPG"),
+        ("33333333-3333-3333-3333-333333333333", "doc.pdf"),
+    ]:
+        queue.enqueue(node_id=node_id, kind="file", name=name)
+        queue.claim_next()
+        queue.mark_indexed(node_id)
+
+    with TestClient(app) as client:
+        resp = client.post("/index/backfill-enhancement", headers=_auth())
+        second = client.post("/index/backfill-enhancement", headers=_auth())
+
+    assert resp.status_code == 200
+    assert resp.json() == {"flagged": 2}
+    assert second.json() == {"flagged": 0}
+
+
+def test_post_backfill_enhancement_skips_failed_rows(stack):
+    app, queue, _, _, _ = stack
+    queue.enqueue(node_id=UUID_A, kind="file", name="a.png")
+    queue.claim_next()
+    queue.mark_indexed(UUID_A)
+    queue.mark_enhancement_failed(UUID_A)
+
+    with TestClient(app) as client:
+        resp = client.post("/index/backfill-enhancement", headers=_auth())
+
+    assert resp.json() == {"flagged": 0}
+
+
+def test_post_backfill_enhancement_requires_auth(stack):
+    app, _, _, _, _ = stack
+    with TestClient(app) as client:
+        resp = client.post("/index/backfill-enhancement")
+    assert resp.status_code == 401
 
 
 def test_get_node_status_returns_unknown_for_unseen_id(stack):

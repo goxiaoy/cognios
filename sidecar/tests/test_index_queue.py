@@ -5,7 +5,24 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from search_sidecar.index.queue import JobState, open_queue
+from search_sidecar.index.queue import (
+    MAX_ENHANCEMENT_ATTEMPTS,
+    JobState,
+    open_queue,
+)
+
+
+def _enqueue_indexed_image(queue, node_id: str, name: str = "photo.png") -> None:
+    """Test helper: enqueue an image and walk it through to indexed.
+
+    The two-pass enhancement methods all assume a row is already in
+    ``state='indexed'``; without this helper every enhancement test
+    has the same 4-line preamble.
+    """
+    queue.enqueue(node_id=node_id, kind="file", name=name)
+    job = queue.claim_next()
+    assert job is not None and job.node_id == node_id
+    queue.mark_indexed(node_id)
 
 
 def test_open_queue_creates_schema_and_pragmas(tmp_path: Path):
@@ -295,5 +312,383 @@ def test_concurrent_reads_and_writes_never_return_none_from_count(
         assert len(depth_results) > 100
         for value in depth_results:
             assert isinstance(value, int), f"queue_depth returned {value!r}"
+    finally:
+        queue.close()
+
+
+# ----- two-pass image OCR enhancement -----------------------------------
+
+
+def _columns(queue) -> set[str]:
+    return {
+        row[1]
+        for row in queue._conn.execute("PRAGMA table_info(jobs)").fetchall()
+    }
+
+
+def test_fresh_schema_includes_enhancement_columns(tmp_path: Path):
+    """A new queue.db has all three enhancement columns at default 0."""
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        cols = _columns(queue)
+        assert "enhancement_pending" in cols
+        assert "enhancement_attempts" in cols
+        assert "enhancement_failed" in cols
+    finally:
+        queue.close()
+
+
+def test_legacy_queue_db_gets_enhancement_columns_idempotently(tmp_path: Path):
+    """Open a queue.db that predates the enhancement columns — the
+    migration adds them at default 0 without disturbing existing rows
+    or running twice."""
+    db_path = tmp_path / "queue.db"
+    # Hand-craft a legacy schema (no enhancement columns) and seed a
+    # row so we can verify the migration preserves data.
+    raw = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        raw.execute("PRAGMA journal_mode=WAL")
+        raw.executescript(
+            """
+            CREATE TABLE jobs (
+                node_id               TEXT PRIMARY KEY,
+                kind                  TEXT NOT NULL,
+                name                  TEXT NOT NULL,
+                absolute_content_path TEXT,
+                mount_id              TEXT,
+                state                 TEXT NOT NULL,
+                enqueued_at           TEXT NOT NULL,
+                indexed_at            TEXT,
+                last_error            TEXT,
+                attempts              INTEGER NOT NULL DEFAULT 0,
+                created_at            TEXT NOT NULL,
+                modified_at           TEXT NOT NULL,
+                transition_seq        INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO jobs (
+                node_id, kind, name, state, enqueued_at,
+                created_at, modified_at, transition_seq
+            ) VALUES (
+                'legacy-1', 'file', 'old.png', 'indexed', '2026-05-01T00:00:00+00:00',
+                '2026-05-01T00:00:00+00:00', '2026-05-01T00:00:00+00:00', 1
+            );
+            """
+        )
+    finally:
+        raw.close()
+
+    # Open via the production path — migration should run.
+    queue = open_queue(db_path)
+    try:
+        cols = _columns(queue)
+        assert {"enhancement_pending", "enhancement_attempts", "enhancement_failed"} <= cols
+        row = queue._conn.execute(
+            "SELECT enhancement_pending, enhancement_attempts, enhancement_failed FROM jobs WHERE node_id = 'legacy-1'"
+        ).fetchone()
+        assert tuple(row) == (0, 0, 0)
+    finally:
+        queue.close()
+
+    # Re-open: migration must be idempotent (no errors, no duplicate columns).
+    queue2 = open_queue(db_path)
+    try:
+        assert "enhancement_pending" in _columns(queue2)
+    finally:
+        queue2.close()
+
+
+def test_set_and_clear_enhancement_pending_round_trip(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _enqueue_indexed_image(queue, "img-1")
+
+        queue.set_enhancement_pending("img-1")
+        result = queue.claim_next_enhancement()
+        assert result is not None
+        job, claim_seq = result
+        assert job.node_id == "img-1"
+        assert claim_seq > 0  # transition_seq from the indexed transition
+
+        # Idempotent re-flag: call set_enhancement_pending again, still claimable.
+        queue.set_enhancement_pending("img-1")
+        again = queue.claim_next_enhancement()
+        assert again is not None and again[0].node_id == "img-1"
+
+        queue.clear_enhancement_pending("img-1")
+        assert queue.claim_next_enhancement() is None
+    finally:
+        queue.close()
+
+
+def test_claim_next_enhancement_orders_by_indexed_at(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        # Index in order img-1 then img-2; both flagged.
+        _enqueue_indexed_image(queue, "img-1")
+        _enqueue_indexed_image(queue, "img-2")
+        queue.set_enhancement_pending("img-1")
+        queue.set_enhancement_pending("img-2")
+
+        first = queue.claim_next_enhancement()
+        assert first is not None and first[0].node_id == "img-1"
+        # claim_next_enhancement does NOT mutate state, so img-1 stays
+        # claimable until clear or fail.
+        queue.clear_enhancement_pending("img-1")
+
+        second = queue.claim_next_enhancement()
+        assert second is not None and second[0].node_id == "img-2"
+    finally:
+        queue.close()
+
+
+def test_claim_next_enhancement_skips_pending_state_rows(tmp_path: Path):
+    """A row in state='pending' (basic pass not yet done) must NOT be
+    eligible for enhancement claim, even if some other code path
+    accidentally set the flag."""
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        queue.enqueue(node_id="img-pending", kind="file", name="x.png")
+        # Force-set the bit while still pending. This can happen during
+        # the basic pass before the runner records indexed; the claim
+        # predicate must still wait for state='indexed'.
+        queue._conn.execute(
+            "UPDATE jobs SET enhancement_pending = 1 WHERE node_id = ?",
+            ("img-pending",),
+        )
+        assert queue.claim_next_enhancement() is None
+    finally:
+        queue.close()
+
+
+def test_claim_next_enhancement_skips_failed_rows(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _enqueue_indexed_image(queue, "img-1")
+        queue.set_enhancement_pending("img-1")
+        queue.mark_enhancement_failed("img-1")
+        # mark_enhancement_failed also clears pending; even if a buggy
+        # caller re-flagged it, the failed=1 sentinel must dominate.
+        queue._conn.execute(
+            "UPDATE jobs SET enhancement_pending = 1 WHERE node_id = 'img-1'"
+        )
+        assert queue.claim_next_enhancement() is None
+    finally:
+        queue.close()
+
+
+def test_claim_next_enhancement_skips_cap_exhausted_rows(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _enqueue_indexed_image(queue, "img-1")
+        queue.set_enhancement_pending("img-1")
+        for _ in range(MAX_ENHANCEMENT_ATTEMPTS):
+            queue.bump_enhancement_attempts("img-1")
+        assert queue.claim_next_enhancement() is None
+    finally:
+        queue.close()
+
+
+def test_set_enhancement_pending_refuses_failed_rows(tmp_path: Path):
+    """The basic-pass completion handler must not be able to re-arm a
+    row the runner has already terminally failed. Only ``enqueue``
+    (file mod) clears the failed bit."""
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _enqueue_indexed_image(queue, "img-1")
+        queue.mark_enhancement_failed("img-1")
+        queue.set_enhancement_pending("img-1")  # should be no-op
+        assert queue.claim_next_enhancement() is None
+    finally:
+        queue.close()
+
+
+def test_mark_enhancement_failed_clears_pending(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _enqueue_indexed_image(queue, "img-1")
+        queue.set_enhancement_pending("img-1")
+        queue.mark_enhancement_failed("img-1")
+        row = queue._conn.execute(
+            "SELECT enhancement_pending, enhancement_failed FROM jobs WHERE node_id='img-1'"
+        ).fetchone()
+        assert tuple(row) == (0, 1)
+    finally:
+        queue.close()
+
+
+def test_bump_enhancement_attempts_returns_new_count(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _enqueue_indexed_image(queue, "img-1")
+        queue.set_enhancement_pending("img-1")
+        assert queue.bump_enhancement_attempts("img-1") == 1
+        assert queue.bump_enhancement_attempts("img-1") == 2
+        assert queue.bump_enhancement_attempts("img-1") == 3
+    finally:
+        queue.close()
+
+
+def test_bump_enhancement_attempts_unknown_node_returns_zero(tmp_path: Path):
+    """A node that no longer exists shouldn't crash the caller; the
+    runner is single-threaded but the row could have been deleted by
+    the deletion path between claim and bump."""
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        assert queue.bump_enhancement_attempts("does-not-exist") == 0
+    finally:
+        queue.close()
+
+
+def test_peek_transition_seq_reads_current_value(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _enqueue_indexed_image(queue, "img-1")
+        seq_before = queue.peek_transition_seq("img-1")
+        assert seq_before is not None and seq_before > 0
+        # mark_indexed bumps seq again on a re-mark, but the public
+        # contract says the value advances on any state mutation.
+        # Use enqueue (revives the row to pending) to advance it.
+        queue.enqueue(node_id="img-1", kind="file", name="photo.png")
+        seq_after = queue.peek_transition_seq("img-1")
+        assert seq_after is not None and seq_after > seq_before
+    finally:
+        queue.close()
+
+
+def test_peek_transition_seq_returns_none_for_missing_row(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        assert queue.peek_transition_seq("nope") is None
+    finally:
+        queue.close()
+
+
+def test_clear_pending_if_transition_seq_is_atomic(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _enqueue_indexed_image(queue, "img-1")
+        queue.set_enhancement_pending("img-1")
+        seq = queue.peek_transition_seq("img-1")
+        assert seq is not None
+
+        assert queue.clear_enhancement_pending_if_transition_seq(
+            "img-1", seq + 1
+        ) is False
+        assert queue.claim_next_enhancement() is not None
+
+        assert queue.clear_enhancement_pending_if_transition_seq(
+            "img-1", seq
+        ) is True
+        assert queue.claim_next_enhancement() is None
+    finally:
+        queue.close()
+
+
+def test_enqueue_resets_all_three_enhancement_columns(tmp_path: Path):
+    """File mod (or user-triggered Reindex) must wipe the enhancement
+    bookkeeping so the basic+enhancement cycle re-runs fresh, even
+    re-arming a previously cap-exhausted row."""
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _enqueue_indexed_image(queue, "img-1")
+        queue.set_enhancement_pending("img-1")
+        queue.bump_enhancement_attempts("img-1")
+        queue.bump_enhancement_attempts("img-1")
+        queue.mark_enhancement_failed("img-1")
+        # Now simulate a file modification — should reset all three.
+        queue.enqueue(node_id="img-1", kind="file", name="photo.png")
+        row = queue._conn.execute(
+            """
+            SELECT enhancement_pending, enhancement_attempts, enhancement_failed
+            FROM jobs WHERE node_id = 'img-1'
+            """
+        ).fetchone()
+        assert tuple(row) == (0, 0, 0)
+    finally:
+        queue.close()
+
+
+def test_backfill_enhancement_pending_flags_only_eligible_images(tmp_path: Path):
+    """``backfill_enhancement_pending`` flags indexed images by suffix
+    while skipping already-pending, failed, cap-exhausted, non-image,
+    and non-indexed rows."""
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _enqueue_indexed_image(queue, "img-png", "photo.png")
+        _enqueue_indexed_image(queue, "img-jpg", "scan.JPG")  # case-insensitive
+        _enqueue_indexed_image(queue, "img-pdf", "doc.pdf")  # not an image
+        _enqueue_indexed_image(queue, "img-already", "ready.png")
+        queue.set_enhancement_pending("img-already")  # already flagged
+        _enqueue_indexed_image(queue, "img-failed", "broken.png")
+        queue.mark_enhancement_failed("img-failed")  # terminally failed
+        # Enqueue this last so the helper's intermediate claim_next
+        # calls don't accidentally pick it up before reaching its
+        # corresponding image — it stays in 'pending' state.
+        queue.enqueue(node_id="img-pending", kind="file", name="other.png")
+
+        flagged = queue.backfill_enhancement_pending(("png", "jpg"))
+        # img-png + img-jpg = 2; the other four are skipped.
+        assert flagged == 2
+
+        # Idempotent: a second call flags zero new rows.
+        assert queue.backfill_enhancement_pending(("png", "jpg")) == 0
+    finally:
+        queue.close()
+
+
+def test_backfill_excludes_terminally_failed_rows_across_restart(
+    tmp_path: Path,
+):
+    """Closes the cap-exhaust re-flag loop: after a row is terminally
+    failed, no number of watcher transitions or sidecar restarts can
+    re-arm it. Only ``enqueue`` clears the failed bit."""
+    db_path = tmp_path / "queue.db"
+    queue = open_queue(db_path)
+    try:
+        _enqueue_indexed_image(queue, "img-1", "x.png")
+        queue.set_enhancement_pending("img-1")
+        queue.mark_enhancement_failed("img-1")
+    finally:
+        queue.close()
+
+    # Simulate sidecar restart: re-open the same on-disk file.
+    queue2 = open_queue(db_path)
+    try:
+        flagged = queue2.backfill_enhancement_pending(("png",))
+        assert flagged == 0
+        assert queue2.claim_next_enhancement() is None
+    finally:
+        queue2.close()
+
+
+def test_count_helpers_split_pending_failed_total(tmp_path: Path):
+    """The diagnostics counter relies on these three counts to render
+    'enhanced / total' alongside a separate 'failed' indicator."""
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _enqueue_indexed_image(queue, "img-pending", "a.png")
+        queue.set_enhancement_pending("img-pending")
+        _enqueue_indexed_image(queue, "img-done", "b.png")
+        # img-done leaves all enhancement fields at 0 (success path).
+        _enqueue_indexed_image(queue, "img-failed", "c.png")
+        queue.mark_enhancement_failed("img-failed")
+        # Non-image: must NOT count toward total.
+        _enqueue_indexed_image(queue, "doc-1", "notes.pdf")
+
+        assert queue.count_enhancement_pending() == 1
+        assert queue.count_enhancement_failed() == 1
+        assert queue.count_enhancement_eligible_total(("png",)) == 3
+    finally:
+        queue.close()
+
+
+def test_backfill_with_no_extensions_returns_zero(tmp_path: Path):
+    """Defensive: empty extension tuple short-circuits without
+    constructing an empty SQL clause that would match every file."""
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _enqueue_indexed_image(queue, "img-1", "x.png")
+        assert queue.backfill_enhancement_pending(()) == 0
+        assert queue.count_enhancement_eligible_total(()) == 0
     finally:
         queue.close()

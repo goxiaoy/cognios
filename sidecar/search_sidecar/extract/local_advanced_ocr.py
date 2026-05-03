@@ -34,10 +34,13 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import re
 from pathlib import Path
 from typing import Any, Callable, cast
 
 LOG = logging.getLogger("search_sidecar.extract.local_advanced_ocr")
+HTML_TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
+BLANK_LINE_RE = re.compile(r"\n{3,}")
 
 
 def can_load_local_advanced_ocr() -> bool:
@@ -237,8 +240,73 @@ def _results_to_markdown(results: Any) -> str:
     for entry in iterable:
         text = _extract_markdown_text(entry)
         if text:
-            fragments.append(text.strip())
+            fragments.append(_normalize_markdown_text(text))
     return "\n\n".join(f for f in fragments if f)
+
+
+def _normalize_markdown_text(text: str) -> str:
+    """Convert Paddle's raw HTML blocks into Markdown-friendly text.
+
+    PP-StructureV3 usually calls its output "markdown", but table and
+    layout regions may arrive as raw HTML fragments such as
+    ``<div><html><body><table>...``. Leaving those fragments intact
+    breaks both chunking (tags can be split mid-element) and the image
+    preview (raw HTML shows up as OCR text). Normalize before storage
+    so every downstream caller sees text/Markdown rather than Paddle's
+    internal HTML.
+    """
+    text = text.strip()
+    if not text or not HTML_TAG_RE.search(text):
+        return text
+
+    from selectolax.parser import HTMLParser  # type: ignore[import-not-found]
+
+    html_text = text
+    parser = HTMLParser(html_text)
+    for table in parser.css("table"):
+        table_html = table.html
+        table_markdown = _html_table_to_markdown(table)
+        if table_html and table_markdown:
+            html_text = html_text.replace(table_html, f"\n\n{table_markdown}\n\n")
+
+    parser = HTMLParser(html_text)
+    for image in parser.css("img"):
+        image.decompose()
+    rendered = parser.text(separator="\n", strip=True)
+    lines = [line.strip() for line in rendered.splitlines()]
+    normalized = "\n".join(line for line in lines if line)
+    return BLANK_LINE_RE.sub("\n\n", normalized).strip()
+
+
+def _html_table_to_markdown(table: Any) -> str:
+    rows: list[list[str]] = []
+    for tr in table.css("tr"):
+        cells = [
+            _escape_markdown_table_cell(cell.text(separator=" ", strip=True))
+            for cell in tr.css("th,td")
+        ]
+        if any(cells):
+            rows.append(cells)
+    if not rows:
+        return table.text(separator="\n", strip=True)
+
+    width = max(len(row) for row in rows)
+    padded = [row + [""] * (width - len(row)) for row in rows]
+    header = padded[0]
+    separator = ["---"] * width
+    body = padded[1:]
+    return "\n".join(
+        [_markdown_table_row(header), _markdown_table_row(separator)]
+        + [_markdown_table_row(row) for row in body]
+    )
+
+
+def _markdown_table_row(cells: list[str]) -> str:
+    return "| " + " | ".join(cells) + " |"
+
+
+def _escape_markdown_table_cell(text: str) -> str:
+    return " ".join(text.replace("|", r"\|").split())
 
 
 def _extract_markdown_text(entry: Any) -> str | None:

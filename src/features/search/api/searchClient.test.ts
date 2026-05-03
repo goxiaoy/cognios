@@ -60,7 +60,14 @@ describe("searchClient.indexStatus", () => {
   it("calls get_indexing_status and returns the envelope", async () => {
     const env: SidecarEnvelope<IndexStatus> = {
       state: "ready",
-      data: { queueDepth: 3, inFlight: ["abc"], indexedChunks: 100 },
+      data: {
+        queueDepth: 3,
+        inFlight: ["abc"],
+        indexedChunks: 100,
+        enhancementPending: 0,
+        enhancementFailed: 0,
+        enhancementTotalImages: 0,
+      },
     };
     mockedInvoke.mockResolvedValueOnce(env);
 
