@@ -128,9 +128,9 @@ export const FEATURE_CATALOG: readonly FeatureMeta[] = [
     featureId: "result-reranking",
     displayName: "Result reranking",
     description:
-      "Refines top search results with a second-pass quality check.",
+      "Required. Refines top search results with a second-pass quality check.",
     capability: "reranking",
-    mandatory: false,
+    mandatory: true,
     comingSoon: false,
   },
   {

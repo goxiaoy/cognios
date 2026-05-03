@@ -18,6 +18,18 @@ const SEMANTIC = FEATURE_CATALOG.find((m) => m.featureId === "semantic-search")!
 const RERANKING = FEATURE_CATALOG.find((m) => m.featureId === "result-reranking")!;
 const OCR = FEATURE_CATALOG.find((m) => m.featureId === "image-ocr")!;
 
+// Synthetic optional/non-coming-soon feature for toggle-path tests —
+// every catalog entry is currently either mandatory or coming-soon, so
+// the toggle render path is exercised against a stand-in.
+const OPTIONAL_TEST_FEATURE = {
+  featureId: "result-reranking",
+  displayName: "Result reranking (test)",
+  description: "test only",
+  capability: "reranking" as const,
+  mandatory: false,
+  comingSoon: false,
+};
+
 function baseSettings(): SearchSettings {
   return {
     version: 1,
@@ -60,7 +72,7 @@ describe("FeatureRow", () => {
   it("renders an enable toggle for optional features", () => {
     render(
       <FeatureRow
-        meta={RERANKING}
+        meta={OPTIONAL_TEST_FEATURE}
         config={{ enabled: false, providerId: null }}
         settings={baseSettings()}
         client={makeStubSearchClient()}
@@ -69,6 +81,21 @@ describe("FeatureRow", () => {
     );
     const toggle = screen.getByRole("switch");
     expect(toggle).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("renders a Required badge for the result-reranking feature", () => {
+    expect(RERANKING.mandatory).toBe(true);
+    render(
+      <FeatureRow
+        meta={RERANKING}
+        config={{ enabled: true, providerId: "local-gte-reranker" }}
+        settings={baseSettings()}
+        client={makeStubSearchClient()}
+        onSettingsChange={vi.fn()}
+      />
+    );
+    expect(screen.getByText("Required")).toBeInTheDocument();
+    expect(screen.queryByRole("switch")).toBeNull();
   });
 
   it("renders coming-soon hint for Phase-2 features and disables interaction", () => {
@@ -142,7 +169,7 @@ describe("FeatureRow", () => {
     });
     render(
       <FeatureRow
-        meta={RERANKING}
+        meta={OPTIONAL_TEST_FEATURE}
         config={{ enabled: false, providerId: null }}
         settings={baseSettings()}
         client={makeStubSearchClient({ updateSettings })}

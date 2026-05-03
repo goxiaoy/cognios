@@ -30,8 +30,17 @@ def test_default_settings_seeds_local_gte_and_semantic_search():
     assert s.providers["local-gte"].enabled is True
     assert s.features["semantic-search"].enabled is True
     assert s.features["semantic-search"].provider_id == "local-gte"
-    # Optional features default off and unbound.
-    for fid in ("result-reranking", "image-ocr", "image-captioning"):
+    # Mandatory reranking is pre-bound to the local cross-encoder so
+    # search boots into a working full-pipeline state once first-run
+    # downloads complete.
+    assert "local-gte-reranker" in s.providers
+    assert s.providers["local-gte-reranker"].enabled is True
+    assert s.features["result-reranking"].enabled is True
+    assert (
+        s.features["result-reranking"].provider_id == "local-gte-reranker"
+    )
+    # Phase-2 features default off and unbound.
+    for fid in ("image-ocr", "image-captioning"):
         assert s.features[fid].enabled is False
         assert s.features[fid].provider_id is None
     # No cloud providers consented to on first install.

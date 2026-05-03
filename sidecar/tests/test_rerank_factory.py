@@ -11,6 +11,12 @@ import pytest
 from search_sidecar.models.manager import ModelManager
 from search_sidecar.models.manifest import FileSpec, ModelSpec
 from search_sidecar.rerank.factory import select_reranker
+from search_sidecar.settings import (
+    FeatureConfig,
+    ProviderConfig,
+    SearchSettings,
+    default_settings,
+)
 
 
 @pytest.fixture
@@ -97,4 +103,70 @@ def test_returns_real_reranker_when_extra_present_and_role_ready(
         "search_sidecar.rerank.factory.GteReranker", side_effect=fake_ctor
     ):
         reranker = select_reranker(model_manager=manager)
+    assert reranker is fake
+
+
+# ---- settings-driven routing ------------------------------------------------
+
+
+def test_returns_none_when_settings_unbinds_reranking(manager: ModelManager):
+    """Reranker is mandatory in v1, but if a user (or a stale settings.json)
+    has the feature explicitly disabled or unbound, the factory returns None
+    even if the model is on disk."""
+    _activate_role(manager)
+    settings = default_settings()
+    settings.features["result-reranking"] = FeatureConfig(
+        enabled=False, provider_id=None
+    )
+    with mock.patch(
+        "search_sidecar.rerank.factory.can_load_real_embedder",
+        return_value=True,
+    ), mock.patch(
+        "search_sidecar.rerank.factory.GteReranker",
+        return_value=mock.Mock(),
+    ):
+        assert select_reranker(model_manager=manager, settings=settings) is None
+
+
+def test_returns_none_when_settings_bind_to_unknown_provider(
+    manager: ModelManager,
+):
+    _activate_role(manager)
+    settings = default_settings()
+    settings.features["result-reranking"] = FeatureConfig(
+        enabled=True, provider_id="bogus-provider"
+    )
+    assert select_reranker(model_manager=manager, settings=settings) is None
+
+
+def test_returns_none_when_bound_to_cloud_provider(manager: ModelManager):
+    """v1 ships only a local cross-encoder. A user binding the feature to
+    a cloud provider that lacks reranking capability — or any cloud
+    provider at all — falls through to None rather than crashing."""
+    _activate_role(manager)
+    settings = SearchSettings(
+        providers={
+            "openai": ProviderConfig(provider_id="openai", enabled=True),
+        },
+        features={
+            "result-reranking": FeatureConfig(enabled=True, provider_id="openai"),
+        },
+    )
+    assert select_reranker(model_manager=manager, settings=settings) is None
+
+
+def test_returns_real_reranker_with_default_settings(manager: ModelManager):
+    """``default_settings`` binds result-reranking to local-gte-reranker, so
+    a fresh install with the model on disk yields a real reranker."""
+    _activate_role(manager)
+    fake = mock.Mock()
+    with mock.patch(
+        "search_sidecar.rerank.factory.can_load_real_embedder",
+        return_value=True,
+    ), mock.patch(
+        "search_sidecar.rerank.factory.GteReranker", return_value=fake
+    ):
+        reranker = select_reranker(
+            model_manager=manager, settings=default_settings()
+        )
     assert reranker is fake

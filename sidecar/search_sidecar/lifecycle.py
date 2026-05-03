@@ -107,7 +107,7 @@ def serve(storage_dir: Path) -> int:
     dispatcher = Dispatcher(store=lancedb_store, embedder=embedder)
     indexing_runner = IndexingRunner(queue=indexing_queue, dispatcher=dispatcher)
     indexing_runner.start()
-    reranker = select_reranker(model_manager=model_manager)
+    reranker = select_reranker(model_manager=model_manager, settings=settings)
     if reranker is not None:
         LOG.info("cross-encoder reranker loaded: %s", type(reranker).__name__)
     search_orchestrator = SearchOrchestrator(

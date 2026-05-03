@@ -116,15 +116,21 @@ class SettingsVersionError(RuntimeError):
 
 
 def default_settings() -> SearchSettings:
-    """Fresh-install defaults — semantic search bound to local-gte, all
-    optional features off. Other local providers (paddleocr, reranker,
-    Gemma) are NOT pre-seeded; they appear in settings the moment the
-    user enables them.
+    """Fresh-install defaults. Mandatory features (semantic-search,
+    result-reranking) are pre-bound to their local providers so a
+    fresh install boots into a working full-pipeline state once the
+    first-run downloads complete. Optional Phase-2 features (OCR,
+    captioning) stay unbound — they appear in settings the moment
+    the user enables them.
     """
     return SearchSettings(
         providers={
             "local-gte": ProviderConfig(
                 provider_id="local-gte",
+                enabled=True,
+            ),
+            "local-gte-reranker": ProviderConfig(
+                provider_id="local-gte-reranker",
                 enabled=True,
             ),
         },
@@ -133,7 +139,10 @@ def default_settings() -> SearchSettings:
                 enabled=True,
                 provider_id="local-gte",
             ),
-            "result-reranking": FeatureConfig(enabled=False, provider_id=None),
+            "result-reranking": FeatureConfig(
+                enabled=True,
+                provider_id="local-gte-reranker",
+            ),
             "image-ocr": FeatureConfig(enabled=False, provider_id=None),
             "image-captioning": FeatureConfig(enabled=False, provider_id=None),
         },
