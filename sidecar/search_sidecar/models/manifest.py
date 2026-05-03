@@ -78,30 +78,15 @@ DEFAULTS: dict[str, ModelSpec] = {
             FileSpec("config.json", "dfa5713436ecb4616eaa576795c8d3efd1f03122031a1ad4973d0b6b7e7edfd3"),
         ),
     ),
-    "ocr": ModelSpec(
-        role="ocr",
-        # PP-OCRv4 mobile ships det/rec/cls as three separate ONNX
-        # exports; we point at a community ONNX-only mirror to avoid
-        # the paddlepaddle Python runtime (see plan Architecture).
-        repo="PaddlePaddle/PP-OCRv4_mobile_det",
-        commit=PLACEHOLDER_COMMIT,
-        files=(
-            FileSpec("det.onnx", PLACEHOLDER_SHA256),
-            FileSpec("rec.onnx", PLACEHOLDER_SHA256),
-            FileSpec("cls.onnx", PLACEHOLDER_SHA256),
-        ),
-    ),
-    "captioner": ModelSpec(
-        role="captioner",
-        repo="unsloth/gemma-3n-E2B-it-GGUF",
-        commit=PLACEHOLDER_COMMIT,
-        files=(
-            FileSpec("gemma-3n-E2B-it-Q4_K_M.gguf", PLACEHOLDER_SHA256),
-            FileSpec("mmproj-gemma-3n-E2B-it-f16.gguf", PLACEHOLDER_SHA256),
-        ),
-        license="gemma",
-        requires_acceptance=True,
-    ),
+    # OCR + captioner roles intentionally absent from the manifest:
+    #
+    # - Local OCR is served by ``rapidocr-onnxruntime`` (PP-OCRv4 ONNX
+    #   port) which bundles its model files inside the wheel. There's
+    #   nothing for ModelManager to download or pin.
+    # - Local captioning (Gemma vision) is deferred past v1 — needs
+    #   multi-repo manifest support (mmproj lives in a separate HF
+    #   repo) and a llama-server runtime. Cloud captioning is the
+    #   only path in v1; cloud needs no on-disk model files.
 }
 
 

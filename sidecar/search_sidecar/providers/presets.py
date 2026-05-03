@@ -58,15 +58,20 @@ class ProviderPreset:
     api_key_prefix: str | None = None
 
 
-# v1 preset table. Capability/provider matrix matches the brainstorm:
+# v1 preset table. Capability/provider matrix:
 #
 #                   embedding  reranking  vision  ocr
 #   local-gte           ✓
 #   local-gte-reranker             ✓
-#   local-gemma                              ✓
 #   local-paddleocr                                  ✓
-#   openai              ✓                    ✓
-#   qwen-dashscope                           ✓
+#   openai              ✓                    ✓     ✓
+#   qwen-dashscope                           ✓     ✓
+#
+# Cloud "vision" providers also serve OCR — same chat-completions
+# endpoint with a transcribe-only prompt; see
+# :mod:`search_sidecar.extract.cloud_vision`. Local captioning
+# (Gemma / Llama vision) is deferred past v1 — that path needs both
+# multi-repo manifest support AND a llama-server runtime.
 #
 # DeepSeek + Qwen embedding/reranking are explicitly out of v1 scope:
 # DeepSeek only offers chat (which is v2), Qwen embedding is 1024-dim
@@ -93,21 +98,14 @@ PRESETS: dict[str, ProviderPreset] = {
         },
         auth_kind="none",
     ),
-    "local-gemma": ProviderPreset(
-        provider_id="local-gemma",
-        display_name="Local Gemma",
-        provider_type="local",
-        capabilities=frozenset({"vision"}),
-        default_model_per_capability={
-            "vision": "gemma-3n-E2B-it-Q4_K_M",
-        },
-        auth_kind="hf-token",
-    ),
     "local-paddleocr": ProviderPreset(
         provider_id="local-paddleocr",
         display_name="Local PaddleOCR",
         provider_type="local",
         capabilities=frozenset({"ocr"}),
+        # rapidocr-onnxruntime ships its own bundled PP-OCRv4 ONNX
+        # files inside the wheel; the model name here is informational
+        # for the Settings UI and not consumed by ModelManager.
         default_model_per_capability={
             "ocr": "PP-OCRv4_mobile",
         },
@@ -117,12 +115,13 @@ PRESETS: dict[str, ProviderPreset] = {
         provider_id="openai",
         display_name="OpenAI",
         provider_type="cloud",
-        capabilities=frozenset({"embedding", "vision"}),
+        capabilities=frozenset({"embedding", "vision", "ocr"}),
         default_model_per_capability={
             # 3-small natively returns 1536-dim; the cloud Embedder
             # always passes ``dimensions=768`` to coerce via Matryoshka.
             "embedding": "text-embedding-3-small",
             "vision": "gpt-4o-mini",
+            "ocr": "gpt-4o-mini",
         },
         auth_kind="api-key",
         base_url="https://api.openai.com/v1",
@@ -133,9 +132,10 @@ PRESETS: dict[str, ProviderPreset] = {
         provider_id="qwen-dashscope",
         display_name="Qwen DashScope",
         provider_type="cloud",
-        capabilities=frozenset({"vision"}),
+        capabilities=frozenset({"vision", "ocr"}),
         default_model_per_capability={
             "vision": "qwen-vl-plus",
+            "ocr": "qwen-vl-plus",
         },
         auth_kind="api-key",
         # OpenAI-compatible mode endpoint; Qwen embedding/reranking

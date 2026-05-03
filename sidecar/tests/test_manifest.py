@@ -12,8 +12,12 @@ from search_sidecar.models.manifest import (
 )
 
 
-def test_manifest_covers_four_roles():
-    assert set(DEFAULTS.keys()) == {"embedding", "reranker", "ocr", "captioner"}
+def test_manifest_covers_v1_local_roles():
+    """v1 ships local model files for embedding + reranker only.
+    OCR is served by rapidocr-onnxruntime (bundled in the wheel; no
+    ModelManager involvement) and captioning is cloud-only — both
+    intentionally absent from the manifest."""
+    assert set(DEFAULTS.keys()) == {"embedding", "reranker"}
 
 
 def test_each_role_lists_at_least_one_file():
@@ -22,14 +26,11 @@ def test_each_role_lists_at_least_one_file():
         assert all(f.name for f in spec.files), f"{role!r} has empty file names"
 
 
-def test_only_captioner_requires_acceptance():
-    assert DEFAULTS["captioner"].requires_acceptance is True
-    for role in ("embedding", "reranker", "ocr"):
-        assert DEFAULTS[role].requires_acceptance is False, role
-
-
-def test_captioner_carries_license_tag():
-    assert DEFAULTS["captioner"].license == "gemma"
+def test_v1_roles_do_not_require_acceptance():
+    """No gated repo in v1 (Gemma was the only one and it's deferred)."""
+    for role, spec in DEFAULTS.items():
+        assert spec.requires_acceptance is False, role
+        assert spec.license is None, role
 
 
 def test_is_pinned_detects_placeholder_state():

@@ -1,7 +1,9 @@
 """``IndexingJob`` -> processor dispatch.
 
-Phase 2 / Unit 5 ships text only. PDF, image, and url_cache
-processors land in follow-up commits and register here.
+Each processor is a thin can_handle / process pair; the dispatcher
+just picks the first that matches. Image OCR + caption extractors
+are injected through the constructor (lifecycle resolves them from
+settings) so this module stays free of any cloud / model imports.
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ from typing import Protocol
 
 from ..storage import LanceDBStore
 from .embedder import Embedder
-from .processors.image import ImageProcessor
+from .processors.image import CaptionExtract, ImageProcessor, OcrExtract
 from .processors.pdf import PdfProcessor
 from .processors.text import TextProcessor
 from .processors.url_cache import URLCacheProcessor
@@ -29,16 +31,23 @@ class Dispatcher:
     matter of constructing it and appending to ``self._processors``.
     """
 
-    def __init__(self, *, store: LanceDBStore, embedder: Embedder) -> None:
-        # ImageProcessor is wired without OCR / caption extractors for
-        # now — the dispatcher routes images through it (so the queue
-        # records them as indexed-with-zero-chunks rather than parking
-        # in pending forever) and the real OCR + caption integrations
-        # land as injected extractors in follow-up commits.
+    def __init__(
+        self,
+        *,
+        store: LanceDBStore,
+        embedder: Embedder,
+        ocr_extract: OcrExtract | None = None,
+        caption_extract: CaptionExtract | None = None,
+    ) -> None:
         self._processors: list[Processor] = [
             TextProcessor(store, embedder),
             PdfProcessor(store, embedder),
-            ImageProcessor(store, embedder),
+            ImageProcessor(
+                store,
+                embedder,
+                ocr_extract=ocr_extract,
+                caption_extract=caption_extract,
+            ),
             URLCacheProcessor(store, embedder),
         ]
 

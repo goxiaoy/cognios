@@ -47,14 +47,6 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     authKind: "none",
   },
   {
-    providerId: "local-gemma",
-    displayName: "Local Gemma",
-    providerType: "local",
-    capabilities: ["vision"],
-    defaultModelPerCapability: { vision: "gemma-3n-E2B-it-Q4_K_M" },
-    authKind: "hf-token",
-  },
-  {
     providerId: "local-paddleocr",
     displayName: "Local PaddleOCR",
     providerType: "local",
@@ -66,10 +58,11 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     providerId: "openai",
     displayName: "OpenAI",
     providerType: "cloud",
-    capabilities: ["embedding", "vision"],
+    capabilities: ["embedding", "vision", "ocr"],
     defaultModelPerCapability: {
       embedding: "text-embedding-3-small",
       vision: "gpt-4o-mini",
+      ocr: "gpt-4o-mini",
     },
     authKind: "api-key",
     baseUrl: "https://api.openai.com/v1",
@@ -80,8 +73,11 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     providerId: "qwen-dashscope",
     displayName: "Qwen DashScope",
     providerType: "cloud",
-    capabilities: ["vision"],
-    defaultModelPerCapability: { vision: "qwen-vl-plus" },
+    capabilities: ["vision", "ocr"],
+    defaultModelPerCapability: {
+      vision: "qwen-vl-plus",
+      ocr: "qwen-vl-plus",
+    },
     authKind: "api-key",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     validationEndpoint: "/models",
@@ -136,17 +132,21 @@ export const FEATURE_CATALOG: readonly FeatureMeta[] = [
   {
     featureId: "image-ocr",
     displayName: "Image OCR",
-    description: "Extract text from screenshots and scans.",
+    description:
+      "Extract text from screenshots and scans. Local provider " +
+      "ships bundled models; cloud providers transcribe via vision API.",
     capability: "ocr",
     mandatory: false,
-    comingSoon: true,
+    comingSoon: false,
   },
   {
     featureId: "image-captioning",
     displayName: "Image captioning",
-    description: "Generate descriptions of images for search.",
+    description:
+      "Generate searchable descriptions of images. Cloud-only in v1 " +
+      "(OpenAI / Qwen DashScope).",
     capability: "vision",
     mandatory: false,
-    comingSoon: true,
+    comingSoon: false,
   },
 ];

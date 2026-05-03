@@ -30,6 +30,7 @@ import uvicorn
 from .app import build_app
 from .auth import generate_token
 from .embeddings import reembed_stale_chunks, select_embedder
+from .extract import select_caption_extractor, select_ocr_extractor
 from .index import IndexingRunner
 from .index.dispatch import Dispatcher
 from .index.queue import open_queue
@@ -113,7 +114,18 @@ def serve(storage_dir: Path) -> int:
             name="search-sidecar-reembed",
             daemon=True,
         ).start()
-    dispatcher = Dispatcher(store=lancedb_store, embedder=embedder)
+    ocr_extract = select_ocr_extractor(settings)
+    caption_extract = select_caption_extractor(settings)
+    if ocr_extract is not None:
+        LOG.info("OCR extractor wired (%s)", type(ocr_extract).__name__)
+    if caption_extract is not None:
+        LOG.info("caption extractor wired (%s)", type(caption_extract).__name__)
+    dispatcher = Dispatcher(
+        store=lancedb_store,
+        embedder=embedder,
+        ocr_extract=ocr_extract,
+        caption_extract=caption_extract,
+    )
     indexing_runner = IndexingRunner(queue=indexing_queue, dispatcher=dispatcher)
     indexing_runner.start()
     reranker = select_reranker(model_manager=model_manager, settings=settings)

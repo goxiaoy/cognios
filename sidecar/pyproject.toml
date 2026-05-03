@@ -31,10 +31,20 @@ dependencies = [
 # transformers tokenizer + optimum.onnxruntime runtime that
 # ``GteEmbedder`` needs. The orchestrator factory falls back to
 # ``StubEmbedder`` automatically when these aren't importable.
+#
+# The ``image`` extra wires local OCR via rapidocr-onnxruntime. It's
+# opt-in for the same reason as ``embedding``: rapidocr ships its own
+# bundled ONNX model files (~80MB) and we don't want to pay that on
+# fast dev installs / test environments. ImageProcessor falls back
+# to no-OCR when the extra isn't available.
 [project.optional-dependencies]
 embedding = [
   "optimum[onnxruntime]>=1.24,<2.0",
   "transformers>=4.45,<5.0",
+]
+image = [
+  "rapidocr-onnxruntime>=1.3,<2.0",
+  "Pillow>=10.0,<12.0",
 ]
 
 [project.scripts]

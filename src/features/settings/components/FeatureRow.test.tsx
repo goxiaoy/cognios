@@ -99,9 +99,21 @@ describe("FeatureRow", () => {
   });
 
   it("renders coming-soon hint for Phase-2 features and disables interaction", () => {
+    // No catalog entry is comingSoon in v1 — every feature ships a
+    // working extractor path. Use a synthetic meta to exercise the
+    // render branch so the mechanism stays covered for future Phase-2
+    // additions.
+    const phase2 = {
+      featureId: "phase2-test",
+      displayName: "Phase 2 test",
+      description: "test only",
+      capability: "vision" as const,
+      mandatory: false,
+      comingSoon: true,
+    };
     render(
       <FeatureRow
-        meta={OCR}
+        meta={phase2}
         config={undefined}
         settings={baseSettings()}
         client={makeStubSearchClient()}
