@@ -18,17 +18,13 @@
 
 use tauri::{AppHandle, State};
 
-use crate::services::search::{
-    read_settings_file_fallback, SearchSettingsDto, SidecarEnvelope,
-};
+use crate::services::search::{read_settings_file_fallback, SearchSettingsDto, SidecarEnvelope};
 use crate::AppState;
 
 type EnvelopeResult<T> = Result<SidecarEnvelope<T>, String>;
 
 #[tauri::command]
-pub async fn get_search_settings(
-    state: State<'_, AppState>,
-) -> EnvelopeResult<SearchSettingsDto> {
+pub async fn get_search_settings(state: State<'_, AppState>) -> EnvelopeResult<SearchSettingsDto> {
     Ok(state.search_client.settings_get().await)
 }
 
@@ -47,18 +43,12 @@ pub async fn update_search_settings(
 pub fn read_search_settings_fallback(
     state: State<'_, AppState>,
 ) -> Result<SearchSettingsDto, String> {
-    let path = state
-        .storage_dir
-        .join("search")
-        .join("settings.json");
+    let path = state.storage_dir.join("search").join("settings.json");
     read_settings_file_fallback(&path)
 }
 
 #[tauri::command]
-pub fn restart_sidecar(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn restart_sidecar(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     state.search_sidecar.restart(&app)?;
     Ok(())
 }

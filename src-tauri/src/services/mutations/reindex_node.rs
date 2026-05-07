@@ -39,8 +39,7 @@ pub fn reindex_node(
     input: &ReindexNodeInput,
     emitter: &dyn Fn(VfsChangeEvent),
 ) -> Result<ReindexOutcome, String> {
-    let kind = load_node_kind(conn, &input.node_id)?
-        .ok_or_else(|| "node not found".to_string())?;
+    let kind = load_node_kind(conn, &input.node_id)?.ok_or_else(|| "node not found".to_string())?;
 
     let leaf_ids = match kind {
         NodeKind::Folder | NodeKind::Mount | NodeKind::Directory => {
@@ -63,11 +62,9 @@ pub fn reindex_node(
 }
 
 fn load_node_kind(conn: &Connection, node_id: &str) -> Result<Option<NodeKind>, String> {
-    conn.query_row(
-        "SELECT kind FROM nodes WHERE id = ?1",
-        [node_id],
-        |row| row.get::<_, String>(0),
-    )
+    conn.query_row("SELECT kind FROM nodes WHERE id = ?1", [node_id], |row| {
+        row.get::<_, String>(0)
+    })
     .optional()
     .map_err(|error| error.to_string())
     .map(|opt| opt.map(|s| NodeKind::from_db(&s)))
@@ -77,10 +74,7 @@ fn load_node_kind(conn: &Connection, node_id: &str) -> Result<Option<NodeKind>, 
 /// (file / note / url). Container descendants are filtered out so
 /// the emitter doesn't generate one event per folder — those are
 /// no-ops on the sidecar side and only add load.
-fn collect_indexable_descendants(
-    conn: &Connection,
-    root_id: &str,
-) -> Result<Vec<String>, String> {
+fn collect_indexable_descendants(conn: &Connection, root_id: &str) -> Result<Vec<String>, String> {
     let mut stmt = conn
         .prepare(
             "
@@ -175,8 +169,7 @@ mod tests {
             .unwrap();
             assert_eq!(outcome.enqueued, 3);
         });
-        let ids: std::collections::HashSet<_> =
-            emits.iter().map(|e| e.mount_id.clone()).collect();
+        let ids: std::collections::HashSet<_> = emits.iter().map(|e| e.mount_id.clone()).collect();
         // Only the indexable leaves — the subfolder itself is
         // skipped (containers don't get enqueued).
         assert_eq!(

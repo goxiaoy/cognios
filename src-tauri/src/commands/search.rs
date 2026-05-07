@@ -66,9 +66,7 @@ pub async fn search_query(
 }
 
 #[tauri::command]
-pub async fn get_indexing_status(
-    state: State<'_, AppState>,
-) -> EnvelopeResult<IndexStatusDto> {
+pub async fn get_indexing_status(state: State<'_, AppState>) -> EnvelopeResult<IndexStatusDto> {
     Ok(state.search_client.index_status().await)
 }
 
@@ -89,9 +87,7 @@ pub async fn get_node_content(
 }
 
 #[tauri::command]
-pub async fn get_models_status(
-    state: State<'_, AppState>,
-) -> EnvelopeResult<ModelsStatusDto> {
+pub async fn get_models_status(state: State<'_, AppState>) -> EnvelopeResult<ModelsStatusDto> {
     Ok(state.search_client.models_status().await)
 }
 
@@ -104,16 +100,11 @@ pub async fn start_model_download(
     let app = app.clone();
     state
         .search_client
-        .start_model_download(
-            &input.role,
-            move |event: ModelDownloadEvent| {
-                if let Err(err) = app.emit(MODELS_PROGRESS_EVENT, event) {
-                    log::warn!(
-                        "failed to emit {MODELS_PROGRESS_EVENT}: {err}"
-                    );
-                }
-            },
-        )
+        .start_model_download(&input.role, move |event: ModelDownloadEvent| {
+            if let Err(err) = app.emit(MODELS_PROGRESS_EVENT, event) {
+                log::warn!("failed to emit {MODELS_PROGRESS_EVENT}: {err}");
+            }
+        })
         .await
 }
 

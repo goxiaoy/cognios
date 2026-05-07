@@ -53,6 +53,8 @@ class IndexingRunner:
         # have changed and the user hasn't restarted yet — see
         # plan Key Decision "Mixed-provider data corruption guard".
         self._paused = threading.Event()
+        self._enhancement_lock = threading.Lock()
+        self._enhancement_in_flight: str | None = None
 
     @property
     def running(self) -> bool:
@@ -61,6 +63,15 @@ class IndexingRunner:
     @property
     def paused(self) -> bool:
         return self._paused.is_set()
+
+    @property
+    def enhancement_in_flight_node_ids(self) -> list[str]:
+        with self._enhancement_lock:
+            return (
+                [self._enhancement_in_flight]
+                if self._enhancement_in_flight is not None
+                else []
+            )
 
     def set_paused(self, paused: bool) -> None:
         """Pause / resume new job claims without stopping the loop."""
@@ -140,6 +151,8 @@ class IndexingRunner:
         if result is None:
             return False
         job, claim_seq = result
+        with self._enhancement_lock:
+            self._enhancement_in_flight = job.node_id
         try:
             image_processor.process_enhancement(job, claim_seq)
         except EnhancementTransientError:
@@ -152,6 +165,9 @@ class IndexingRunner:
                 err,
             )
             self._queue.mark_enhancement_failed(job.node_id)
+        finally:
+            with self._enhancement_lock:
+                self._enhancement_in_flight = None
         return True
 
     def _handle(self, job: IndexingJob) -> None:

@@ -18,7 +18,8 @@ Schema::
       transition_seq        INTEGER NOT NULL DEFAULT 0,
       enhancement_pending   INTEGER NOT NULL DEFAULT 0,
       enhancement_attempts  INTEGER NOT NULL DEFAULT 0,
-      enhancement_failed    INTEGER NOT NULL DEFAULT 0
+      enhancement_failed    INTEGER NOT NULL DEFAULT 0,
+      enhancement_completed_at TEXT
     );
     CREATE INDEX idx_jobs_state ON jobs(state);
     CREATE INDEX idx_jobs_transition_seq ON jobs(transition_seq);
@@ -34,11 +35,13 @@ The basic OCR pass runs on every image and lands chunks fast; the
 slow advanced OCR pass (PP-StructureV3) runs as a background
 enhancement that replaces only the body chunks. ``enhancement_pending``
 is the runner's claim filter; ``enhancement_attempts`` caps transient
-retries; ``enhancement_failed`` is a sticky terminal sentinel that
-prevents the cap-exhausted row from being re-flagged by the next
-backfill (so the diagnostics counter can distinguish "enhanced" from
-"gave up"). Only ``enqueue`` (file mod) and the user-triggered
-Reindex action clear the failed bit.
+retries; ``enhancement_completed_at`` records that advanced OCR already
+ran for the current indexed file version so startup backfill does not
+replay the image on every sidecar restart. ``enhancement_failed`` is a
+sticky terminal sentinel that prevents the cap-exhausted row from being
+re-flagged by the next backfill (so the diagnostics counter can
+distinguish "enhanced" from "gave up"). Only ``enqueue`` (file mod)
+and the user-triggered Reindex action clear the completed/failed bits.
 
 Concurrency model: a single :class:`IndexingQueue` is shared by the
 FastAPI request handlers (which call :meth:`enqueue`) and the runner
@@ -154,10 +157,11 @@ class IndexingQueue:
         caller can use it to detect runaway retries.
 
         The enhancement bookkeeping (``enhancement_pending``,
-        ``enhancement_attempts``, ``enhancement_failed``) is reset to
-        zero on every revive — a file modification or user-triggered
-        reindex re-runs the full two-pass flow from scratch, including
-        re-arming a previously cap-exhausted row.
+        ``enhancement_attempts``, ``enhancement_failed``,
+        ``enhancement_completed_at``) is reset on every revive — a file
+        modification or user-triggered reindex re-runs the full
+        two-pass flow from scratch, including re-arming a previously
+        completed or cap-exhausted row.
         """
         now_str = _now_iso()
         ca = (created_at or _now()).astimezone(timezone.utc).isoformat()
@@ -170,8 +174,9 @@ class IndexingQueue:
                     node_id, kind, name, absolute_content_path, mount_id,
                     state, enqueued_at, attempts, created_at, modified_at,
                     transition_seq, enhancement_pending,
-                    enhancement_attempts, enhancement_failed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, 0, 0)
+                    enhancement_attempts, enhancement_failed,
+                    enhancement_completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, 0, 0, NULL)
                 ON CONFLICT(node_id) DO UPDATE SET
                     kind = excluded.kind,
                     name = excluded.name,
@@ -185,7 +190,8 @@ class IndexingQueue:
                     transition_seq = excluded.transition_seq,
                     enhancement_pending = 0,
                     enhancement_attempts = 0,
-                    enhancement_failed = 0
+                    enhancement_failed = 0,
+                    enhancement_completed_at = NULL
                 """,
                 (
                     node_id,
@@ -311,10 +317,11 @@ class IndexingQueue:
         """Idempotent: flag a row for advanced-OCR enhancement.
 
         Refuses to flag rows that are terminally failed
-        (``enhancement_failed=1``) — only ``enqueue`` (file mod) or the
-        Reindex action clears that bit. This keeps a basic-pass
+        (``enhancement_failed=1``) or already completed for this file
+        version — only ``enqueue`` (file mod) or the Reindex action
+        clears those bits. This keeps a basic-pass
         completion handler from accidentally re-arming a row the
-        runner has already given up on.
+        runner has already finished or given up on.
 
         The basic pass calls this while the runner still has the row
         in ``state='indexing'``; ``claim_next_enhancement`` still
@@ -328,6 +335,7 @@ class IndexingQueue:
                 SET enhancement_pending = 1
                 WHERE node_id = ?
                   AND enhancement_failed = 0
+                  AND enhancement_completed_at IS NULL
                 """,
                 (node_id,),
             )
@@ -335,15 +343,20 @@ class IndexingQueue:
     def clear_enhancement_pending(self, node_id: str) -> None:
         """Drop the enhancement flag (success or empty result).
 
-        No-op for rows that are already cleared; safe to call
-        defensively after every code path in ``process_enhancement``.
+        No-op for rows that are already cleared; safe to call after
+        successful advanced OCR, including an empty-but-valid result.
         Does NOT touch ``enhancement_attempts`` or
         ``enhancement_failed`` — those are owned by their own helpers.
         """
         with self._lock, self._conn:
             self._conn.execute(
-                "UPDATE jobs SET enhancement_pending = 0 WHERE node_id = ?",
-                (node_id,),
+                """
+                UPDATE jobs
+                SET enhancement_pending = 0,
+                    enhancement_completed_at = COALESCE(enhancement_completed_at, ?)
+                WHERE node_id = ?
+                """,
+                (_now_iso(), node_id),
             )
 
     def mark_enhancement_failed(self, node_id: str) -> None:
@@ -352,7 +365,7 @@ class IndexingQueue:
         Distinguishes "tried and gave up" from "haven't tried yet" —
         the diagnostics counter and the backfill predicate both rely
         on this distinction. Cleared only by ``enqueue`` (which
-        zeroes all three columns on revive).
+        resets enhancement bookkeeping on revive).
         """
         with self._lock, self._conn:
             self._conn.execute(
@@ -424,8 +437,13 @@ class IndexingQueue:
             if row is None or int(row[0]) != expected_seq:
                 return False
             self._conn.execute(
-                "UPDATE jobs SET enhancement_pending = 0 WHERE node_id = ?",
-                (node_id,),
+                """
+                UPDATE jobs
+                SET enhancement_pending = 0,
+                    enhancement_completed_at = COALESCE(enhancement_completed_at, ?)
+                WHERE node_id = ?
+                """,
+                (_now_iso(), node_id),
             )
             return True
 
@@ -439,8 +457,11 @@ class IndexingQueue:
         upgrade case). ``image_extensions`` is a tuple of suffixes
         WITHOUT the leading dot (e.g. ``("png", "jpg", ...)``).
 
-        Predicate excludes already-pending rows AND terminally-failed
-        rows AND already-cap-exhausted rows. The exclusion of
+        Predicate excludes already-pending rows, already-completed rows,
+        terminally-failed rows, and already-cap-exhausted rows. The
+        exclusion of ``enhancement_completed_at IS NULL`` is
+        load-bearing: without it, sidecar restart would replay every
+        successfully enhanced image indefinitely. The exclusion of
         ``enhancement_failed=1`` is load-bearing: without it, a watcher
         re-trigger (e.g., sidecar restart) would replay every
         previously-given-up row indefinitely.
@@ -469,6 +490,7 @@ class IndexingQueue:
                   AND ({like_clauses})
                   AND state = ?
                   AND enhancement_pending = 0
+                  AND enhancement_completed_at IS NULL
                   AND enhancement_failed = 0
                   AND enhancement_attempts < ?
                 """,
@@ -763,7 +785,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             transition_seq        INTEGER NOT NULL DEFAULT 0,
             enhancement_pending   INTEGER NOT NULL DEFAULT 0,
             enhancement_attempts  INTEGER NOT NULL DEFAULT 0,
-            enhancement_failed    INTEGER NOT NULL DEFAULT 0
+            enhancement_failed    INTEGER NOT NULL DEFAULT 0,
+            enhancement_completed_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);
         CREATE INDEX IF NOT EXISTS idx_jobs_transition_seq ON jobs(transition_seq);
@@ -815,6 +838,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE jobs ADD COLUMN enhancement_failed INTEGER NOT NULL DEFAULT 0"
         )
+    if "enhancement_completed_at" not in cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN enhancement_completed_at TEXT")
 
 
 def _now() -> datetime:

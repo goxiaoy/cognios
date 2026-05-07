@@ -45,7 +45,11 @@ fn obsidian_config_path() -> Option<PathBuf> {
 
     #[cfg(target_os = "windows")]
     {
-        std::env::var_os("APPDATA").map(|appdata| PathBuf::from(appdata).join("obsidian").join("obsidian.json"))
+        std::env::var_os("APPDATA").map(|appdata| {
+            PathBuf::from(appdata)
+                .join("obsidian")
+                .join("obsidian.json")
+        })
     }
 }
 

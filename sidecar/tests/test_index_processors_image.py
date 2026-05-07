@@ -197,6 +197,27 @@ def test_process_emits_body_and_summary_when_both_extractors_succeed(
     assert "Whiteboard" in summary_text and "Caption:" not in summary_text
 
 
+def test_process_writes_basic_and_caption_extract_artifacts(
+    store, tmp_path: Path
+):
+    extract_dir = tmp_path / "extract"
+    proc = ImageProcessor(
+        store,
+        StubEmbedder(),
+        ocr_extract=lambda _p: "Basic OCR markdown",
+        caption_extract=lambda _p: "Caption markdown",
+        extract_dir=extract_dir,
+    )
+    img = tmp_path / "image a.png"
+    img.write_bytes(b"")
+
+    proc.process(_make_job(img))
+
+    image_dir = extract_dir / UUID_A
+    assert (image_dir / "basic.md").read_text() == "Basic OCR markdown\n"
+    assert (image_dir / "caption.md").read_text() == "Caption markdown\n"
+
+
 def test_process_continues_when_ocr_extractor_raises(store, tmp_path: Path):
     """One extractor's failure doesn't block the other from contributing."""
 
@@ -407,6 +428,37 @@ def test_process_enhancement_replaces_body_and_preserves_summary(
         assert len(summary) == 1
         assert "caption" in summary[0]["text"]
         assert _enhancement_state(queue) == (0, 0, 0)
+    finally:
+        queue.close()
+
+
+def test_process_enhancement_writes_advanced_extract_artifact(
+    store, tmp_path: Path
+):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        extract_dir = tmp_path / "extract"
+        img = tmp_path / "a.png"
+        img.write_bytes(b"")
+        job = _claim_image_job(queue, img)
+        proc = ImageProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            ocr_extract=lambda _p: "basic OCR text",
+            advanced_ocr_extract=lambda _p: "advanced table markdown",
+            extract_dir=extract_dir,
+        )
+        proc.process(job)
+        queue.mark_indexed(job.node_id)
+        claim = queue.claim_next_enhancement()
+        assert claim is not None
+
+        proc.process_enhancement(*claim)
+
+        assert (extract_dir / UUID_A / "advanced.md").read_text() == (
+            "advanced table markdown\n"
+        )
     finally:
         queue.close()
 

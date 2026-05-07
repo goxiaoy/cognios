@@ -40,8 +40,7 @@ fn validate_provider_id(provider_id: &str) -> Result<(), String> {
     for c in chars {
         if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
             return Err(
-                "provider_id may only contain lowercase letters, digits, and hyphens"
-                    .into(),
+                "provider_id may only contain lowercase letters, digits, and hyphens".into(),
             );
         }
     }
@@ -63,18 +62,13 @@ pub fn set_provider_secret(input: SetProviderSecretInput) -> Result<(), String> 
 }
 
 #[tauri::command]
-pub fn get_provider_secret_present(
-    input: ProviderSecretLookupInput,
-) -> Result<bool, String> {
+pub fn get_provider_secret_present(input: ProviderSecretLookupInput) -> Result<bool, String> {
     validate_provider_id(&input.provider_id)?;
-    secure_storage::get_secret(&provider_account(&input.provider_id))
-        .map(|v| v.is_some())
+    secure_storage::get_secret(&provider_account(&input.provider_id)).map(|v| v.is_some())
 }
 
 #[tauri::command]
-pub fn delete_provider_secret(
-    input: ProviderSecretLookupInput,
-) -> Result<(), String> {
+pub fn delete_provider_secret(input: ProviderSecretLookupInput) -> Result<(), String> {
     validate_provider_id(&input.provider_id)?;
     secure_storage::delete_secret(&provider_account(&input.provider_id))
 }
@@ -122,6 +116,9 @@ mod tests {
         // keyring.get_password("cognios-search", f"provider:{id}")
         // hits the same slot.
         assert_eq!(provider_account("openai"), "provider:openai");
-        assert_eq!(provider_account("qwen-dashscope"), "provider:qwen-dashscope");
+        assert_eq!(
+            provider_account("qwen-dashscope"),
+            "provider:qwen-dashscope"
+        );
     }
 }

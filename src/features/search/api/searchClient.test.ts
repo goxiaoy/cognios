@@ -63,6 +63,7 @@ describe("searchClient.indexStatus", () => {
       data: {
         queueDepth: 3,
         inFlight: ["abc"],
+        enhancementInFlight: [],
         indexedChunks: 100,
         enhancementPending: 0,
         enhancementFailed: 0,

@@ -14,7 +14,7 @@ from search_sidecar.storage import (
     open_store,
     role_or_default,
 )
-from search_sidecar.storage.lancedb_store import TABLE_NAME
+from search_sidecar.storage.lancedb_store import LanceDBStore, TABLE_NAME
 
 
 def _make_chunk(
@@ -206,6 +206,59 @@ def test_hybrid_search_returns_empty_for_empty_table(tmp_path: Path):
     assert (
         store.hybrid_search("oauth", [0.0] * EMBEDDING_DIMENSION) == []
     )
+
+
+def test_hybrid_search_uses_explicit_vector_and_text_query():
+    class FakeHybridBuilder:
+        def __init__(self) -> None:
+            self.vector_query: list[float] | None = None
+            self.text_query: str | None = None
+            self.limit_value: int | None = None
+
+        def vector(self, query_vec: list[float]):
+            self.vector_query = query_vec
+            return self
+
+        def text(self, query: str):
+            self.text_query = query
+            return self
+
+        def limit(self, limit: int):
+            self.limit_value = limit
+            return self
+
+        def to_list(self):
+            return [
+                {
+                    "text": self.text_query,
+                    "vector": self.vector_query,
+                    "limit": self.limit_value,
+                }
+            ]
+
+    class FakeTable:
+        def __init__(self) -> None:
+            self.builder = FakeHybridBuilder()
+            self.search_calls: list[tuple[object, str]] = []
+
+        def count_rows(self) -> int:
+            return 1
+
+        def create_fts_index(self, *_args, **_kwargs) -> None:
+            return None
+
+        def search(self, query=None, *, query_type="auto"):
+            self.search_calls.append((query, query_type))
+            return self.builder
+
+    table = FakeTable()
+    store = LanceDBStore(None, table)
+    query_vec = [0.0] * EMBEDDING_DIMENSION
+
+    rows = store.hybrid_search("oauth", query_vec, limit=5)
+
+    assert table.search_calls == [(None, "hybrid")]
+    assert rows == [{"text": "oauth", "vector": query_vec, "limit": 5}]
 
 
 def test_find_stale_chunks_returns_only_zero_vector_rows(tmp_path: Path):

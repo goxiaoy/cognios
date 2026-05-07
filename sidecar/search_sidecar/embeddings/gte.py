@@ -1,14 +1,14 @@
 """``onnx-community/gte-multilingual-base`` embedder.
 
-Wraps ``optimum.onnxruntime.ORTModelForFeatureExtraction`` + a HF
-``AutoTokenizer`` to produce 768-dim sentence embeddings. The pooling
-strategy and normalization match the upstream model card:
+Wraps ``onnxruntime.InferenceSession`` + a HF ``AutoTokenizer`` to
+produce 768-dim sentence embeddings. The pooling strategy and
+normalization match the upstream model card:
 **CLS pooling + L2 normalization** (sentence-transformers default).
 
 Imports are deferred until the constructor runs so this module remains
 importable without the ``embedding`` extra installed — the
 :func:`search_sidecar.embeddings.select_embedder` factory falls back to
-:class:`StubEmbedder` when ``optimum``/``transformers`` are missing.
+:class:`StubEmbedder` when ``onnxruntime``/``transformers`` are missing.
 
 A typical model directory layout (matches the per-role tree
 :class:`ModelManager` writes under ``<storage>/search/models/embedding/<commit>/``)::
@@ -99,9 +99,10 @@ class GteEmbedder:
                 max_length=self._config.max_length,
                 return_tensors="np",
             )
-            model_out = self._model(**encoded)
-            # ORTModelForFeatureExtraction returns ``last_hidden_state``
-            # of shape ``(batch, seq, hidden)``. CLS pooling = index 0.
+            feed = _build_onnx_inputs(np, encoded, self._model)
+            model_out = self._model.run(None, feed)
+            # ONNX output includes token embeddings with shape
+            # ``(batch, seq, hidden)``. CLS pooling = index 0.
             last_hidden = _coerce_to_numpy(np, model_out)
             cls = last_hidden[:, 0, :]
             normed = _l2_normalize(np, cls)
@@ -121,10 +122,10 @@ class GteEmbedder:
 
 
 def _load_model_and_tokenizer(config: GteEmbedderConfig):
-    """Lazy-load optimum + transformers, surface ``ImportError`` to the
+    """Lazy-load onnxruntime + transformers, surface ``ImportError`` to the
     factory layer when the ``embedding`` extra isn't installed."""
     try:
-        from optimum.onnxruntime import ORTModelForFeatureExtraction
+        import onnxruntime as ort
         from transformers import AutoTokenizer
     except ImportError as cause:
         raise ImportError(
@@ -145,21 +146,45 @@ def _load_model_and_tokenizer(config: GteEmbedderConfig):
 
     LOG.info("loading GTE multilingual ONNX model from %s", model_dir)
     tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
-    model = ORTModelForFeatureExtraction.from_pretrained(
-        str(model_dir),
-        file_name=config.onnx_file_name,
+    model = ort.InferenceSession(
+        str(onnx_path),
+        providers=["CPUExecutionProvider"],
     )
     return tokenizer, model
 
 
+def _build_onnx_inputs(np, encoded, model) -> dict:
+    input_names = {model_input.name for model_input in model.get_inputs()}
+    feed = {
+        name: np.asarray(value)
+        for name, value in encoded.items()
+        if name in input_names
+    }
+    missing = input_names - feed.keys()
+    if missing:
+        raise RuntimeError(
+            "tokenizer output missing ONNX input(s): "
+            + ", ".join(sorted(missing))
+        )
+    return feed
+
+
 def _coerce_to_numpy(np, model_out):
-    """``ORTModelForFeatureExtraction`` returns either a HF
-    ``BaseModelOutput`` or a tuple, depending on the optimum version.
-    Normalise to a numpy array in either case."""
+    """Return the token-embedding output as a numpy array."""
     last_hidden = getattr(model_out, "last_hidden_state", None)
     if last_hidden is None:
-        # tuple-style return: first element is ``last_hidden_state``.
-        last_hidden = model_out[0]
+        candidates = (
+            model_out.values()
+            if isinstance(model_out, dict)
+            else model_out
+            if isinstance(model_out, (list, tuple))
+            else [model_out]
+        )
+        for candidate in candidates:
+            arr = np.asarray(candidate)
+            if arr.ndim == 3:
+                return arr
+        last_hidden = model_out
     arr = np.asarray(last_hidden)
     if arr.ndim != 3:
         raise RuntimeError(

@@ -17,8 +17,7 @@ const SERVICE_NAME: &str = "cognios-search";
 
 /// Set or replace a secret. `account` selects the slot.
 pub fn set_secret(account: &str, value: &str) -> Result<(), String> {
-    let entry = Entry::new(SERVICE_NAME, account)
-        .map_err(|err| format!("keyring open: {err}"))?;
+    let entry = Entry::new(SERVICE_NAME, account).map_err(|err| format!("keyring open: {err}"))?;
     entry
         .set_password(value)
         .map_err(|err| format!("keyring set: {err}"))
@@ -28,8 +27,7 @@ pub fn set_secret(account: &str, value: &str) -> Result<(), String> {
 /// account — the keychain has never had a value written, or the
 /// user deleted it via Keychain Access.
 pub fn get_secret(account: &str) -> Result<Option<String>, String> {
-    let entry = Entry::new(SERVICE_NAME, account)
-        .map_err(|err| format!("keyring open: {err}"))?;
+    let entry = Entry::new(SERVICE_NAME, account).map_err(|err| format!("keyring open: {err}"))?;
     match entry.get_password() {
         Ok(value) => Ok(Some(value)),
         Err(keyring::Error::NoEntry) => Ok(None),
@@ -41,8 +39,7 @@ pub fn get_secret(account: &str) -> Result<Option<String>, String> {
 /// not an error so the UI's "Forget token" button never has to know
 /// whether anything was there before.
 pub fn delete_secret(account: &str) -> Result<(), String> {
-    let entry = Entry::new(SERVICE_NAME, account)
-        .map_err(|err| format!("keyring open: {err}"))?;
+    let entry = Entry::new(SERVICE_NAME, account).map_err(|err| format!("keyring open: {err}"))?;
     match entry.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),

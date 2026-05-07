@@ -29,7 +29,12 @@ def stack(tmp_path: Path):
     queue = open_queue(tmp_path / "queue.db")
     dispatcher = Dispatcher(store=store, embedder=StubEmbedder())
     runner = IndexingRunner(queue=queue, dispatcher=dispatcher)
-    app = build_app(token=TOKEN, indexing_queue=queue, lancedb_store=store)
+    app = build_app(
+        token=TOKEN,
+        indexing_queue=queue,
+        indexing_runner=runner,
+        lancedb_store=store,
+    )
     yield app, queue, store, runner, tmp_path
     runner.stop()
     queue.close()
@@ -198,6 +203,7 @@ def test_get_index_status_aggregates_state(stack):
     body = resp.json()
     assert body["queue_depth"] == 1
     assert len(body["in_flight"]) == 1
+    assert body["enhancement_in_flight"] == []
     assert body["indexed_chunks"] == 0
     assert body["enhancement_pending"] == 0
     assert body["enhancement_failed"] == 0
@@ -224,6 +230,28 @@ def test_get_index_status_includes_enhancement_counts(stack):
     assert body["enhancement_pending"] == 1
     assert body["enhancement_failed"] == 1
     assert body["enhancement_total_images"] == 3
+
+
+def test_post_pause_toggles_runner_pause(stack):
+    app, _, _, runner, _ = stack
+    assert runner.paused is False
+
+    with TestClient(app) as client:
+        paused = client.post(
+            "/index/pause",
+            headers=_auth(),
+            json={"paused": True},
+        )
+        resumed = client.post(
+            "/index/pause",
+            headers=_auth(),
+            json={"paused": False},
+        )
+
+    assert paused.status_code == 200
+    assert paused.json() == {"paused": True}
+    assert resumed.json() == {"paused": False}
+    assert runner.paused is False
 
 
 def test_post_backfill_enhancement_flags_indexed_images(stack):

@@ -30,8 +30,10 @@ export function IndexingStatusCard({
     );
   }
 
-  const { queueDepth, inFlight, indexedChunks } = envelope.data;
-  const isIdle = queueDepth === 0 && inFlight.length === 0;
+  const { queueDepth, inFlight, enhancementInFlight, indexedChunks } =
+    envelope.data;
+  const activeCount = inFlight.length + enhancementInFlight.length;
+  const isIdle = queueDepth === 0 && activeCount === 0;
 
   return (
     <div className="settings-card">
@@ -43,7 +45,7 @@ export function IndexingStatusCard({
         </div>
         <div className="settings-stat">
           <dt>In flight</dt>
-          <dd>{inFlight.length}</dd>
+          <dd>{activeCount}</dd>
         </div>
         <div className="settings-stat">
           <dt>Indexed chunks</dt>

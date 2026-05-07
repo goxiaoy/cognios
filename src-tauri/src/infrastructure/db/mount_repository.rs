@@ -320,8 +320,12 @@ pub fn reconcile_mount(
         .iter()
         .map(|entry| (entry.relative_path.clone(), entry.id.clone()))
         .collect::<HashMap<_, _>>();
-    let new_descendant_ids =
-        insert_scanned_entries(&tx, mount_id, &scanned_entries, &existing_ids_by_relative_path)?;
+    let new_descendant_ids = insert_scanned_entries(
+        &tx,
+        mount_id,
+        &scanned_entries,
+        &existing_ids_by_relative_path,
+    )?;
     tx.commit()?;
 
     Ok(ReconcileMountOutcome {

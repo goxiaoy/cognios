@@ -146,7 +146,10 @@ pub async fn run_index_state_sync(
     }
 
     let mut cursor: u64 = 0;
-    log::info!("index-state-sync: started (cursor=0, poll={:?})", POLL_INTERVAL);
+    log::info!(
+        "index-state-sync: started (cursor=0, poll={:?})",
+        POLL_INTERVAL
+    );
 
     loop {
         // ``restart_sidecar`` flips the supervisor through
@@ -157,14 +160,14 @@ pub async fn run_index_state_sync(
         // sidecar isn't coming back without user action.
         match supervisor.state() {
             SupervisorState::Running { .. } => {}
-            SupervisorState::Failed { retryable: false, .. } => {
+            SupervisorState::Failed {
+                retryable: false, ..
+            } => {
                 log::info!("index-state-sync: supervisor failed terminally; exiting loop");
                 return;
             }
             other => {
-                log::debug!(
-                    "index-state-sync: supervisor in {other:?}; waiting for Running"
-                );
+                log::debug!("index-state-sync: supervisor in {other:?}; waiting for Running");
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
@@ -283,12 +286,7 @@ mod tests {
         }
     }
 
-    fn change_with_error(
-        node_id: &str,
-        state: &str,
-        error: &str,
-        seq: u64,
-    ) -> IndexChangeDto {
+    fn change_with_error(node_id: &str, state: &str, error: &str, seq: u64) -> IndexChangeDto {
         IndexChangeDto {
             node_id: node_id.to_string(),
             state: state.to_string(),
@@ -319,8 +317,7 @@ mod tests {
     fn skips_unknown_node_ids_silently() {
         let db = setup_db();
         // No insert — id is not in nodes table.
-        let updated =
-            apply_index_changes(&db, &[change("ghost", "indexed", 1)]).unwrap();
+        let updated = apply_index_changes(&db, &[change("ghost", "indexed", 1)]).unwrap();
         assert_eq!(updated, 0);
     }
 
@@ -328,8 +325,7 @@ mod tests {
     fn skips_unknown_states() {
         let db = setup_db();
         insert_node(&db, "abc", "ready");
-        let updated =
-            apply_index_changes(&db, &[change("abc", "weird", 1)]).unwrap();
+        let updated = apply_index_changes(&db, &[change("abc", "weird", 1)]).unwrap();
         assert_eq!(updated, 0);
         assert_eq!(read_state(&db, "abc"), "ready");
     }

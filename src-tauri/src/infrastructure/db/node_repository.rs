@@ -141,10 +141,7 @@ fn build_snapshot(records: Vec<NodeRecord>) -> ExplorerSnapshotDto {
     }
 }
 
-pub fn touch_node_modified_at(
-    conn: &Connection,
-    node_id: Option<&str>,
-) -> rusqlite::Result<()> {
+pub fn touch_node_modified_at(conn: &Connection, node_id: Option<&str>) -> rusqlite::Result<()> {
     if let Some(node_id) = node_id {
         conn.execute(
             "UPDATE nodes SET updated_at = CURRENT_TIMESTAMP WHERE id = ?1",

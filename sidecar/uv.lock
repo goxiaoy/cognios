@@ -2059,6 +2059,7 @@ advanced-ocr = [
     { name = "paddlex", extra = ["ocr"] },
 ]
 embedding = [
+    { name = "onnxruntime" },
     { name = "optimum", extra = ["onnxruntime"] },
     { name = "transformers" },
 ]
@@ -2076,6 +2077,7 @@ requires-dist = [
     { name = "httpx", specifier = "==0.28.1" },
     { name = "keyring", specifier = ">=24.0,<26.0" },
     { name = "lancedb", specifier = "==0.30.2" },
+    { name = "onnxruntime", marker = "extra == 'embedding'", specifier = ">=1.20,<2.0" },
     { name = "optimum", extras = ["onnxruntime"], marker = "extra == 'embedding'", specifier = ">=1.24,<2.0" },
     { name = "paddleocr", marker = "extra == 'advanced-ocr'", specifier = ">=3.0,<4.0" },
     { name = "paddlepaddle", marker = "extra == 'advanced-ocr'", specifier = ">=3.0,<4.0" },

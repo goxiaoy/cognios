@@ -98,10 +98,7 @@ pub fn delete_node(
 
 /// Recursively collect every descendant id of `root_id`, excluding
 /// the root itself. Empty for leaf nodes (notes, urls, files).
-fn collect_descendant_ids(
-    conn: &Connection,
-    root_id: &str,
-) -> Result<Vec<String>, String> {
+fn collect_descendant_ids(conn: &Connection, root_id: &str) -> Result<Vec<String>, String> {
     let mut stmt = conn
         .prepare(
             "

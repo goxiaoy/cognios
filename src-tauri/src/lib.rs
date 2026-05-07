@@ -5,6 +5,7 @@ pub mod services;
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
@@ -28,6 +29,7 @@ pub struct AppState {
     pub emitter: VfsEventEmitter,
     pub search_sidecar: Arc<SearchSidecarSupervisor>,
     pub search_client: Arc<SearchSidecarClient>,
+    pub shutdown_requested: Arc<AtomicBool>,
 }
 
 fn storage_dir_from_home(home_dir: PathBuf) -> PathBuf {
@@ -50,12 +52,27 @@ pub fn run() {
                 return;
             }
 
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
                 let app_handle = window.app_handle();
                 let state = app_handle.state::<AppState>();
-                state.search_sidecar.kill();
-                state.mount_watchers.stop_all();
-                app_handle.exit(0);
+                if state.shutdown_requested.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                let search_sidecar = Arc::clone(&state.search_sidecar);
+                let search_client = Arc::clone(&state.search_client);
+                let mount_watchers = Arc::clone(&state.mount_watchers);
+                let app_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    services::search::safe_lifecycle::safe_stop_when_idle(
+                        search_sidecar,
+                        search_client,
+                        "app-close",
+                    )
+                    .await;
+                    mount_watchers.stop_all();
+                    app_handle.exit(0);
+                });
             }
         })
         .setup(|app| {
@@ -159,21 +176,19 @@ pub fn run() {
                 let resync_storage = app_data_dir.clone();
                 let resync_supervisor = Arc::clone(&search_sidecar);
                 tauri::async_runtime::spawn(async move {
-                    use std::time::Duration;
                     use crate::services::search::SupervisorState;
+                    use std::time::Duration;
                     // Wait up to 60 s for the sidecar to be Running.
                     let mut waited = Duration::ZERO;
                     let step = Duration::from_millis(500);
                     while waited < Duration::from_secs(60) {
-                        if matches!(resync_supervisor.state(), SupervisorState::Running { .. })
-                        {
+                        if matches!(resync_supervisor.state(), SupervisorState::Running { .. }) {
                             break;
                         }
                         tokio::time::sleep(step).await;
                         waited += step;
                     }
-                    if !matches!(resync_supervisor.state(), SupervisorState::Running { .. })
-                    {
+                    if !matches!(resync_supervisor.state(), SupervisorState::Running { .. }) {
                         log::info!("startup resync skipped: sidecar never reached Running");
                         return;
                     }
@@ -242,6 +257,7 @@ pub fn run() {
             {
                 services::search::python_dev_watcher::spawn_python_dev_watcher(
                     Arc::clone(&search_sidecar),
+                    Arc::clone(&search_client),
                     app.handle().clone(),
                 );
             }
@@ -254,6 +270,7 @@ pub fn run() {
                 emitter,
                 search_sidecar,
                 search_client,
+                shutdown_requested: Arc::new(AtomicBool::new(false)),
             });
 
             Ok(())

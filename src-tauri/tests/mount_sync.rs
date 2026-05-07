@@ -134,8 +134,7 @@ fn nested_mount_conflict_skips_unrelated_siblings() {
     .expect("bar mount");
 
     let normalized_baz = normalize_mount_path(&baz.to_string_lossy()).expect("normalize");
-    let conflict =
-        find_nested_mount_conflict(&conn, &normalized_baz).expect("query");
+    let conflict = find_nested_mount_conflict(&conn, &normalized_baz).expect("query");
     assert!(conflict.is_none(), "siblings shouldn't conflict");
 }
 
@@ -157,8 +156,7 @@ fn nested_mount_conflict_ignores_exact_path_match() {
     )
     .expect("first mount");
 
-    let normalized =
-        normalize_mount_path(&tempdir.path().to_string_lossy()).expect("normalize");
+    let normalized = normalize_mount_path(&tempdir.path().to_string_lossy()).expect("normalize");
     let conflict = find_nested_mount_conflict(&conn, &normalized).expect("query");
     assert!(
         conflict.is_none(),

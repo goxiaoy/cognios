@@ -64,6 +64,7 @@ SUPPORTED_EXTENSIONS = (
 OcrExtract = Callable[[Path], str]
 CaptionExtract = Callable[[Path], str]
 AdvancedOcrExtract = Callable[[Path], str]
+ArtifactKind = Literal["basic", "advanced", "caption"]
 
 
 class ImageProcessor:
@@ -84,6 +85,7 @@ class ImageProcessor:
         ocr_extract: OcrExtract | None = None,
         caption_extract: CaptionExtract | None = None,
         advanced_ocr_extract: AdvancedOcrExtract | None = None,
+        extract_dir: Path | None = None,
     ) -> None:
         self._store = store
         self._embedder = embedder
@@ -91,6 +93,7 @@ class ImageProcessor:
         self._ocr_extract = ocr_extract
         self._caption_extract = caption_extract
         self._advanced_ocr_extract = advanced_ocr_extract
+        self._extract_dir = extract_dir
 
     def can_handle(self, job: IndexingJob) -> bool:
         if job.kind not in self.KINDS:
@@ -117,6 +120,8 @@ class ImageProcessor:
         summary_text = _safe_extract(
             self._caption_extract, path, label="Caption"
         )
+        self._write_extract_artifact(job, "basic", body_text)
+        self._write_extract_artifact(job, "caption", summary_text)
         body_chunks = chunk_text(body_text) if body_text else []
         summary_chunks = chunk_text(summary_text) if summary_text else []
         if not body_chunks and not summary_chunks:
@@ -150,6 +155,8 @@ class ImageProcessor:
         except Exception as err:
             self._handle_enhancement_error(job.node_id, err)
             return
+        advanced_text = advanced_text.strip()
+        self._write_extract_artifact(job, "advanced", advanced_text)
 
         body_chunks = _meaningful_chunks(advanced_text)
         if not body_chunks:
@@ -233,8 +240,26 @@ class ImageProcessor:
         if len(vectors) != len(chunks):
             raise ValueError(
                 f"embedder returned {len(vectors)} vectors for {len(chunks)} chunks"
-        )
+            )
         return vectors
+
+    def _write_extract_artifact(
+        self,
+        job: IndexingJob,
+        kind: ArtifactKind,
+        text: str,
+    ) -> None:
+        if self._extract_dir is None or not text.strip():
+            return
+        try:
+            write_extract_artifact(self._extract_dir, job, kind, text)
+        except Exception as err:
+            LOG.warning(
+                "failed to write %s OCR artifact for %s: %s",
+                kind,
+                job.node_id,
+                err,
+            )
 
 
 class EnhancementTransientError(Exception):
@@ -297,3 +322,36 @@ def _safe_extract(
         LOG.warning("%s extractor failed for %s: %s", label, path.name, err)
         return ""
     return text.strip()
+
+
+def write_extract_artifact(
+    extract_dir: Path,
+    job: IndexingJob,
+    kind: ArtifactKind,
+    text: str,
+) -> Path:
+    """Persist OCR/caption text beside the search index for inspection."""
+    image_dir = extract_dir / _safe_path_segment(job.node_id, "node")
+    image_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{kind}.md"
+    artifact_path = image_dir / filename
+    tmp_path = image_dir / f".{filename}.tmp"
+    tmp_path.write_text(text.strip() + "\n", encoding="utf-8")
+    tmp_path.replace(artifact_path)
+    return artifact_path
+
+
+def _safe_path_segment(value: str, fallback: str) -> str:
+    cleaned_chars: list[str] = []
+    last_was_dash = False
+    for char in value.strip():
+        if char.isalnum() or char in {"_", ".", "-"}:
+            cleaned_chars.append(char)
+            last_was_dash = False
+        elif not last_was_dash:
+            cleaned_chars.append("-")
+            last_was_dash = True
+    cleaned = "".join(cleaned_chars).strip(".-")
+    if not cleaned:
+        cleaned = fallback
+    return cleaned[:120]

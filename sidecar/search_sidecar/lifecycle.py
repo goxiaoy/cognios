@@ -143,6 +143,7 @@ def serve(storage_dir: Path) -> int:
         ocr_extract=ocr_extract,
         caption_extract=caption_extract,
         advanced_ocr_extract=advanced_ocr_extract,
+        extract_dir=search_dir / "extract",
     )
     advanced_ocr_autorun = advanced_ocr_autorun_enabled()
     _run_advanced_ocr_backfill_on_boot(

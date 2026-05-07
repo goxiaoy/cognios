@@ -147,7 +147,11 @@ fn rename_node_fires_node_renamed_event_with_target_id() {
     .expect("rename folder");
 
     let log = events.lock().expect("log");
-    assert_eq!(log.len(), 1, "rename only — create_folder is repository-level");
+    assert_eq!(
+        log.len(),
+        1,
+        "rename only — create_folder is repository-level"
+    );
     assert_eq!(log[0].reason, "node-renamed");
     assert_eq!(log[0].mount_id, created.node_id);
 }
@@ -232,8 +236,7 @@ fn delete_folder_with_cascade_carries_descendant_ids_in_event() {
     // The descendant_ids list must include the child folder + the
     // note (every row sqlite cascaded out), but not the parent
     // itself (the parent id rides in `mount_id`).
-    let descendants: std::collections::HashSet<&String> =
-        last.descendant_ids.iter().collect();
+    let descendants: std::collections::HashSet<&String> = last.descendant_ids.iter().collect();
     assert!(
         descendants.contains(&child.node_id),
         "child folder id missing from descendant_ids: {:?}",
@@ -249,7 +252,6 @@ fn delete_folder_with_cascade_carries_descendant_ids_in_event() {
         "parent id leaked into descendant_ids"
     );
 }
-
 
 #[test]
 fn delete_leaf_note_emits_no_descendant_ids() {

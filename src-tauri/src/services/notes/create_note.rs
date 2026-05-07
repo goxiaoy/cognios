@@ -53,8 +53,7 @@ pub fn create_note(
         return Err(format!("failed to create note file: {file_error}"));
     }
 
-    touch_node_modified_at(conn, input.parent_id.as_deref())
-        .map_err(|error| error.to_string())?;
+    touch_node_modified_at(conn, input.parent_id.as_deref()).map_err(|error| error.to_string())?;
 
     let snapshot = list_snapshot(conn).map_err(|error| error.to_string())?;
     emitter(VfsChangeEvent {

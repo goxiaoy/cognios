@@ -186,6 +186,8 @@ pub struct SearchResponseDto {
 pub struct IndexStatusDto {
     pub queue_depth: u64,
     pub in_flight: Vec<String>,
+    #[serde(default)]
+    pub enhancement_in_flight: Vec<String>,
     pub indexed_chunks: u64,
     #[serde(default)]
     pub enhancement_pending: u64,
@@ -198,6 +200,11 @@ pub struct IndexStatusDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackfillResultDto {
     pub flagged: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunnerPauseResultDto {
+    pub paused: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -429,10 +436,7 @@ impl SearchSidecarClient {
     }
 
     #[cfg(test)]
-    pub fn with_http_client(
-        supervisor: Arc<SearchSidecarSupervisor>,
-        http: Client,
-    ) -> Self {
+    pub fn with_http_client(supervisor: Arc<SearchSidecarSupervisor>, http: Client) -> Self {
         Self { supervisor, http }
     }
 
@@ -451,10 +455,7 @@ impl SearchSidecarClient {
         }
     }
 
-    async fn get_envelope<T: for<'de> Deserialize<'de>>(
-        &self,
-        path: &str,
-    ) -> SidecarEnvelope<T> {
+    async fn get_envelope<T: for<'de> Deserialize<'de>>(&self, path: &str) -> SidecarEnvelope<T> {
         let (base, token) = match self.rendezvous() {
             Ok(v) => v,
             Err(SidecarEnvelopeState::Initialising) => return SidecarEnvelope::initialising(),
@@ -515,8 +516,14 @@ impl SearchSidecarClient {
     /// ``POST /events/node`` route. Errors are logged but never bubble
     /// up — the resync ping is the safety net for missed events.
     pub async fn forward_node_event(&self, event: &NodeEvent) {
-        if matches!(self.supervisor.state(), SupervisorState::NotStarted | SupervisorState::Spawning) {
-            log::debug!("dropping node event for {} (sidecar not yet running)", event.node_id);
+        if matches!(
+            self.supervisor.state(),
+            SupervisorState::NotStarted | SupervisorState::Spawning
+        ) {
+            log::debug!(
+                "dropping node event for {} (sidecar not yet running)",
+                event.node_id
+            );
             return;
         }
         let envelope: SidecarEnvelope<NodeEventAck> =
@@ -543,9 +550,12 @@ impl SearchSidecarClient {
         self.get_envelope("/index/status").await
     }
 
-    pub async fn backfill_advanced_ocr_enhancement(
-        &self,
-    ) -> SidecarEnvelope<BackfillResultDto> {
+    pub async fn set_indexing_paused(&self, paused: bool) -> SidecarEnvelope<RunnerPauseResultDto> {
+        self.post_envelope("/index/pause", &serde_json::json!({ "paused": paused }))
+            .await
+    }
+
+    pub async fn backfill_advanced_ocr_enhancement(&self) -> SidecarEnvelope<BackfillResultDto> {
         self.post_envelope("/index/backfill-enhancement", &serde_json::json!({}))
             .await
     }
@@ -554,19 +564,12 @@ impl SearchSidecarClient {
         self.get_envelope("/index/snapshot").await
     }
 
-    pub async fn index_changes(
-        &self,
-        since: u64,
-        limit: u32,
-    ) -> SidecarEnvelope<IndexChangesDto> {
+    pub async fn index_changes(&self, since: u64, limit: u32) -> SidecarEnvelope<IndexChangesDto> {
         let path = format!("/index/changes?since={since}&limit={limit}");
         self.get_envelope(&path).await
     }
 
-    pub async fn node_index_status(
-        &self,
-        node_id: &str,
-    ) -> SidecarEnvelope<NodeIndexStatusDto> {
+    pub async fn node_index_status(&self, node_id: &str) -> SidecarEnvelope<NodeIndexStatusDto> {
         let path = format!("/index/status/{}", urlencoded(node_id));
         self.get_envelope(&path).await
     }
@@ -607,10 +610,7 @@ impl SearchSidecarClient {
         }
     }
 
-    pub async fn node_content(
-        &self,
-        node_id: &str,
-    ) -> SidecarEnvelope<NodeContentDto> {
+    pub async fn node_content(&self, node_id: &str) -> SidecarEnvelope<NodeContentDto> {
         let path = format!("/index/node/{}/content", urlencoded(node_id));
         self.get_envelope(&path).await
     }
@@ -627,20 +627,14 @@ impl SearchSidecarClient {
     /// The download timeout is intentionally long — multi-GB models
     /// over a slow connection can run for many minutes. The supervisor
     /// is the backstop for a stuck sidecar; this client just streams.
-    pub async fn start_model_download<F>(
-        &self,
-        role: &str,
-        on_event: F,
-    ) -> Result<(), String>
+    pub async fn start_model_download<F>(&self, role: &str, on_event: F) -> Result<(), String>
     where
         F: Fn(ModelDownloadEvent) + Send + Sync + 'static,
     {
         const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
         let (base, token) = self.rendezvous().map_err(|state| match state {
-            SidecarEnvelopeState::Initialising => {
-                "sidecar still initialising".to_string()
-            }
+            SidecarEnvelopeState::Initialising => "sidecar still initialising".to_string(),
             _ => self.supervisor_failure_reason(),
         })?;
         let url = format!("{base}/models/download/{}", urlencoded(role));
@@ -833,7 +827,10 @@ mod tests {
         assert_eq!(to_ts["results"][0]["nodeId"], "abc-123");
         assert_eq!(to_ts["results"][0]["matchedIn"], "content");
         assert_eq!(to_ts["results"][0]["modifiedAt"], "2026-04-27T10:00:00Z");
-        assert_eq!(to_ts["results"][0]["matchOffsets"], serde_json::json!([[0, 5]]));
+        assert_eq!(
+            to_ts["results"][0]["matchOffsets"],
+            serde_json::json!([[0, 5]])
+        );
         assert_eq!(to_ts["nextCursor"], "offset:50");
         // Rust idiom keys must NOT leak through to the TS payload.
         assert!(to_ts["results"][0].get("node_id").is_none());
@@ -848,6 +845,7 @@ mod tests {
         let from_python = r#"{
             "queue_depth": 3,
             "in_flight": ["a"],
+            "enhancement_in_flight": ["img-1"],
             "indexed_chunks": 100,
             "enhancement_pending": 4,
             "enhancement_failed": 1,
@@ -855,9 +853,11 @@ mod tests {
         }"#;
         let parsed: IndexStatusDto = serde_json::from_str(from_python).expect("decode");
         assert_eq!(parsed.queue_depth, 3);
+        assert_eq!(parsed.enhancement_in_flight, vec!["img-1"]);
         assert_eq!(parsed.enhancement_pending, 4);
         let to_ts = serde_json::to_value(&parsed).unwrap();
         assert_eq!(to_ts["queueDepth"], 3);
+        assert_eq!(to_ts["enhancementInFlight"], serde_json::json!(["img-1"]));
         assert_eq!(to_ts["indexedChunks"], 100);
         assert_eq!(to_ts["enhancementPending"], 4);
         assert_eq!(to_ts["enhancementTotalImages"], 10);
@@ -934,8 +934,7 @@ mod tests {
             "first_run_skipped": false,
             "needs_restart": true
         }"#;
-        let parsed: SearchSettingsDto =
-            serde_json::from_str(from_python).expect("decode settings");
+        let parsed: SearchSettingsDto = serde_json::from_str(from_python).expect("decode settings");
         assert_eq!(parsed.version, 1);
         assert_eq!(
             parsed.providers["openai"].api_key_ref.as_deref(),
@@ -950,23 +949,15 @@ mod tests {
 
         let to_ts = serde_json::to_value(&parsed).unwrap();
         assert_eq!(to_ts["version"], 1);
-        assert_eq!(
-            to_ts["providers"]["openai"]["providerId"],
-            "openai"
-        );
+        assert_eq!(to_ts["providers"]["openai"]["providerId"], "openai");
         assert_eq!(
             to_ts["providers"]["openai"]["apiKeyRef"],
             "keychain://cognios-search/provider:openai"
         );
-        assert_eq!(
-            to_ts["features"]["semantic-search"]["providerId"],
-            "openai"
-        );
+        assert_eq!(to_ts["features"]["semantic-search"]["providerId"], "openai");
         assert_eq!(to_ts["needsRestart"], true);
         assert_eq!(to_ts["firstRunSkipped"], false);
-        assert!(to_ts["providers"]["openai"]
-            .get("provider_id")
-            .is_none());
+        assert!(to_ts["providers"]["openai"].get("provider_id").is_none());
         assert!(to_ts.get("first_run_skipped").is_none());
         assert!(to_ts.get("needs_restart").is_none());
     }
@@ -982,16 +973,14 @@ mod tests {
             "cloud_consent_acked": [],
             "first_run_skipped": false
         }"#;
-        let parsed: SearchSettingsDto =
-            serde_json::from_str(minimal).expect("legacy decode");
+        let parsed: SearchSettingsDto = serde_json::from_str(minimal).expect("legacy decode");
         assert!(!parsed.needs_restart);
     }
 
     #[test]
     fn drain_sse_frames_emits_each_complete_frame() {
-        let collected = std::sync::Arc::new(std::sync::Mutex::new(
-            Vec::<ModelDownloadEvent>::new(),
-        ));
+        let collected =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::<ModelDownloadEvent>::new()));
         let store = std::sync::Arc::clone(&collected);
         let on_event = move |ev: ModelDownloadEvent| {
             store.lock().unwrap().push(ev);
@@ -1078,8 +1067,7 @@ mod tests {
             "chunks": [{"id": "old-node:0", "text": "hello"}],
             "joined": "hello"
         }"#;
-        let parsed: NodeContentDto =
-            serde_json::from_str(legacy).expect("legacy decode");
+        let parsed: NodeContentDto = serde_json::from_str(legacy).expect("legacy decode");
         assert_eq!(parsed.chunks[0].role, "body");
     }
 
@@ -1093,8 +1081,7 @@ mod tests {
             "bytes_total": 100000,
             "error": null
         }"#;
-        let parsed: ModelDownloadEvent =
-            serde_json::from_str(from_python).expect("decode");
+        let parsed: ModelDownloadEvent = serde_json::from_str(from_python).expect("decode");
         assert_eq!(parsed.role, "embedding");
         assert_eq!(parsed.bytes_downloaded, 12345);
         let to_ts = serde_json::to_value(&parsed).unwrap();

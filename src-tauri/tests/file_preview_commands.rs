@@ -136,7 +136,8 @@ fn rejects_non_markdown_extension() {
 fn rejects_nonexistent_node() {
     let (_app, _mount, conn, _mount_id) = setup_mount_with_files(&[("a.md", b"x")]);
 
-    let error = read_file_content(&conn, "00000000-0000-0000-0000-000000000000").expect_err("rejected");
+    let error =
+        read_file_content(&conn, "00000000-0000-0000-0000-000000000000").expect_err("rejected");
 
     assert_eq!(error, "file unavailable");
 }
@@ -184,7 +185,12 @@ fn rejects_symlink_target_that_escapes_mount_root() {
         .roots
         .iter()
         .find(|node| node.id == created.mount_id)
-        .and_then(|mount| mount.children.iter().find(|child| child.name == "escape.md"));
+        .and_then(|mount| {
+            mount
+                .children
+                .iter()
+                .find(|child| child.name == "escape.md")
+        });
 
     // Some scanners may not surface symlinks at all; if the node exists, it must be rejected.
     if let Some(node) = escape_node {

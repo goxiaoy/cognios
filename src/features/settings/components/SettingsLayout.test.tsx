@@ -23,6 +23,7 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
       data: {
         queueDepth: 2,
         inFlight: ["x"],
+        enhancementInFlight: [],
         indexedChunks: 50,
         enhancementPending: 0,
         enhancementFailed: 0,
@@ -166,6 +167,7 @@ describe("SettingsLayout", () => {
         data: {
           queueDepth: 0,
           inFlight: [],
+          enhancementInFlight: [],
           indexedChunks: 20,
           enhancementPending: 4,
           enhancementFailed: 1,

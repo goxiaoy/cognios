@@ -353,12 +353,11 @@ class LanceDBStore:
         """Run a hybrid (FTS + vector) query and return raw chunk rows.
 
         Hybrid path requires both an FTS index on ``text`` and a
-        vector index on ``vector``. lancedb 0.30 supports this via
-        ``query_type="hybrid"`` plus the optional ``vector_query=...``
-        argument; some versions take the vector positionally as
-        ``search(text, query_type="hybrid").vector(vec)`` instead. We
-        try the modern path first and fall back if the API surface
-        differs on the installed version.
+        vector index on ``vector``. lancedb 0.30 validates hybrid
+        queries as either a string passed to ``search()`` or an
+        explicit ``.vector(...).text(...)`` pair, but not both. Use
+        the explicit pair so the call remains clear about which vector
+        came from our embedder.
 
         See plan note on lancedb #1656: prefer post-filter
         (``prefilter=False``) when both an FTS index and a scalar
@@ -389,8 +388,10 @@ class LanceDBStore:
         Returns a search builder; the caller adds ``where`` + ``limit``.
         """
         try:
-            return self._table.search(
-                query, query_type="hybrid", vector_query=query_vec
+            return (
+                self._table.search(query_type="hybrid")
+                .vector(query_vec)
+                .text(query)
             )
         except TypeError:
             # Older API: chain .vector() after the text/query call.

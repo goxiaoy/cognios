@@ -8,7 +8,7 @@ Two implementations live under ``search_sidecar``:
 
 - :class:`search_sidecar.embeddings.gte.GteEmbedder` (separate module)
   — wraps ``onnx-community/gte-multilingual-base`` via
-  ``optimum.onnxruntime``. Only importable when the ``embedding``
+  ``onnxruntime``. Only importable when the ``embedding``
   extra is installed (see ``sidecar/pyproject.toml``); the
   :func:`select_embedder` factory falls back to :class:`StubEmbedder`
   when it's not.

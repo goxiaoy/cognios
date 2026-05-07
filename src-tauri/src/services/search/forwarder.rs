@@ -35,8 +35,7 @@ use rusqlite::OptionalExtension;
 use crate::infrastructure::db::connection::Database;
 use crate::services::mounts::watcher::VfsChangeEvent;
 use crate::services::search::client::{
-    IndexSnapshotEntry, NodeEvent, NodeEventKind, SearchSidecarClient,
-    SidecarEnvelopeState,
+    IndexSnapshotEntry, NodeEvent, NodeEventKind, SearchSidecarClient, SidecarEnvelopeState,
 };
 
 /// True for reasons that name a single node mutation.
@@ -120,9 +119,7 @@ pub fn build_payload(
     let row = match load_node_row(&conn, &node_id) {
         Ok(Some(row)) => row,
         Ok(None) => {
-            log::debug!(
-                "forwarder: node {node_id} no longer in cognios.db; skipping forward"
-            );
+            log::debug!("forwarder: node {node_id} no longer in cognios.db; skipping forward");
             return None;
         }
         Err(err) => {
@@ -156,10 +153,7 @@ struct NodeRow {
     updated_at: Option<String>,
 }
 
-fn load_node_row(
-    conn: &rusqlite::Connection,
-    node_id: &str,
-) -> rusqlite::Result<Option<NodeRow>> {
+fn load_node_row(conn: &rusqlite::Connection, node_id: &str) -> rusqlite::Result<Option<NodeRow>> {
     conn.query_row(
         "
         SELECT id, kind, name, mount_id, relative_path, created_at, updated_at
@@ -182,11 +176,7 @@ fn load_node_row(
     .optional()
 }
 
-fn resolve_path(
-    conn: &rusqlite::Connection,
-    row: &NodeRow,
-    storage_dir: &Path,
-) -> Option<String> {
+fn resolve_path(conn: &rusqlite::Connection, row: &NodeRow, storage_dir: &Path) -> Option<String> {
     match row.kind.as_str() {
         "note" => Some(
             storage_dir
@@ -275,10 +265,7 @@ pub async fn resync_all_nodes(
     // 1. Sidecar's current view.
     let snapshot_env = client.index_snapshot().await;
     let sidecar_view: HashMap<String, IndexSnapshotEntry> = match snapshot_env.state {
-        SidecarEnvelopeState::Ready => snapshot_env
-            .data
-            .map(|s| s.nodes)
-            .unwrap_or_default(),
+        SidecarEnvelopeState::Ready => snapshot_env.data.map(|s| s.nodes).unwrap_or_default(),
         SidecarEnvelopeState::Initialising => {
             log::info!("resync: sidecar still initialising; will retry next cycle");
             return ResyncSummary::default();
@@ -516,9 +503,7 @@ mod tests {
 
     #[test]
     fn list_all_nodes_meta_returns_id_and_updated_at() {
-        use crate::infrastructure::db::node_repository::{
-            create_folder, CreateFolderInput,
-        };
+        use crate::infrastructure::db::node_repository::{create_folder, CreateFolderInput};
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("cognios.db");
         let db = Database::new(db_path);

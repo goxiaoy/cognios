@@ -53,7 +53,7 @@ def can_load_real_embedder() -> bool:
     """Cheap check (no module import) for whether the optional
     ``embedding`` extra is installed."""
     return (
-        importlib.util.find_spec("optimum") is not None
+        importlib.util.find_spec("onnxruntime") is not None
         and importlib.util.find_spec("transformers") is not None
     )
 

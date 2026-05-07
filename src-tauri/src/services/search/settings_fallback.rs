@@ -20,9 +20,7 @@ use super::client::SearchSettingsDto;
 /// with ``needs_restart=false`` (no live sidecar to compare against
 /// a boot signature). On parse failure or missing file, returns an
 /// error string the caller can surface to the user.
-pub fn read_settings_file_fallback(
-    settings_path: &Path,
-) -> Result<SearchSettingsDto, String> {
+pub fn read_settings_file_fallback(settings_path: &Path) -> Result<SearchSettingsDto, String> {
     let bytes = std::fs::read(settings_path)
         .map_err(|err| format!("read {}: {}", settings_path.display(), err))?;
     let mut dto: SearchSettingsDto = serde_json::from_slice(&bytes)

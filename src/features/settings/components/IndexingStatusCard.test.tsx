@@ -17,6 +17,7 @@ function status(overrides: Partial<IndexStatus> = {}): IndexStatus {
   return {
     queueDepth: 0,
     inFlight: [],
+    enhancementInFlight: [],
     indexedChunks: 0,
     enhancementPending: 0,
     enhancementFailed: 0,

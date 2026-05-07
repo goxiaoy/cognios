@@ -8,6 +8,7 @@ settings) so this module stays free of any cloud / model imports.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol
 
 from ..storage import LanceDBStore
@@ -45,6 +46,7 @@ class Dispatcher:
         ocr_extract: OcrExtract | None = None,
         caption_extract: CaptionExtract | None = None,
         advanced_ocr_extract: AdvancedOcrExtract | None = None,
+        extract_dir: Path | None = None,
     ) -> None:
         self.image_processor = ImageProcessor(
             store,
@@ -53,6 +55,7 @@ class Dispatcher:
             ocr_extract=ocr_extract,
             caption_extract=caption_extract,
             advanced_ocr_extract=advanced_ocr_extract,
+            extract_dir=extract_dir,
         )
         self._processors: list[Processor] = [
             TextProcessor(store, embedder),

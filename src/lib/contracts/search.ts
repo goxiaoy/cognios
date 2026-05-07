@@ -55,6 +55,7 @@ export interface SearchResponse {
 export interface IndexStatus {
   queueDepth: number;
   inFlight: string[];
+  enhancementInFlight: string[];
   indexedChunks: number;
   enhancementPending: number;
   enhancementFailed: number;

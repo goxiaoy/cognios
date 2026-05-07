@@ -39,6 +39,25 @@ def test_advanced_ocr_backfill_on_boot_flags_when_available(tmp_path: Path):
         queue.close()
 
 
+def test_advanced_ocr_backfill_on_boot_skips_completed_images(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        _index_image(queue)
+        queue.set_enhancement_pending(UUID_A)
+        queue.clear_enhancement_pending(UUID_A)
+        dispatcher = Dispatcher(
+            store=store,
+            embedder=StubEmbedder(),
+            queue=queue,
+            advanced_ocr_extract=lambda _p: "advanced",
+        )
+        _run_advanced_ocr_backfill_on_boot(queue, dispatcher)
+        assert queue.claim_next_enhancement() is None
+    finally:
+        queue.close()
+
+
 def test_advanced_ocr_backfill_on_boot_skips_when_autorun_disabled(tmp_path: Path):
     store = open_store(tmp_path / "index.lance")
     queue = open_queue(tmp_path / "queue.db")

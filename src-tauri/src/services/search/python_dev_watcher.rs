@@ -13,7 +13,8 @@
 //! ``<workspace>/sidecar/search_sidecar/**`` for ``.py`` mutations.
 //! On any change it debounces 500 ms (so a save triggered by an
 //! IDE that touches several files in quick succession only fires
-//! one restart) and calls :meth:`SearchSidecarSupervisor::restart`,
+//! one restart), pauses new index claims, waits for active OCR work
+//! to finish, then calls :meth:`SearchSidecarSupervisor::restart`,
 //! which is the same graceful restart path the Settings UI uses.
 //!
 //! Gated behind ``#[cfg(debug_assertions)]`` so release builds
@@ -22,6 +23,7 @@
 
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,6 +31,8 @@ use std::time::Duration;
 use notify::{Config, PollWatcher, RecursiveMode, Watcher};
 use tauri::AppHandle;
 
+use crate::services::search::client::SearchSidecarClient;
+use crate::services::search::safe_lifecycle::safe_restart_when_idle;
 use crate::services::search::supervisor::SearchSidecarSupervisor;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(750);
@@ -49,10 +53,7 @@ fn sidecar_python_root() -> PathBuf {
 /// Excludes ``__pycache__`` (compiled bytecode that tracks .py edits
 /// and would double-fire) and anything that's not ``.py``.
 fn is_relevant_path(path: &Path) -> bool {
-    if path
-        .components()
-        .any(|c| c.as_os_str() == "__pycache__")
-    {
+    if path.components().any(|c| c.as_os_str() == "__pycache__") {
         return false;
     }
     path.extension()
@@ -71,6 +72,7 @@ fn is_relevant_path(path: &Path) -> bool {
 /// mount watchers already use.
 pub fn spawn_python_dev_watcher(
     supervisor: Arc<SearchSidecarSupervisor>,
+    client: Arc<SearchSidecarClient>,
     app_handle: AppHandle,
 ) {
     let root = sidecar_python_root();
@@ -85,6 +87,7 @@ pub fn spawn_python_dev_watcher(
 
     std::thread::spawn(move || {
         let (tx, rx) = channel::<bool>();
+        let restart_pending = Arc::new(AtomicBool::new(false));
 
         let tx_outer = tx.clone();
         let watcher_result = PollWatcher::new(
@@ -136,10 +139,19 @@ pub fn spawn_python_dev_watcher(
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
             }
-            log::info!("python-dev-watcher: Python source changed; restarting sidecar");
-            if let Err(err) = supervisor.restart(&app_handle) {
-                log::warn!("python-dev-watcher: restart failed: {err}");
+            if restart_pending.swap(true, Ordering::SeqCst) {
+                log::info!("python-dev-watcher: restart already pending; coalescing change");
+                continue;
             }
+            log::info!("python-dev-watcher: Python source changed; scheduling safe restart");
+            let supervisor = Arc::clone(&supervisor);
+            let client = Arc::clone(&client);
+            let app_handle = app_handle.clone();
+            let restart_pending = Arc::clone(&restart_pending);
+            tauri::async_runtime::spawn(async move {
+                safe_restart_when_idle(supervisor, client, app_handle, "python-dev-watcher").await;
+                restart_pending.store(false, Ordering::SeqCst);
+            });
         }
     });
 }

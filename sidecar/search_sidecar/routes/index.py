@@ -9,12 +9,17 @@ middleware.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from ..index.processors.image import SUPPORTED_EXTENSIONS
 from ..index.queue import IndexingQueue, JobState
 from ..storage import LanceDBStore, role_or_default
 
 router = APIRouter(prefix="/index", tags=["index"])
+
+
+class RunnerPauseRequest(BaseModel):
+    paused: bool
 
 
 def _get_queue(request: Request) -> IndexingQueue:
@@ -31,14 +36,22 @@ def _get_store(request: Request) -> LanceDBStore | None:
     return getattr(request.app.state, "lancedb_store", None)
 
 
+def _get_runner(request: Request):
+    return getattr(request.app.state, "indexing_runner", None)
+
+
 @router.get("/status")
 def get_index_status(request: Request) -> dict:
     """Aggregate queue + index health for the sidebar footer."""
     queue = _get_queue(request)
     store = _get_store(request)
+    runner = _get_runner(request)
     return {
         "queue_depth": queue.queue_depth(),
         "in_flight": queue.in_flight_node_ids(),
+        "enhancement_in_flight": (
+            runner.enhancement_in_flight_node_ids if runner is not None else []
+        ),
         "indexed_chunks": store.count() if store is not None else 0,
         "enhancement_pending": queue.count_enhancement_pending(),
         "enhancement_failed": queue.count_enhancement_failed(),
@@ -54,6 +67,19 @@ def post_backfill_enhancement(request: Request) -> dict:
     queue = _get_queue(request)
     flagged = queue.backfill_enhancement_pending(SUPPORTED_EXTENSIONS)
     return {"flagged": flagged}
+
+
+@router.post("/pause")
+def post_runner_pause(body: RunnerPauseRequest, request: Request) -> dict:
+    """Pause/resume new index claims while allowing in-flight work to finish."""
+    runner = _get_runner(request)
+    if runner is None:
+        raise HTTPException(
+            status_code=500,
+            detail="indexing_runner not configured on app.state",
+        )
+    runner.set_paused(body.paused)
+    return {"paused": runner.paused}
 
 
 @router.get("/status/{node_id}")

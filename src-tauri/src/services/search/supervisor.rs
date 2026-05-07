@@ -11,8 +11,8 @@
 //!    `Failed` on `Terminated`.
 //! 2. A second background task polls the runtime file (1 s ticks, 30 s
 //!    deadline). On success, transitions state to `Running { runtime }`.
-//! 3. `kill()` calls `child.kill()` on the stored handle (called from
-//!    Tauri's window-close handler in `lib.rs`).
+//! 3. `stop_gracefully()` sends SIGTERM to the sidecar and waits for
+//!    the Python lifecycle cleanup path before falling back to SIGKILL.
 //!
 //! If no candidate can be spawned, `start()` transitions to `Failed` and
 //! logs the attempted launch paths — the rest of the app continues to work.
@@ -259,14 +259,14 @@ impl SearchSidecarSupervisor {
         });
     }
 
-    /// Called from Tauri's window-close handler. Kills the child if it
-    /// is still alive and transitions to `Stopped`.
+    /// Stop the running sidecar via SIGTERM, falling back to SIGKILL
+    /// only if the process is still alive after the grace period.
     pub fn kill(&self) {
-        if let Some(child) = self.take_child() {
-            if let Err(err) = child.kill() {
-                log::warn!("failed to kill sidecar child: {err}");
-            }
-        }
+        self.stop_gracefully();
+    }
+
+    pub fn stop_gracefully(&self) {
+        self.terminate_current_child("stop");
         self.set_state(SupervisorState::Stopped);
     }
 
@@ -291,13 +291,21 @@ impl SearchSidecarSupervisor {
     ///    one more poll round for the kernel to reap.
     /// 5. Spawn a new sidecar via ``start(app)``.
     pub fn restart(self: &Arc<Self>, app: &AppHandle) -> Result<(), String> {
+        self.terminate_current_child("restart");
+        self.set_state(SupervisorState::Stopped);
+        // Spawn fresh.
+        self.start(app);
+        Ok(())
+    }
+
+    fn terminate_current_child(&self, context: &str) {
         let pid_before = read_lock_holder_pid(&self.lock_path);
 
         // Send SIGTERM if we know who's holding the lock.
         if let Some(pid) = pid_before {
             if process_is_alive(pid) {
                 if let Err(err) = send_signal(pid, "TERM") {
-                    log::warn!("restart: SIGTERM to pid {pid} failed: {err}");
+                    log::warn!("{context}: SIGTERM to pid {pid} failed: {err}");
                 }
                 // Wait for graceful exit + flock release.
                 let deadline = Instant::now() + ORPHAN_SIGTERM_GRACE;
@@ -314,9 +322,12 @@ impl SearchSidecarSupervisor {
         // on Unix via tauri-plugin-shell — covers the case where
         // SIGTERM didn't take.
         if let Some(child) = self.take_child() {
-            if process_still_alive_for_child(&child) {
+            let child_still_alive = pid_before
+                .map(process_is_alive)
+                .unwrap_or_else(|| process_still_alive_for_child(&child));
+            if child_still_alive {
                 if let Err(err) = child.kill() {
-                    log::warn!("restart: child.kill() failed: {err}");
+                    log::warn!("{context}: child.kill() failed: {err}");
                 }
             }
         }
@@ -332,11 +343,6 @@ impl SearchSidecarSupervisor {
                 sleep(ORPHAN_POLL_INTERVAL);
             }
         }
-
-        self.set_state(SupervisorState::Stopped);
-        // Spawn fresh.
-        self.start(app);
-        Ok(())
     }
 }
 

@@ -10,7 +10,7 @@ use cognios_lib::infrastructure::db::node_repository::{
     create_folder, list_snapshot, CreateFolderInput,
 };
 use cognios_lib::infrastructure::db::url_repository::{
-    create_url, mark_url_indexed, CreatedUrl, CreateUrlInput, UrlJobResult,
+    create_url, mark_url_indexed, CreateUrlInput, CreatedUrl, UrlJobResult,
 };
 
 #[test]
@@ -54,8 +54,16 @@ fn snapshot_includes_metadata_for_virtual_and_url_nodes() {
     .expect("indexed");
 
     let snapshot = list_snapshot(&conn).expect("snapshot");
-    let folder = snapshot.roots.iter().find(|node| node.id == folder_id).expect("folder node");
-    let url = folder.children.iter().find(|node| node.id == node_id).expect("url node");
+    let folder = snapshot
+        .roots
+        .iter()
+        .find(|node| node.id == folder_id)
+        .expect("folder node");
+    let url = folder
+        .children
+        .iter()
+        .find(|node| node.id == node_id)
+        .expect("url node");
 
     assert!(!folder.created_at.is_empty());
     assert!(!folder.modified_at.is_empty());
@@ -63,7 +71,7 @@ fn snapshot_includes_metadata_for_virtual_and_url_nodes() {
     assert!(!url.modified_at.is_empty());
     assert_eq!(url.size_bytes, cache_body.len() as i64);
     assert_eq!(folder.size_bytes, url.size_bytes);
-  }
+}
 
 #[test]
 fn reconcile_reuses_mounted_descendant_ids_and_refreshes_sizes() {
@@ -92,8 +100,16 @@ fn reconcile_reuses_mounted_descendant_ids_and_refreshes_sizes() {
         .iter()
         .find(|node| node.id == created_mount.mount_id)
         .expect("mount node");
-    let docs = mount.children.iter().find(|node| node.name == "docs").expect("docs dir");
-    let notes = docs.children.iter().find(|node| node.name == "notes.txt").expect("notes file");
+    let docs = mount
+        .children
+        .iter()
+        .find(|node| node.name == "docs")
+        .expect("docs dir");
+    let notes = docs
+        .children
+        .iter()
+        .find(|node| node.name == "notes.txt")
+        .expect("notes file");
     let original_id = notes.id.clone();
 
     fs::write(&nested_file, "new content with more bytes").expect("updated file");
@@ -117,7 +133,10 @@ fn reconcile_reuses_mounted_descendant_ids_and_refreshes_sizes() {
         .expect("notes file");
 
     assert_eq!(refreshed_notes.id, original_id);
-    assert_eq!(refreshed_notes.size_bytes, "new content with more bytes".len() as i64);
+    assert_eq!(
+        refreshed_notes.size_bytes,
+        "new content with more bytes".len() as i64
+    );
     assert_eq!(refreshed_docs.size_bytes, refreshed_notes.size_bytes);
     assert_eq!(refreshed_mount.size_bytes, refreshed_notes.size_bytes);
 }

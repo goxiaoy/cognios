@@ -162,6 +162,38 @@ def test_runner_stop_waits_for_in_flight_tick(
         queue.close()
 
 
+def test_runner_exposes_enhancement_in_flight(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    queue = open_queue(tmp_path / "queue.db")
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_advanced(_path: Path) -> str:
+        entered.set()
+        release.wait(timeout=2.0)
+        return "advanced text"
+
+    dispatcher = Dispatcher(
+        store=store,
+        embedder=StubEmbedder(),
+        queue=queue,
+        advanced_ocr_extract=blocked_advanced,
+    )
+    runner = IndexingRunner(queue=queue, dispatcher=dispatcher)
+    try:
+        img = tmp_path / "x.png"
+        img.write_bytes(b"")
+        _index_image(queue, img)
+
+        runner.start()
+        assert entered.wait(timeout=1.0)
+        assert runner.enhancement_in_flight_node_ids == [UUID_A]
+    finally:
+        release.set()
+        runner.stop(timeout=1.0)
+        queue.close()
+
+
 def test_one_bad_job_does_not_poison_the_queue(tmp_path: Path):
     """A failing job marks itself error; subsequent good jobs still
     drain. Plan invariant from the indexing-pipeline section."""

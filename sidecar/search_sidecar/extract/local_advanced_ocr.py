@@ -261,21 +261,46 @@ def _normalize_markdown_text(text: str) -> str:
 
     from selectolax.parser import HTMLParser  # type: ignore[import-not-found]
 
-    html_text = text
-    parser = HTMLParser(html_text)
+    markdownish_html = _replace_html_tables_with_markdown(
+        text,
+        parser_factory=HTMLParser,
+    )
+    visible_text = _strip_html_to_visible_text(
+        markdownish_html,
+        parser_factory=HTMLParser,
+    )
+    return _collapse_blank_lines(visible_text)
+
+
+def _replace_html_tables_with_markdown(
+    html_text: str,
+    *,
+    parser_factory: Callable[[str], Any],
+) -> str:
+    parser = parser_factory(html_text)
     for table in parser.css("table"):
         table_html = table.html
         table_markdown = _html_table_to_markdown(table)
         if table_html and table_markdown:
             html_text = html_text.replace(table_html, f"\n\n{table_markdown}\n\n")
+    return html_text
 
-    parser = HTMLParser(html_text)
+
+def _strip_html_to_visible_text(
+    html_text: str,
+    *,
+    parser_factory: Callable[[str], Any],
+) -> str:
+    parser = parser_factory(html_text)
     for image in parser.css("img"):
         image.decompose()
     rendered = parser.text(separator="\n", strip=True)
     lines = [line.strip() for line in rendered.splitlines()]
-    normalized = "\n".join(line for line in lines if line)
-    return BLANK_LINE_RE.sub("\n\n", normalized).strip()
+    return "\n".join(line for line in lines if line)
+
+
+def _collapse_blank_lines(text: str) -> str:
+    return BLANK_LINE_RE.sub("\n\n", text).strip()
 
 
 def _html_table_to_markdown(table: Any) -> str:

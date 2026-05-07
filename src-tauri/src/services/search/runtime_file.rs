@@ -56,10 +56,18 @@ impl std::fmt::Display for RuntimeFileError {
                 p.display()
             ),
             Self::Io { path, source } => {
-                write!(f, "runtime file at {} could not be read: {source}", path.display())
+                write!(
+                    f,
+                    "runtime file at {} could not be read: {source}",
+                    path.display()
+                )
             }
             Self::Malformed { path, source } => {
-                write!(f, "runtime file at {} is malformed JSON: {source}", path.display())
+                write!(
+                    f,
+                    "runtime file at {} is malformed JSON: {source}",
+                    path.display()
+                )
             }
             Self::InvalidToken => write!(f, "runtime file token is not a 64-char hex string"),
             Self::InvalidPort(p) => write!(f, "runtime file port {p} is invalid"),
@@ -108,10 +116,11 @@ pub fn read_runtime_file(path: &Path) -> Result<RuntimeFile, RuntimeFileError> {
         token: String,
     }
 
-    let raw: Raw = serde_json::from_slice(&bytes).map_err(|source| RuntimeFileError::Malformed {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let raw: Raw =
+        serde_json::from_slice(&bytes).map_err(|source| RuntimeFileError::Malformed {
+            path: path.to_path_buf(),
+            source,
+        })?;
 
     if !is_valid_token(&raw.token) {
         return Err(RuntimeFileError::InvalidToken);
@@ -201,11 +210,7 @@ mod tests {
     #[test]
     fn rejects_short_token() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = write_runtime(
-            dir.path(),
-            r#"{ "port": 1, "token": "abc" }"#,
-            None,
-        );
+        let path = write_runtime(dir.path(), r#"{ "port": 1, "token": "abc" }"#, None);
         let err = read_runtime_file(&path).expect_err("short token");
         assert!(matches!(err, RuntimeFileError::InvalidToken));
     }
