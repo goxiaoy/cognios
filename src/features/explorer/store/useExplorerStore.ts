@@ -153,7 +153,7 @@ export function useExplorerStore(client: ExplorerClient) {
         // the layout shows the "Cannot preview" placeholder via its
         // own derivation.
       }
-      // url, directory, mount were already handled or have no surface.
+      // url and mount were already handled or have no surface.
     },
     [nodeIndex, toggleNode]
   );
@@ -227,10 +227,7 @@ function indexNodes(roots: ExplorerNode[]): Map<string, ExplorerNode> {
 }
 
 export function isDisplayFolder(node: ExplorerNode | null) {
-  return (
-    node !== null &&
-    (node.kind === "folder" || node.kind === "mount" || node.kind === "directory")
-  );
+  return node !== null && (node.kind === "folder" || node.kind === "mount");
 }
 
 function formatError(cause: unknown): string {

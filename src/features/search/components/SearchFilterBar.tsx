@@ -6,8 +6,7 @@ export type KindFilter =
   | "file"
   | "url"
   | "folder"
-  | "mount"
-  | "directory";
+  | "mount";
 
 export const KIND_OPTIONS: { value: KindFilter; label: string }[] = [
   { value: "note", label: "Notes" },

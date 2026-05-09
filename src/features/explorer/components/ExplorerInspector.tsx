@@ -104,7 +104,7 @@ export function ExplorerInspector({
 }
 
 /** Per-node action panel. Currently exposes a single "Reindex"
- * action; for containers (folder / mount / directory) the action
+ * action; for containers (folder / mount) the action
  * fans out to every indexable descendant. */
 function InspectorActions({
   client,
@@ -149,8 +149,7 @@ function InspectorActions({
     }
   }
 
-  const isContainer =
-    node.kind === "folder" || node.kind === "mount" || node.kind === "directory";
+  const isContainer = node.kind === "folder" || node.kind === "mount";
   const reindexLabel = isContainer ? "Reindex contents" : "Reindex";
 
   return (

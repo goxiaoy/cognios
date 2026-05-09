@@ -1,4 +1,4 @@
-export type NodeKind = "folder" | "url" | "mount" | "directory" | "file" | "note";
+export type NodeKind = "folder" | "url" | "mount" | "file" | "note";
 
 export type NodeState =
   | "ready"

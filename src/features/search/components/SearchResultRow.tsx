@@ -8,7 +8,6 @@ const KIND_LABELS: Record<string, string> = {
   url: "URL",
   folder: "Folder",
   mount: "Mount",
-  directory: "Directory",
 };
 
 /**
@@ -122,8 +121,6 @@ function iconForKind(kind: string, name: string) {
       return Folder;
     case "mount":
       return HardDrive;
-    case "directory":
-      return Folder;
     case "file":
     default: {
       const ext = name.split(".").pop()?.toLowerCase() ?? "";

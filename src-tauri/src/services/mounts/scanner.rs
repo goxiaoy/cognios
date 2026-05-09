@@ -37,6 +37,18 @@ fn build_matcher(root: &Path, ignore_config: &str) -> Result<Gitignore, String> 
     builder.build().map_err(|error| error.to_string())
 }
 
+pub fn is_ignored_path(
+    root: &Path,
+    ignore_config: &str,
+    path: &Path,
+    is_dir: bool,
+) -> Result<bool, String> {
+    let matcher = build_matcher(root, ignore_config)?;
+    Ok(matcher
+        .matched_path_or_any_parents(path, is_dir)
+        .is_ignore())
+}
+
 fn scan_dir(
     root: &Path,
     current_dir: &Path,
@@ -73,7 +85,7 @@ fn scan_dir(
             parent_relative_path: parent_relative_path.clone(),
             name: entry.file_name().to_string_lossy().into_owned(),
             kind: if is_dir {
-                NodeKind::Directory
+                NodeKind::Folder
             } else {
                 NodeKind::File
             },

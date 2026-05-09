@@ -4,7 +4,7 @@ Schema (single table named ``nodes``)::
 
     id            string   PRIMARY KEY  -- "<node_id>:<chunk_idx>" or "<node_id>:summary:<chunk_idx>"
     node_id       string                -- the parent node
-    kind          string                -- note | file | url | folder | mount | directory
+    kind          string                -- note | file | url | folder | mount
     name          string                -- display name (also indexed for keyword path)
     text          string                -- the chunk's plaintext
     vector        list<float32, 768>    -- embedding (zero-vector while no embedder is wired)

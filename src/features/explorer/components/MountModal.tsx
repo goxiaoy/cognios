@@ -150,14 +150,14 @@ export function MountModal({
       className="modal-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Mount directory"
+      aria-label="Mount folder"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="modal">
         <header className="modal-header">
           <div>
             <p className="eyebrow">Mount</p>
-            <h2 className="modal-title">Link a local directory</h2>
+            <h2 className="modal-title">Link a local folder</h2>
           </div>
           <button
             aria-label="Close"

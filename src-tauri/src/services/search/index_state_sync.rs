@@ -89,7 +89,7 @@ pub fn apply_index_changes(
         // updated_at stable for unchanged nodes and prevents the vfs
         // event emit below from firing on no-op batches.
         //
-        // Skip container kinds (folder / directory / mount): the
+        // Skip container kinds (folder / mount): the
         // sidecar's dispatcher mark_errors them ("no processor for
         // kind=folder") because they have no body to index, but
         // surfacing that as the explorer's "error" state would
@@ -99,7 +99,7 @@ pub fn apply_index_changes(
         let rows = conn.execute(
             "UPDATE nodes SET state = ?2
              WHERE id = ?1 AND state != ?2
-               AND kind NOT IN ('folder', 'directory', 'mount')",
+               AND kind NOT IN ('folder', 'mount')",
             params![t.node_id, mapped],
         )?;
         updated += rows;
@@ -364,24 +364,21 @@ mod tests {
         // The sidecar's dispatcher marks folders as ``error``
         // because there's no processor for them — but we don't
         // want the explorer to paint every folder red. Container
-        // kinds (folder / directory / mount) must stay at
+        // kinds (folder / mount) must stay at
         // whatever state Rust set them to.
         let db = setup_db();
         insert_node_with_kind(&db, "folder-1", "folder", "ready");
-        insert_node_with_kind(&db, "directory-1", "directory", "ready");
         insert_node_with_kind(&db, "mount-1", "mount", "ready");
         let updated = apply_index_changes(
             &db,
             &[
                 change("folder-1", "error", 1),
-                change("directory-1", "error", 2),
-                change("mount-1", "error", 3),
+                change("mount-1", "error", 2),
             ],
         )
         .unwrap();
         assert_eq!(updated, 0);
         assert_eq!(read_state(&db, "folder-1"), "ready");
-        assert_eq!(read_state(&db, "directory-1"), "ready");
         assert_eq!(read_state(&db, "mount-1"), "ready");
     }
 

@@ -9,7 +9,7 @@
 //! transition into ``cognios.db.nodes.state`` so the explorer's dot
 //! reflects the re-queue.
 //!
-//! For containers (folder / mount / directory) we walk every
+//! For containers (folder / mount) we walk every
 //! descendant and emit one event per leaf; container kinds are
 //! skipped because the dispatcher has no processor for them and
 //! enqueueing one would just bounce through ``unsupported``.
@@ -42,9 +42,7 @@ pub fn reindex_node(
     let kind = load_node_kind(conn, &input.node_id)?.ok_or_else(|| "node not found".to_string())?;
 
     let leaf_ids = match kind {
-        NodeKind::Folder | NodeKind::Mount | NodeKind::Directory => {
-            collect_indexable_descendants(conn, &input.node_id)?
-        }
+        NodeKind::Folder | NodeKind::Mount => collect_indexable_descendants(conn, &input.node_id)?,
         NodeKind::File | NodeKind::Note | NodeKind::Url => vec![input.node_id.clone()],
     };
 

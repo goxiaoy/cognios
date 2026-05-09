@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 KIND_ALLOWLIST = frozenset(
-    {"note", "file", "url", "folder", "mount", "directory"}
+    {"note", "file", "url", "folder", "mount"}
 )
 
 UUID_RE = re.compile(

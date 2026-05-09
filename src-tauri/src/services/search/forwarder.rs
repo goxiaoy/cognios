@@ -9,7 +9,7 @@
 //!     * ``note`` → `<storage>/notes/<id>.md`
 //!     * ``url``  → ``url_jobs.html_cache_path``
 //!     * ``file`` → ``mounts.absolute_path + nodes.relative_path``
-//!     * containers (folder / mount / directory) → no path
+//!     * containers (folder / mount) → no path
 //! - ``node-deleted`` — forward by id alone; the sidecar's
 //!   ``delete_by_node_id`` doesn't need kind/path.
 //! - ``url-indexed`` — fired by the URL job runner once the cache
@@ -198,7 +198,7 @@ fn resolve_path(conn: &rusqlite::Connection, row: &NodeRow, storage_dir: &Path) 
                         .into_owned()
                 })
             }),
-        // folder / mount / directory — containers, no content to index.
+        // folder / mount — containers, no content to index.
         _ => None,
     }
 }

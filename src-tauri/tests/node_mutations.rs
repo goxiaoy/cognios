@@ -153,7 +153,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
         assert!(!snapshot.roots.iter().any(|node| node.id == mount_node_id));
         assert!(
             mount_tempdir.path().exists(),
-            "mount source directory should remain"
+            "mount source folder should remain"
         );
     }
 

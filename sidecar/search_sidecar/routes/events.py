@@ -30,7 +30,7 @@ router = APIRouter(prefix="/events", tags=["events"])
 
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
                      r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-KIND_VALUES = {"note", "file", "url", "folder", "mount", "directory"}
+KIND_VALUES = {"note", "file", "url", "folder", "mount"}
 
 
 class NodeEvent(BaseModel):

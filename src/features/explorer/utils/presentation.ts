@@ -5,7 +5,6 @@ import {
   FileImage,
   FileText,
   Folder,
-  FolderOpen,
   Globe,
   HardDrive
 } from "lucide-react";
@@ -26,8 +25,6 @@ export function formatNodeKindLabel(node: ExplorerNode) {
       return "WEB LINK";
     case "folder":
       return "FOLDER";
-    case "directory":
-      return "DIRECTORY";
     case "file":
       return fileBadgeFromName(node.name);
     case "note":
@@ -58,7 +55,6 @@ export function formatNodeSize(sizeBytes: number) {
 export function formatCompactNodeMeta(node: ExplorerNode) {
   switch (node.kind) {
     case "folder":
-    case "directory":
     case "mount":
       return "";
     case "note":
@@ -96,7 +92,6 @@ export function dateBucketLabel(value: string) {
 export function nodeGlyph(node: ExplorerNode) {
   switch (node.kind) {
     case "folder":
-    case "directory":
       return "▣";
     case "mount":
       return "⧉";
@@ -134,9 +129,8 @@ export function isTextLikeFile(node: ExplorerNode) {
 
 export function nodeIconComponent(node: ExplorerNode): React.ComponentType<{ size?: number; className?: string; "aria-hidden"?: boolean }> {
   switch (node.kind) {
-    case "folder":    return Folder;
-    case "directory": return FolderOpen;
-    case "mount":     return HardDrive;
+    case "folder": return Folder;
+    case "mount":  return HardDrive;
     case "url":       return Globe;
     case "note":      return FileText;
     case "file": {

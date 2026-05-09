@@ -35,7 +35,7 @@ export function DeleteConfirmationDialog({
       </header>
       <p className="muted-copy">
         This removes the selected {selectedNode.kind}
-        {selectedNode.kind === "mount" ? " without touching the source directory." : "."}
+        {selectedNode.kind === "mount" ? " without touching the source folder." : "."}
       </p>
       {requiresCascade ? (
         <label className="checkbox-row">

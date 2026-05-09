@@ -10,7 +10,6 @@ const ACTIVATABLE_KINDS = new Set([
   "url",
   "folder",
   "mount",
-  "directory",
 ]);
 
 /**
@@ -19,9 +18,9 @@ const ACTIVATABLE_KINDS = new Set([
  * state — a quick-jump list that matches the "find a known node"
  * primary use case better than a blank pane.
  *
- * Walks the snapshot tree depth-first. Containers (folders, mounts,
- * directories) are included alongside leaf kinds so a recently-touched
- * directory is reachable from the palette.
+ * Walks the snapshot tree depth-first. Containers (folders, mounts)
+ * are included alongside leaf kinds so a recently-touched folder is
+ * reachable from the palette.
  */
 export function useRecentNodes(limit: number = RECENT_NODES_LIMIT): ExplorerNode[] {
   const store = useExplorerStoreContext();

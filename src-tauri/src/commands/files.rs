@@ -77,7 +77,12 @@ fn resolve_real_node_path(
             .1
             .map(PathBuf::from)
             .ok_or_else(|| "file unavailable".to_string()),
-        "directory" | "file" => {
+        "file" => {
+            let mount_root = record.1.ok_or_else(|| "file unavailable".to_string())?;
+            let relative_path = record.2.ok_or_else(|| "file unavailable".to_string())?;
+            Ok(PathBuf::from(mount_root).join(relative_path))
+        }
+        "folder" if record.2.is_some() => {
             let mount_root = record.1.ok_or_else(|| "file unavailable".to_string())?;
             let relative_path = record.2.ok_or_else(|| "file unavailable".to_string())?;
             Ok(PathBuf::from(mount_root).join(relative_path))

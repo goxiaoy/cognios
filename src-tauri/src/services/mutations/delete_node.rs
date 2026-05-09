@@ -34,6 +34,9 @@ pub fn delete_node(
     let descendant_ids = collect_descendant_ids(conn, &input.node_id)?;
 
     match node.kind {
+        NodeKind::Folder if node.is_mounted_path() => {
+            delete_mounted_path(conn, &node)?;
+        }
         NodeKind::Folder => {
             let child_count = child_count(conn, &input.node_id)?;
             if child_count > 0 && !input.cascade.unwrap_or(false) {
@@ -67,24 +70,7 @@ pub fn delete_node(
             touch_node_modified_at(conn, node.parent_id.as_deref())
                 .map_err(|error| error.to_string())?;
         }
-        NodeKind::Directory | NodeKind::File => {
-            let mount_info = load_mount_info(conn, node.mount_id.as_deref())
-                .ok_or_else(|| "mounted node missing mount".to_string())?;
-            if mount_info.state == NodeState::Unavailable.as_str() {
-                return Err("mounted path is unavailable".into());
-            }
-            let relative_path = node
-                .relative_path
-                .ok_or_else(|| "mounted node missing relative path".to_string())?;
-            let source_path = PathBuf::from(&mount_info.absolute_path).join(relative_path);
-            if node.kind == NodeKind::Directory {
-                fs::remove_dir_all(&source_path).map_err(|error| error.to_string())?;
-            } else {
-                fs::remove_file(&source_path).map_err(|error| error.to_string())?;
-            }
-            reconcile_mount(conn, mount_info.mount_id.as_str())
-                .map_err(|error| error.to_string())?;
-        }
+        NodeKind::File => delete_mounted_path(conn, &node)?,
     }
 
     let snapshot = list_snapshot(conn).map_err(|error| error.to_string())?;
@@ -128,6 +114,12 @@ struct MutationNode {
     parent_id: Option<String>,
     mount_id: Option<String>,
     relative_path: Option<String>,
+}
+
+impl MutationNode {
+    fn is_mounted_path(&self) -> bool {
+        self.mount_id.is_some() && self.relative_path.is_some()
+    }
 }
 
 #[derive(Debug)]
@@ -188,4 +180,24 @@ fn load_mount_info(conn: &Connection, mount_id: Option<&str>) -> Option<MountInf
     .optional()
     .ok()
     .flatten()
+}
+
+fn delete_mounted_path(conn: &mut Connection, node: &MutationNode) -> Result<(), String> {
+    let mount_info = load_mount_info(conn, node.mount_id.as_deref())
+        .ok_or_else(|| "mounted node missing mount".to_string())?;
+    if mount_info.state == NodeState::Unavailable.as_str() {
+        return Err("mounted path is unavailable".into());
+    }
+    let relative_path = node
+        .relative_path
+        .as_deref()
+        .ok_or_else(|| "mounted node missing relative path".to_string())?;
+    let source_path = PathBuf::from(&mount_info.absolute_path).join(relative_path);
+    if node.kind == NodeKind::Folder {
+        fs::remove_dir_all(&source_path).map_err(|error| error.to_string())?;
+    } else {
+        fs::remove_file(&source_path).map_err(|error| error.to_string())?;
+    }
+    reconcile_mount(conn, mount_info.mount_id.as_str()).map_err(|error| error.to_string())?;
+    Ok(())
 }

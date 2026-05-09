@@ -11,10 +11,8 @@ pub mod urls;
 use tauri::State;
 
 use crate::domain::vfs::node::ExplorerSnapshotDto;
-use crate::infrastructure::db::node_repository::{
-    create_folder as create_folder_record, list_snapshot, CreateFolderInput,
-};
-use crate::services::mounts::watcher::VfsChangeEvent;
+use crate::infrastructure::db::node_repository::{list_snapshot, CreateFolderInput};
+use crate::services::mutations::create_folder::create_folder as create_folder_record;
 use crate::AppState;
 
 #[tauri::command]
@@ -31,16 +29,11 @@ pub fn create_folder(
     state: State<'_, AppState>,
     input: CreateFolderInput,
 ) -> Result<ExplorerSnapshotDto, String> {
-    let conn = state
+    let mut conn = state
         .db
         .connect()
         .map_err(|error: rusqlite::Error| error.to_string())?;
-    let created =
-        create_folder_record(&conn, &input).map_err(|error: rusqlite::Error| error.to_string())?;
-    (state.emitter)(VfsChangeEvent {
-        mount_id: created.node_id,
-        reason: "node-created".to_string(),
-        ..Default::default()
-    });
+    let emitter = state.emitter.as_ref();
+    let created = create_folder_record(&mut conn, &input, &emitter)?;
     Ok(created.snapshot)
 }

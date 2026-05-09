@@ -7,7 +7,6 @@ pub enum NodeKind {
     Folder,
     Url,
     Mount,
-    Directory,
     File,
     Note,
 }
@@ -18,7 +17,6 @@ impl NodeKind {
             Self::Folder => "folder",
             Self::Url => "url",
             Self::Mount => "mount",
-            Self::Directory => "directory",
             Self::File => "file",
             Self::Note => "note",
         }
@@ -28,9 +26,11 @@ impl NodeKind {
         match value {
             "url" => Self::Url,
             "mount" => Self::Mount,
-            "directory" => Self::Directory,
             "file" => Self::File,
             "note" => Self::Note,
+            // Legacy/dev rows from before mounted subdirectories were
+            // folded into Folder. Do not write this value for new rows.
+            "directory" => Self::Folder,
             _ => Self::Folder,
         }
     }

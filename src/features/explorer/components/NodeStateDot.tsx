@@ -2,7 +2,6 @@ import type { NodeKind, NodeState } from "../../../lib/contracts/vfs";
 
 const CONTAINER_KINDS: ReadonlyArray<NodeKind> = [
   "folder",
-  "directory",
   "mount",
 ];
 
@@ -38,7 +37,7 @@ export function resolveNodeStateTone(
   // can't be indexed today.
   if (state === "unsupported") return "unsupported";
   if (state === "ready") {
-    // Container kinds (folder/mount/directory) only carry filesystem
+    // Container kinds (folder/mount) only carry filesystem
     // availability — they aren't indexable units themselves, so a
     // bare "ready" stays silent. Files/notes/urls in ``ready`` are
     // discovered-but-not-yet-indexed; show them as pending.

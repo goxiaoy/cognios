@@ -126,7 +126,7 @@ fn build_snapshot(records: Vec<NodeRecord>) -> ExplorerSnapshotDto {
                 .collect();
         }
 
-        if matches!(node.kind.as_str(), "folder" | "mount" | "directory") {
+        if matches!(node.kind.as_str(), "folder" | "mount") {
             node.size_bytes = node.children.iter().map(|child| child.size_bytes).sum();
         }
 

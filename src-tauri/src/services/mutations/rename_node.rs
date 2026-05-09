@@ -30,6 +30,9 @@ pub fn rename_node(
     let node = load_node(conn, &input.node_id)?.ok_or_else(|| "node not found".to_string())?;
 
     match node.kind {
+        NodeKind::Folder if node.is_mounted_path() => {
+            rename_mounted_path(conn, &node, trimmed_name)?;
+        }
         NodeKind::Folder | NodeKind::Url | NodeKind::Mount | NodeKind::Note => {
             match node.kind {
                 NodeKind::Url => conn
@@ -46,24 +49,7 @@ pub fn rename_node(
                     .map_err(|error| error.to_string())?,
             };
         }
-        NodeKind::Directory | NodeKind::File => {
-            let mount_info = load_mount_info(conn, node.mount_id.as_deref())
-                .ok_or_else(|| "mounted node missing mount".to_string())?;
-            if mount_info.state == NodeState::Unavailable.as_str() {
-                return Err("mounted path is unavailable".into());
-            }
-            let relative_path = node
-                .relative_path
-                .ok_or_else(|| "mounted node missing relative path".to_string())?;
-            let source_path = PathBuf::from(&mount_info.absolute_path).join(&relative_path);
-            let target_path = source_path
-                .parent()
-                .ok_or_else(|| "mounted path missing parent".to_string())?
-                .join(trimmed_name);
-            fs::rename(&source_path, &target_path).map_err(|error| error.to_string())?;
-            reconcile_mount(conn, mount_info.mount_id.as_str())
-                .map_err(|error| error.to_string())?;
-        }
+        NodeKind::File => rename_mounted_path(conn, &node, trimmed_name)?,
     }
 
     let snapshot = list_snapshot(conn).map_err(|error| error.to_string())?;
@@ -80,6 +66,12 @@ struct MutationNode {
     kind: NodeKind,
     mount_id: Option<String>,
     relative_path: Option<String>,
+}
+
+impl MutationNode {
+    fn is_mounted_path(&self) -> bool {
+        self.mount_id.is_some() && self.relative_path.is_some()
+    }
 }
 
 #[derive(Debug)]
@@ -107,6 +99,30 @@ fn load_node(conn: &Connection, node_id: &str) -> Result<Option<MutationNode>, S
     )
     .optional()
     .map_err(|error| error.to_string())
+}
+
+fn rename_mounted_path(
+    conn: &mut Connection,
+    node: &MutationNode,
+    trimmed_name: &str,
+) -> Result<(), String> {
+    let mount_info = load_mount_info(conn, node.mount_id.as_deref())
+        .ok_or_else(|| "mounted node missing mount".to_string())?;
+    if mount_info.state == NodeState::Unavailable.as_str() {
+        return Err("mounted path is unavailable".into());
+    }
+    let relative_path = node
+        .relative_path
+        .as_deref()
+        .ok_or_else(|| "mounted node missing relative path".to_string())?;
+    let source_path = PathBuf::from(&mount_info.absolute_path).join(relative_path);
+    let target_path = source_path
+        .parent()
+        .ok_or_else(|| "mounted path missing parent".to_string())?
+        .join(trimmed_name);
+    fs::rename(&source_path, &target_path).map_err(|error| error.to_string())?;
+    reconcile_mount(conn, mount_info.mount_id.as_str()).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn load_mount_info(conn: &Connection, mount_id: Option<&str>) -> Option<MountInfo> {

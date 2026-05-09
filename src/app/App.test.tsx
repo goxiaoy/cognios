@@ -178,7 +178,7 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByText(/select an item to preview/i);
-    fireEvent.click(screen.getByRole("menuitem", { name: /Mount Directory/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Mount Folder/i }));
 
     fireEvent.change(screen.getByPlaceholderText(/~\/projects\/example/i), {
       target: { value: "~/workspace" },

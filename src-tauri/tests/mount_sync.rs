@@ -52,6 +52,7 @@ fn creates_a_mount_and_mirrors_non_ignored_entries() {
         .iter()
         .find(|child| child.name == "docs")
         .expect("docs child");
+    assert_eq!(docs.kind, "folder");
     assert!(docs.children.iter().any(|child| child.name == "notes.txt"));
 }
 

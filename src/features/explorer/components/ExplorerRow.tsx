@@ -56,7 +56,7 @@ export function ExplorerRow({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const disclosureTitle = formatTreeDisclosurePath(pathNodes) || node.name;
   const compactMeta = formatCompactNodeMeta(node);
-  const canRevealInFileManager = node.kind === "mount" || node.kind === "directory" || node.kind === "file" || node.kind === "note";
+  const canRevealInFileManager = node.kind === "mount" || node.kind === "file" || node.kind === "note";
   const revealLabel = fileManagerRevealLabel();
 
   useEffect(() => {
