@@ -1752,6 +1752,49 @@ body.is-resizing-pane {
   font-variant-numeric: tabular-nums;
 }
 
+.inspector-meta-row--node-id dd {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.inspector-node-id-value {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: start;
+  gap: 0.35rem;
+}
+
+.inspector-node-id {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.inspector-node-id-copy {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.inspector-node-id-copy:hover,
+.inspector-node-id-copy:focus-visible {
+  color: var(--ink);
+  border-color: var(--line);
+  background: var(--paper-2);
+}
+
 /* ── Inspector Actions panel ── */
 
 .inspector-actions {

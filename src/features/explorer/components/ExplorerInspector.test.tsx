@@ -57,6 +57,55 @@ describe("ExplorerInspector", () => {
     // of the raw state value.
     expect(screen.getByText("Indexed")).toBeInTheDocument();
     expect(screen.getByText(/WEB LINK/i)).toBeInTheDocument();
+    expect(screen.getByText("Node ID")).toBeInTheDocument();
+    expect(screen.getByText("url-1")).toBeInTheDocument();
+  });
+
+  it("copies the node id from single-node metadata", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const originalClipboard = Object.getOwnPropertyDescriptor(
+      navigator,
+      "clipboard"
+    );
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      render(
+        <ExplorerInspector
+          client={makeClient()}
+          node={{
+            id: "node-123",
+            parentId: null,
+            name: "Copy me",
+            kind: "note",
+            state: "ready",
+            createdAt: "2026-04-14 00:00:00",
+            modifiedAt: "2026-04-14 01:00:00",
+            sizeBytes: 512,
+            children: [],
+          }}
+          selectedArtifacts={[]}
+          selectionCount={0}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /copy node id/i }));
+
+      await waitFor(() => {
+        expect(writeText).toHaveBeenCalledWith("node-123");
+      });
+      expect(
+        screen.getByRole("button", { name: /copied node id/i })
+      ).toBeInTheDocument();
+    } finally {
+      if (originalClipboard) {
+        Object.defineProperty(navigator, "clipboard", originalClipboard);
+      } else {
+        delete (navigator as { clipboard?: unknown }).clipboard;
+      }
+    }
   });
 
   it("shows note metadata with NOTE kind label and size", () => {

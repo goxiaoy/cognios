@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, RefreshCw } from "lucide-react";
+import { Check, Copy, FolderOpen, RefreshCw } from "lucide-react";
 
 import type { ExplorerClient, ExplorerNode } from "../types/explorer";
 import {
@@ -68,6 +68,7 @@ export function ExplorerInspector({
         <p className="inspector-pane-kind">{formatInspectorKindLabel(node)}</p>
       </div>
       <dl className="inspector-meta">
+        <NodeIdMetaRow nodeId={node.id} />
         <div className="inspector-meta-row">
           <dt>Created</dt>
           <dd>{formatNodeDate(node.createdAt)}</dd>
@@ -102,6 +103,73 @@ export function ExplorerInspector({
       <InspectorActions client={client} node={node} />
     </div>
   );
+}
+
+function NodeIdMetaRow({ nodeId }: { nodeId: string }) {
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">(
+    "idle"
+  );
+
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = window.setTimeout(() => setCopyStatus("idle"), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copyStatus]);
+
+  async function handleCopy() {
+    try {
+      await copyTextToClipboard(nodeId);
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("error");
+    }
+  }
+
+  const copied = copyStatus === "copied";
+  const failed = copyStatus === "error";
+
+  return (
+    <div className="inspector-meta-row inspector-meta-row--node-id">
+      <dt>Node ID</dt>
+      <dd>
+        <span className="inspector-node-id-value">
+          <code className="inspector-node-id">{nodeId}</code>
+          <button
+            type="button"
+            className="inspector-node-id-copy"
+            aria-label={copied ? "Copied node ID" : "Copy node ID"}
+            title={failed ? "Copy failed" : copied ? "Copied" : "Copy node ID"}
+            onClick={() => void handleCopy()}
+          >
+            {copied ? (
+              <Check size={12} aria-hidden="true" />
+            ) : (
+              <Copy size={12} aria-hidden="true" />
+            )}
+          </button>
+        </span>
+      </dd>
+    </div>
+  );
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) {
+    throw new Error("clipboard copy failed");
+  }
 }
 
 /** Per-node action panel. Currently exposes a single "Reindex"
