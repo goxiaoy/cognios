@@ -13,9 +13,9 @@ reranker factory pattern:
   ``None`` so the row falls back to OCR-only output.
 - :func:`select_advanced_ocr_extractor` reads
   ``settings.features["advanced-ocr"]`` and returns either a
-  :class:`PpStructureV3Extractor` (local PP-StructureV3 bundle) or
-  a bound method on :class:`OpenAICompatVisionClient` (cloud
-  structured-prompt vision). The local path also requires the
+  subprocess-backed local PP-StructureV3 extractor or a bound method
+  on :class:`OpenAICompatVisionClient` (cloud structured-prompt
+  vision). The local path also requires the
   13-stage model bundle to have finished downloading — the factory
   asks the model manager and returns ``None`` until it has.
 
@@ -39,6 +39,7 @@ from ..providers import (
 from ..settings import SearchSettings
 from .cloud_vision import OpenAICompatVisionClient
 from .local_advanced_ocr import PpStructureV3Extractor, can_load_local_advanced_ocr
+from .local_advanced_ocr_subprocess import SubprocessPpStructureV3Extractor
 from .local_ocr import RapidOcrExtractor, can_load_local_ocr
 from .types import ExtractedMarkdown
 
@@ -156,9 +157,10 @@ def select_advanced_ocr_extractor(
 
     - cloud preset with ``advanced-ocr`` capability → a
       ``OpenAICompatVisionClient.extract_advanced_ocr`` bound method.
-    - ``local-paddleocr-advanced`` → a :class:`PpStructureV3Extractor`
-      configured against the model directories the manager has
-      downloaded; ``None`` until every PP-StructureV3 stage is ready.
+    - ``local-paddleocr-advanced`` → a subprocess-backed local
+      PP-StructureV3 extractor configured against the model
+      directories the manager has downloaded; ``None`` until every
+      PP-StructureV3 stage is ready.
     - feature off / unbound / paddleocr extra missing / model bundle
       not finished downloading → ``None``.
 
@@ -205,12 +207,11 @@ def select_advanced_ocr_extractor(
     if collected is None:
         return None
     stage_dirs, stage_names = collected
-    try:
-        extractor = PpStructureV3Extractor(stage_dirs, stage_names)
-    except Exception as err:
-        LOG.warning("local PP-StructureV3 construction failed: %s", err)
-        return None
-    LOG.info("advanced-ocr extractor: local PP-StructureV3 (%s)", preset.provider_id)
+    extractor = SubprocessPpStructureV3Extractor(stage_dirs, stage_names)
+    LOG.info(
+        "advanced-ocr extractor: local PP-StructureV3 subprocess (%s)",
+        preset.provider_id,
+    )
     return extractor
 
 

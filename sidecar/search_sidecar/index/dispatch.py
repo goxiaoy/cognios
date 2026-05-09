@@ -54,6 +54,7 @@ class Dispatcher:
         advanced_ocr_extract: AdvancedOcrExtract | None = None,
         extract_dir: Path | None = None,
     ) -> None:
+        self._advanced_ocr_extract = advanced_ocr_extract
         self.image_processor = ImageProcessor(
             store,
             embedder,
@@ -107,6 +108,12 @@ class Dispatcher:
         if self.pdf_processor.has_advanced_ocr():
             extensions.extend(PDF_EXTENSIONS)
         return tuple(extensions)
+
+    def close(self) -> None:
+        """Release resources held by long-lived extractors."""
+        close = getattr(self._advanced_ocr_extract, "close", None)
+        if callable(close):
+            close()
 
 
 def _supports_pdf_advanced_ocr(extractor: AdvancedOcrExtract | None) -> bool:

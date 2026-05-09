@@ -161,15 +161,40 @@ class IndexingRunner:
             return True
         with self._enhancement_lock:
             self._enhancement_in_flight = job.node_id
+        started_at = time.monotonic()
+        LOG.info(
+            "advanced-OCR enhancement started node_id=%s kind=%s name=%r "
+            "content_version=%s claim_seq=%s path=%s",
+            job.node_id,
+            job.kind,
+            job.name,
+            job.content_version,
+            claim_seq,
+            job.absolute_content_path or "",
+        )
         try:
             processor.process_enhancement(job, claim_seq)
-        except EnhancementTransientError:
-            LOG.info("advanced-OCR enhancement transient failure for %s", job.node_id)
-        except Exception as err:
-            LOG.warning(
-                "advanced-OCR enhancement failed for %s (%s): %s",
+            LOG.info(
+                "advanced-OCR enhancement finished node_id=%s kind=%s elapsed_ms=%d",
                 job.node_id,
                 job.kind,
+                _elapsed_ms(started_at),
+            )
+        except EnhancementTransientError:
+            LOG.info(
+                "advanced-OCR enhancement transient failure node_id=%s kind=%s "
+                "elapsed_ms=%d",
+                job.node_id,
+                job.kind,
+                _elapsed_ms(started_at),
+            )
+        except Exception as err:
+            LOG.warning(
+                "advanced-OCR enhancement failed node_id=%s kind=%s "
+                "elapsed_ms=%d: %s",
+                job.node_id,
+                job.kind,
+                _elapsed_ms(started_at),
                 err,
             )
             self._queue.mark_enhancement_failed(job.node_id)
@@ -186,12 +211,36 @@ class IndexingRunner:
                 f"no processor for kind={job.kind!r} path={job.absolute_content_path!r}",
             )
             return
+        started_at = time.monotonic()
+        LOG.info(
+            "indexing started node_id=%s kind=%s name=%r content_version=%s path=%s",
+            job.node_id,
+            job.kind,
+            job.name,
+            job.content_version,
+            job.absolute_content_path or "",
+        )
         try:
-            proc.process(job)
+            written = proc.process(job)
         except Exception as err:
             LOG.warning(
-                "indexing failed for %s (%s): %s", job.node_id, job.kind, err
+                "indexing failed node_id=%s kind=%s elapsed_ms=%d: %s",
+                job.node_id,
+                job.kind,
+                _elapsed_ms(started_at),
+                err,
             )
             self._queue.mark_error(job.node_id, f"{type(err).__name__}: {err}")
             return
         self._queue.mark_indexed(job.node_id)
+        LOG.info(
+            "indexing finished node_id=%s kind=%s chunks=%d elapsed_ms=%d",
+            job.node_id,
+            job.kind,
+            written,
+            _elapsed_ms(started_at),
+        )
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.monotonic() - started_at) * 1000)

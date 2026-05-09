@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from pathlib import Path
@@ -56,6 +57,35 @@ def test_process_one_returns_false_when_empty(tmp_path: Path):
         queue.close()
 
 
+def test_dispatcher_close_releases_advanced_ocr_extractor(tmp_path: Path):
+    class ClosableExtractor:
+        supports_pdf = True
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def __call__(self, _path: Path) -> str:
+            return "advanced"
+
+        def close(self) -> None:
+            self.closed = True
+
+    store = open_store(tmp_path / "index.lance")
+    queue = open_queue(tmp_path / "queue.db")
+    extractor = ClosableExtractor()
+    try:
+        dispatcher = Dispatcher(
+            store=store,
+            embedder=StubEmbedder(),
+            queue=queue,
+            advanced_ocr_extract=extractor,
+        )
+        dispatcher.close()
+        assert extractor.closed is True
+    finally:
+        queue.close()
+
+
 def test_process_one_drains_a_text_job(tmp_path: Path):
     store, queue, runner = _make_setup(tmp_path)
     try:
@@ -72,6 +102,37 @@ def test_process_one_drains_a_text_job(tmp_path: Path):
         assert job is not None
         assert job.state == JobState.INDEXED
         assert store.count() == 2
+    finally:
+        queue.close()
+
+
+def test_process_one_logs_index_lifecycle(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    store, queue, runner = _make_setup(tmp_path)
+    try:
+        note = tmp_path / "note.md"
+        note.write_text("hello world")
+        queue.enqueue(
+            node_id=UUID_A,
+            kind="note",
+            name="note.md",
+            absolute_content_path=str(note),
+        )
+
+        with caplog.at_level(logging.INFO, logger="search_sidecar.index.runner"):
+            assert runner.process_one() is True
+
+        assert store.count() == 1
+        assert (
+            "indexing started node_id=11111111-1111-1111-1111-111111111111"
+            in caplog.text
+        )
+        assert (
+            "indexing finished node_id=11111111-1111-1111-1111-111111111111"
+            in caplog.text
+        )
+        assert "chunks=1" in caplog.text
     finally:
         queue.close()
 
@@ -284,6 +345,40 @@ def test_runner_drains_enhancement_when_no_pending_work(tmp_path: Path):
         assert runner.process_one() is True
         assert queue.claim_next_enhancement() is None
         assert "advanced image text" in " ".join(r["text"] for r in store.scan(UUID_A))
+    finally:
+        queue.close()
+
+
+def test_runner_logs_enhancement_lifecycle(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    store = open_store(tmp_path / "index.lance")
+    queue = open_queue(tmp_path / "queue.db")
+    dispatcher = Dispatcher(
+        store=store,
+        embedder=StubEmbedder(),
+        queue=queue,
+        advanced_ocr_extract=lambda _p: "advanced image text",
+    )
+    runner = IndexingRunner(queue=queue, dispatcher=dispatcher)
+    try:
+        img = tmp_path / "x.png"
+        img.write_bytes(b"")
+        _index_image(queue, img)
+
+        with caplog.at_level(logging.INFO, logger="search_sidecar.index.runner"):
+            assert runner.process_one() is True
+
+        assert (
+            "advanced-OCR enhancement started "
+            "node_id=11111111-1111-1111-1111-111111111111"
+            in caplog.text
+        )
+        assert (
+            "advanced-OCR enhancement finished "
+            "node_id=11111111-1111-1111-1111-111111111111"
+            in caplog.text
+        )
     finally:
         queue.close()
 

@@ -237,7 +237,12 @@ def serve(storage_dir: Path) -> int:
         server_thread.join()
     finally:
         LOG.info("search-sidecar shutdown requested; waiting for indexing runner")
-        indexing_runner.stop()
+        if not indexing_runner.stop(timeout=2.0):
+            LOG.warning(
+                "indexing runner did not stop within 2s; terminating extractor resources"
+            )
+            dispatcher.close()
+            indexing_runner.stop(timeout=2.0)
         indexing_queue.close()
         remove_runtime_file(runtime_path)
         lock_handle.close()
