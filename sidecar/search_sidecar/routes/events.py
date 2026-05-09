@@ -52,6 +52,7 @@ class NodeEvent(BaseModel):
     mount_id: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    force: bool = True
 
 
 class ResyncRequest(BaseModel):
@@ -123,6 +124,14 @@ def post_node_event(body: NodeEvent, request: Request) -> dict:
     # validate it here (after the deletion branch so deletes aren't
     # blocked).
     _validate_kind(body.kind)
+    if store is not None:
+        store.update_node_metadata(
+            body.node_id,
+            kind=body.kind,
+            name=body.name,
+            mount_id=body.mount_id,
+            modified_at=body.updated_at,
+        )
 
     queue.enqueue(
         node_id=body.node_id,
@@ -132,6 +141,7 @@ def post_node_event(body: NodeEvent, request: Request) -> dict:
         mount_id=body.mount_id,
         created_at=body.created_at,
         modified_at=body.updated_at,
+        force=body.force,
     )
     return {"accepted": True, "action": "enqueued"}
 

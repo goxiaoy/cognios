@@ -12,6 +12,7 @@ Schema (single table named ``nodes``)::
     created_at    timestamp[ms]
     modified_at   timestamp[ms]
     role          string  nullable      -- "body" | "summary"; legacy rows are NULL
+    content_version string nullable     -- sidecar queue content fingerprint
 
 Chunk-id formats:
 
@@ -93,6 +94,7 @@ class NodeChunk:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     modified_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     role: Literal["body", "summary"] = "body"
+    content_version: str | None = None
 
     def __post_init__(self) -> None:
         if len(self.vector) != EMBEDDING_DIMENSION:
@@ -116,6 +118,7 @@ class NodeChunk:
             "created_at": self.created_at,
             "modified_at": self.modified_at,
             "role": self.role,
+            "content_version": self.content_version,
         }
 
 
@@ -132,6 +135,7 @@ def _schema() -> pa.Schema:
             ("created_at", pa.timestamp("ms", tz="UTC")),
             ("modified_at", pa.timestamp("ms", tz="UTC")),
             ("role", pa.string()),
+            ("content_version", pa.string()),
         ]
     )
 
@@ -291,6 +295,27 @@ class LanceDBStore:
             .to_list()
         )
 
+    def update_node_metadata(
+        self,
+        node_id: str,
+        *,
+        kind: str,
+        name: str,
+        mount_id: str | None,
+        modified_at: datetime | None,
+    ) -> int:
+        """Update metadata columns for existing chunks without re-indexing text."""
+        rows = self.scan(node_id)
+        if not rows:
+            return 0
+        for row in rows:
+            row["kind"] = kind
+            row["name"] = name
+            row["mount_id"] = mount_id
+            if modified_at is not None:
+                row["modified_at"] = modified_at
+        return self.replace_rows(rows)
+
     def ensure_fts_index(self, *, force: bool = False) -> None:
         """Build the FTS index on the ``text`` column if not already
         built in this process's lifetime.
@@ -435,7 +460,10 @@ def _migrate_schema(table: lancedb.Table) -> None:
     mismatch via ``role_or_default``'s NULL fallback.
     """
     existing = set(table.schema.names)
-    for new_field in (pa.field("role", pa.string()),):
+    for new_field in (
+        pa.field("role", pa.string()),
+        pa.field("content_version", pa.string()),
+    ):
         if new_field.name in existing:
             continue
         try:

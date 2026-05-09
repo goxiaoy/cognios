@@ -572,7 +572,7 @@ def test_process_enhancement_terminal_error_marks_failed_once(
         queue.close()
 
 
-def test_process_enhancement_transition_seq_race_wipes_store(
+def test_process_enhancement_transition_seq_race_preserves_existing_store(
     store, tmp_path: Path
 ):
     queue = open_queue(tmp_path / "queue.db")
@@ -609,7 +609,10 @@ def test_process_enhancement_transition_seq_race_wipes_store(
             advanced_ocr_extract=reenqueue_then_extract,
         )
         proc_racy.process_enhancement(enhancement_job, claim_seq)
-        assert store.scan(UUID_A) == []
+        rows = store.scan(UUID_A)
+        assert rows
+        assert "basic OCR text" in "\n".join(r["text"] for r in rows)
+        assert "advanced stale text" not in "\n".join(r["text"] for r in rows)
         assert queue.get(UUID_A).state == JobState.PENDING
     finally:
         queue.close()

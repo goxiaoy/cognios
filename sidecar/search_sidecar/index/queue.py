@@ -15,6 +15,8 @@ Schema::
       attempts              INTEGER NOT NULL DEFAULT 0,
       created_at            TEXT NOT NULL,
       modified_at           TEXT NOT NULL,
+      content_version       TEXT,
+      indexed_content_version TEXT,
       transition_seq        INTEGER NOT NULL DEFAULT 0,
       enhancement_pending   INTEGER NOT NULL DEFAULT 0,
       enhancement_attempts  INTEGER NOT NULL DEFAULT 0,
@@ -114,6 +116,7 @@ class IndexingJob:
     attempts: int
     created_at: datetime
     modified_at: datetime
+    content_version: str | None = None
 
 
 class CorruptQueueDatabase(RuntimeError):
@@ -149,12 +152,17 @@ class IndexingQueue:
         mount_id: str | None = None,
         created_at: datetime | None = None,
         modified_at: datetime | None = None,
+        force: bool = True,
     ) -> None:
         """Insert or revive a job for ``node_id``.
 
-        If a row already exists (any state), it is reset to ``pending``
-        so the runner re-processes it. ``attempts`` is preserved; the
-        caller can use it to detect runaway retries.
+        If a row already exists, forced calls reset it to ``pending``
+        so the runner re-processes it. Non-forced calls are used by
+        startup resync; they are idempotent for same-version rows that
+        are already pending, indexing, or indexed, avoiding a race
+        where a stale resync rewinds an already-indexed live event.
+        ``attempts`` is preserved; the caller can use it to detect
+        runaway retries.
 
         The enhancement bookkeeping (``enhancement_pending``,
         ``enhancement_attempts``, ``enhancement_failed``,
@@ -166,17 +174,54 @@ class IndexingQueue:
         now_str = _now_iso()
         ca = (created_at or _now()).astimezone(timezone.utc).isoformat()
         ma = (modified_at or _now()).astimezone(timezone.utc).isoformat()
+        content_version = _content_version(kind, absolute_content_path, ma)
         with self._lock, self._conn:
+            if not force:
+                row = self._conn.execute(
+                    "SELECT state, content_version FROM jobs WHERE node_id = ?",
+                    (node_id,),
+                ).fetchone()
+                if (
+                    row is not None
+                    and row["state"]
+                    in {
+                        JobState.PENDING.value,
+                        JobState.INDEXING.value,
+                        JobState.INDEXED.value,
+                    }
+                    and row["content_version"] == content_version
+                ):
+                    self._conn.execute(
+                        """
+                        UPDATE jobs
+                        SET kind = ?, name = ?, absolute_content_path = ?,
+                            mount_id = ?, created_at = ?, modified_at = ?,
+                            content_version = ?
+                        WHERE node_id = ?
+                        """,
+                        (
+                            kind,
+                            name,
+                            absolute_content_path,
+                            mount_id,
+                            ca,
+                            ma,
+                            content_version,
+                            node_id,
+                        ),
+                    )
+                    return
             seq = self._next_transition_seq()
             self._conn.execute(
                 """
                 INSERT INTO jobs (
                     node_id, kind, name, absolute_content_path, mount_id,
                     state, enqueued_at, attempts, created_at, modified_at,
+                    content_version, indexed_content_version,
                     transition_seq, enhancement_pending,
                     enhancement_attempts, enhancement_failed,
                     enhancement_completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, 0, 0, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, ?, 0, 0, 0, NULL)
                 ON CONFLICT(node_id) DO UPDATE SET
                     kind = excluded.kind,
                     name = excluded.name,
@@ -187,6 +232,8 @@ class IndexingQueue:
                     last_error = NULL,
                     indexed_at = NULL,
                     modified_at = excluded.modified_at,
+                    content_version = excluded.content_version,
+                    indexed_content_version = NULL,
                     transition_seq = excluded.transition_seq,
                     enhancement_pending = 0,
                     enhancement_attempts = 0,
@@ -203,6 +250,7 @@ class IndexingQueue:
                     now_str,
                     ca,
                     ma,
+                    content_version,
                     seq,
                 ),
             )
@@ -258,6 +306,7 @@ class IndexingQueue:
                 """
                 UPDATE jobs
                 SET state = ?, indexed_at = ?, last_error = NULL,
+                    indexed_content_version = content_version,
                     transition_seq = ?
                 WHERE node_id = ?
                 """,
@@ -419,6 +468,25 @@ class IndexingQueue:
                 (node_id,),
             ).fetchone()
         return int(row[0]) if row is not None else None
+
+    def matches_content_claim(
+        self, node_id: str, content_version: str | None, transition_seq: int
+    ) -> bool:
+        """True when the row still matches a long-running worker's claim."""
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT content_version, transition_seq
+                FROM jobs
+                WHERE node_id = ?
+                """,
+                (node_id,),
+            ).fetchone()
+        return (
+            row is not None
+            and row["content_version"] == content_version
+            and int(row["transition_seq"]) == int(transition_seq)
+        )
 
     def clear_enhancement_pending_if_transition_seq(
         self, node_id: str, expected_seq: int
@@ -782,6 +850,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             attempts              INTEGER NOT NULL DEFAULT 0,
             created_at            TEXT NOT NULL,
             modified_at           TEXT NOT NULL,
+            content_version       TEXT,
+            indexed_content_version TEXT,
             transition_seq        INTEGER NOT NULL DEFAULT 0,
             enhancement_pending   INTEGER NOT NULL DEFAULT 0,
             enhancement_attempts  INTEGER NOT NULL DEFAULT 0,
@@ -822,6 +892,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_jobs_transition_seq ON jobs(transition_seq)"
         )
+    if "content_version" not in cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN content_version TEXT")
+    if "indexed_content_version" not in cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN indexed_content_version TEXT")
     # Two-pass image OCR columns. Defaults are correct for legacy
     # rows: every existing image starts as "not enhanced, not failed,
     # zero attempts" and the watcher / startup auto-fire flips
@@ -864,6 +938,7 @@ def _row_to_job(row: dict) -> IndexingJob:
         attempts=int(row.get("attempts") or 0),
         created_at=_parse(row["created_at"]),
         modified_at=_parse(row["modified_at"]),
+        content_version=row.get("content_version"),
     )
 
 
@@ -871,3 +946,17 @@ def _parse(value: str | None) -> datetime | None:
     if not value:
         return None
     return datetime.fromisoformat(value)
+
+
+def _content_version(
+    kind: str, path_value: str | None, fallback_modified_at: str
+) -> str:
+    if path_value:
+        try:
+            stat = Path(path_value).stat()
+            return f"stat:{stat.st_size}:{stat.st_mtime_ns}"
+        except OSError:
+            pass
+    if kind in {"folder", "mount", "directory"}:
+        return f"container:{kind}"
+    return f"event:{fallback_modified_at}"

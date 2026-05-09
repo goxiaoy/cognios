@@ -156,6 +156,10 @@ class ImageProcessor:
             self._handle_enhancement_error(job.node_id, err)
             return
         advanced_text = advanced_text.strip()
+        if not self._queue.matches_content_claim(
+            job.node_id, job.content_version, claim_seq
+        ):
+            return
         self._write_extract_artifact(job, "advanced", advanced_text)
 
         body_chunks = _meaningful_chunks(advanced_text)
@@ -167,11 +171,9 @@ class ImageProcessor:
         self._store.delete_chunks_by_role(job.node_id, "body")
         self._store.upsert(rows)
 
-        if not self._queue.clear_enhancement_pending_if_transition_seq(
+        self._queue.clear_enhancement_pending_if_transition_seq(
             job.node_id, claim_seq
-        ):
-            self._store.delete_by_node_id(job.node_id)
-            return
+        )
 
     def _handle_enhancement_error(self, node_id: str, err: Exception) -> None:
         if _classify_enhancement_error(err) == "transient":
@@ -213,6 +215,7 @@ class ImageProcessor:
                     created_at=job.created_at,
                     modified_at=modified_at,
                     role="body",
+                    content_version=job.content_version,
                 )
                 for i, (chunk, vec) in enumerate(zip(body_chunks, body_vectors))
             )
@@ -230,6 +233,7 @@ class ImageProcessor:
                     created_at=job.created_at,
                     modified_at=modified_at,
                     role="summary",
+                    content_version=job.content_version,
                 )
                 for i, (chunk, vec) in enumerate(zip(summary_chunks, summary_vectors))
             )

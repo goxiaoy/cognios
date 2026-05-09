@@ -160,6 +160,35 @@ def test_post_node_event_rejects_unknown_kind(stack):
     assert resp.json()["detail"]["code"] == "invalid_kind"
 
 
+def test_post_node_event_non_forced_duplicate_keeps_indexed_state(stack):
+    app, queue, store, runner, tmp_path = stack
+    note = tmp_path / "note.md"
+    note.write_text("hi")
+    body = {
+        "event": "node_changed",
+        "node_id": UUID_A,
+        "kind": "note",
+        "name": "note.md",
+        "absolute_content_path": str(note),
+        "updated_at": "2026-05-08T00:00:00Z",
+    }
+    with TestClient(app) as client:
+        resp = client.post("/events/node", headers=_auth(), json=body)
+        assert resp.status_code == 200
+        runner.process_one()
+        assert queue.get(UUID_A).state == JobState.INDEXED
+
+        resp = client.post(
+            "/events/node",
+            headers=_auth(),
+            json={**body, "name": "renamed.md", "force": False},
+        )
+    assert resp.status_code == 200
+    assert queue.get(UUID_A).state == JobState.INDEXED
+    rows = store.scan(UUID_A)
+    assert rows[0]["name"] == "renamed.md"
+
+
 def test_post_resync_adds_unknown_and_removes_orphaned(stack):
     app, queue, store, runner, tmp_path = stack
     # Pre-seed: B is in our state (queued + indexed in store), A is not

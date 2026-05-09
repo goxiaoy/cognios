@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import lancedb
@@ -23,6 +24,7 @@ def _make_chunk(
     text: str = "hello",
     *,
     role: str = "body",
+    content_version: str | None = None,
 ) -> NodeChunk:
     return NodeChunk(
         id=f"{node_id}:{idx}",
@@ -32,6 +34,7 @@ def _make_chunk(
         text=text,
         vector=[0.0] * EMBEDDING_DIMENSION,
         role=role,
+        content_version=content_version,
     )
 
 
@@ -322,6 +325,37 @@ def test_open_store_includes_role_column(tmp_path: Path):
     """Schema includes the role column on a fresh store."""
     store = open_store(tmp_path / "index.lance")
     assert "role" in store.table.schema.names
+    assert "content_version" in store.table.schema.names
+
+
+def test_upsert_round_trips_content_version(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    store.upsert([_make_chunk("node-a", content_version="stat:1:2")])
+    rows = store.scan("node-a")
+    assert rows[0]["content_version"] == "stat:1:2"
+
+
+def test_update_node_metadata_preserves_content_rows(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    store.upsert([_make_chunk("node-a", text="body", content_version="stat:1:2")])
+    modified_at = datetime(2026, 5, 9, tzinfo=timezone.utc)
+
+    updated = store.update_node_metadata(
+        "node-a",
+        kind="file",
+        name="renamed.md",
+        mount_id="mount-a",
+        modified_at=modified_at,
+    )
+
+    assert updated == 1
+    rows = store.scan("node-a")
+    assert len(rows) == 1
+    assert rows[0]["name"] == "renamed.md"
+    assert rows[0]["kind"] == "file"
+    assert rows[0]["mount_id"] == "mount-a"
+    assert rows[0]["text"] == "body"
+    assert rows[0]["content_version"] == "stat:1:2"
 
 
 def test_upsert_round_trips_role(tmp_path: Path):
@@ -412,6 +446,7 @@ def test_open_store_migrates_legacy_table_in_place(tmp_path: Path):
 
     store = open_store(path)
     assert "role" in store.table.schema.names
+    assert "content_version" in store.table.schema.names
     rows = store.scan("legacy-a")
     assert len(rows) == 1
     # NULL on disk; role_or_default coerces to "body".

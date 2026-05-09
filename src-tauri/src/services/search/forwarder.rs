@@ -70,6 +70,7 @@ pub async fn forward_descendant_deletes(
             mount_id: None,
             created_at: None,
             updated_at: None,
+            force: None,
         };
         client.forward_node_event(&payload).await;
     }
@@ -105,6 +106,7 @@ pub fn build_payload(
             mount_id: None,
             created_at: None,
             updated_at: None,
+            force: None,
         });
     }
 
@@ -139,6 +141,11 @@ pub fn build_payload(
         mount_id: row.mount_id,
         created_at: row.created_at,
         updated_at: row.updated_at,
+        force: if reason == "node-renamed" {
+            Some(false)
+        } else {
+            None
+        },
     })
 }
 
@@ -331,6 +338,8 @@ pub async fn resync_all_nodes(
             ..Default::default()
         };
         if let Some(payload) = build_payload(&event, db, storage_dir) {
+            let mut payload = payload;
+            payload.force = Some(false);
             client.forward_node_event(&payload).await;
             forwarded += 1;
         }
@@ -348,6 +357,7 @@ pub async fn resync_all_nodes(
             mount_id: None,
             created_at: None,
             updated_at: None,
+            force: None,
         };
         client.forward_node_event(&payload).await;
         deleted += 1;
@@ -475,6 +485,27 @@ mod tests {
         };
         // Row not in DB → skip silently.
         assert!(build_payload(&event, &db, dir.path()).is_none());
+    }
+
+    #[test]
+    fn build_payload_marks_rename_as_metadata_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("cognios.db");
+        let db = Database::new(db_path);
+        let conn = db.connect().expect("db init");
+        conn.execute(
+            "INSERT INTO nodes (id, kind, name, state, size_bytes)
+             VALUES ('11111111-1111-1111-1111-111111111111', 'note', 'A', 'ready', 0)",
+            [],
+        )
+        .expect("insert node");
+        let event = VfsChangeEvent {
+            mount_id: "11111111-1111-1111-1111-111111111111".into(),
+            reason: "node-renamed".into(),
+            ..Default::default()
+        };
+        let payload = build_payload(&event, &db, dir.path()).expect("payload");
+        assert_eq!(payload.force, Some(false));
     }
 
     #[test]

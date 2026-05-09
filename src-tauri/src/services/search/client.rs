@@ -110,6 +110,8 @@ pub struct NodeEvent {
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1101,12 +1103,14 @@ mod tests {
             mount_id: None,
             created_at: None,
             updated_at: None,
+            force: Some(false),
         };
         let json = serde_json::to_value(&ev).unwrap();
         // Python's Pydantic NodeEvent expects snake_case keys.
         assert_eq!(json["event"], "node_changed");
         assert_eq!(json["node_id"], "abc");
         assert_eq!(json["absolute_content_path"], "/tmp/x.md");
+        assert_eq!(json["force"], false);
         // Optional fields with None must be skipped.
         assert!(json.get("mount_id").is_none());
     }

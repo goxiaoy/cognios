@@ -103,6 +103,7 @@ class URLCacheProcessor:
                 created_at=job.created_at,
                 modified_at=job.modified_at or now,
                 role="body",
+                content_version=job.content_version,
             )
             for i, (chunk, vec) in enumerate(zip(chunks, vectors))
         ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from search_sidecar.index.queue import (
@@ -102,6 +103,107 @@ def test_enqueue_revives_existing_row_to_pending(tmp_path: Path):
         assert fetched.state == JobState.PENDING
         assert fetched.last_error is None
         assert fetched.name == "A renamed"
+    finally:
+        queue.close()
+
+
+def test_non_forced_enqueue_does_not_rewind_indexed_same_version(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        modified_at = datetime(2026, 5, 8, tzinfo=timezone.utc)
+        queue.enqueue(
+            node_id="aaa",
+            kind="note",
+            name="A",
+            modified_at=modified_at,
+        )
+        queue.claim_next()
+        queue.mark_indexed("aaa")
+        indexed = queue.get("aaa")
+        assert indexed is not None
+        indexed_seq = queue.peek_transition_seq("aaa")
+
+        queue.enqueue(
+            node_id="aaa",
+            kind="note",
+            name="A",
+            modified_at=modified_at,
+            force=False,
+        )
+
+        fetched = queue.get("aaa")
+        assert fetched is not None
+        assert fetched.state == JobState.INDEXED
+        assert fetched.indexed_at == indexed.indexed_at
+        assert queue.peek_transition_seq("aaa") == indexed_seq
+    finally:
+        queue.close()
+
+
+def test_non_forced_enqueue_new_content_version_requeues(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        first = datetime(2026, 5, 8, tzinfo=timezone.utc)
+        second = datetime(2026, 5, 9, tzinfo=timezone.utc)
+        queue.enqueue(node_id="aaa", kind="note", name="A", modified_at=first)
+        queue.claim_next()
+        queue.mark_indexed("aaa")
+
+        queue.enqueue(
+            node_id="aaa",
+            kind="note",
+            name="A",
+            modified_at=second,
+            force=False,
+        )
+
+        fetched = queue.get("aaa")
+        assert fetched is not None
+        assert fetched.state == JobState.PENDING
+        assert fetched.content_version == f"event:{second.isoformat()}"
+    finally:
+        queue.close()
+
+
+def test_non_forced_container_metadata_update_does_not_requeue(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        first = datetime(2026, 5, 8, tzinfo=timezone.utc)
+        second = datetime(2026, 5, 9, tzinfo=timezone.utc)
+        queue.enqueue(node_id="aaa", kind="folder", name="A", modified_at=first)
+        queue.claim_next()
+        queue.mark_indexed("aaa")
+        indexed_seq = queue.peek_transition_seq("aaa")
+
+        queue.enqueue(
+            node_id="aaa",
+            kind="folder",
+            name="A renamed",
+            modified_at=second,
+            force=False,
+        )
+
+        fetched = queue.get("aaa")
+        assert fetched is not None
+        assert fetched.state == JobState.INDEXED
+        assert fetched.name == "A renamed"
+        assert fetched.content_version == "container:folder"
+        assert queue.peek_transition_seq("aaa") == indexed_seq
+    finally:
+        queue.close()
+
+
+def test_mark_indexed_records_indexed_content_version(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        modified_at = datetime(2026, 5, 8, tzinfo=timezone.utc)
+        queue.enqueue(node_id="aaa", kind="note", name="A", modified_at=modified_at)
+        queue.claim_next()
+        queue.mark_indexed("aaa")
+        row = queue._conn.execute(  # noqa: SLF001 - white-box schema assertion.
+            "SELECT content_version, indexed_content_version FROM jobs WHERE node_id='aaa'"
+        ).fetchone()
+        assert row["indexed_content_version"] == row["content_version"]
     finally:
         queue.close()
 
