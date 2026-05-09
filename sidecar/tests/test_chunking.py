@@ -18,6 +18,12 @@ def test_keeps_short_markdown_blocks_separate():
     ]
 
 
+def test_keeps_setext_heading_source_block_together():
+    text = "Heading\n=======\n\nBody"
+
+    assert chunk_text(text) == ["Heading\n=======", "Body"]
+
+
 def test_keeps_short_fenced_code_block_together():
     text = "Intro\n\n```python\nprint('hello')\n```\n\nTail"
 
@@ -61,6 +67,20 @@ def test_keeps_html_table_block_together_when_short():
         "<table>\n<tr><td>A</td><td>B</td></tr>\n</table>",
         "After",
     ]
+
+
+def test_splits_long_markdown_lists_by_source_lines():
+    text = "\n".join(f"- item {idx} {'value ' * 12}" for idx in range(30))
+
+    chunks = chunk_text(text)
+
+    _assert_bounded(chunks)
+    assert len(chunks) > 1
+    assert all(
+        line.startswith("- item ")
+        for chunk in chunks
+        for line in chunk.splitlines()
+    )
 
 
 def test_splits_english_sentences_without_space_after_period():

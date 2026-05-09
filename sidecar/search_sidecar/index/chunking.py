@@ -12,18 +12,28 @@ does a better job on long content:
    and pathological long spans by word boundary before falling back to
    a hard character cut.
 
-The implementation remains dependency-free and character-count based.
-A tokenizer-aware splitter can replace the final sizing heuristic once
-we measure it against the production embedder.
+The Markdown parser provides structural boundaries only. Chunk sizing
+remains character-count based; a tokenizer-aware splitter can replace
+the final sizing heuristic once we measure it against the production
+embedder.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-BlockKind = Literal["paragraph", "heading", "code", "table", "html_table"]
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
+
+BlockKind = Literal[
+    "paragraph",
+    "heading",
+    "code",
+    "table",
+    "html_table",
+    "line_block",
+]
 
 
 @dataclass(frozen=True)
@@ -41,7 +51,7 @@ MIN_SOFT_BREAK_CHARS = int(MAX_CHUNK_CHARS * 0.55)
 _ASCII_SENTENCE_TERMINATORS = ".!?"
 _CJK_SENTENCE_TERMINATORS = "。！？；"
 _CLOSING_PUNCTUATION = "\"'”’)]}）】》"
-_FENCE_MARKERS = ("```", "~~~")
+_MARKDOWN = MarkdownIt("commonmark").enable("table")
 
 
 def chunk_text(text: str) -> list[str]:
@@ -64,62 +74,42 @@ def _normalize_text(text: str) -> str:
 
 
 def _parse_blocks(text: str) -> list[TextBlock]:
-    blocks: list[TextBlock] = []
-    paragraph: list[str] = []
     lines = text.split("\n")
-    i = 0
+    tokens = _MARKDOWN.parse(text)
+    blocks = [
+        TextBlock(_block_kind(token, source), source)
+        for token in tokens
+        if token.level == 0 and token.map is not None
+        for source in [_source_lines(lines, token.map)]
+        if source.strip()
+    ]
+    return blocks or [TextBlock("paragraph", text)]
 
-    def flush_paragraph() -> None:
-        if paragraph:
-            blocks.append(TextBlock("paragraph", "\n".join(paragraph).strip()))
-            paragraph.clear()
 
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
+def _source_lines(lines: list[str], line_range: list[int]) -> str:
+    start, end = line_range
+    return "\n".join(lines[start:end]).strip()
 
-        if not stripped:
-            flush_paragraph()
-            i += 1
-            continue
 
-        fence_marker = _fence_marker(stripped)
-        if fence_marker is not None:
-            flush_paragraph()
-            block, i = _consume_fenced_block(lines, i, fence_marker)
-            blocks.append(TextBlock("code", block))
-            continue
-
-        if _starts_html_table(stripped):
-            flush_paragraph()
-            block, i = _consume_until(lines, i, "</table>")
-            blocks.append(TextBlock("html_table", block))
-            continue
-
-        if _is_heading(stripped):
-            flush_paragraph()
-            blocks.append(TextBlock("heading", stripped))
-            i += 1
-            continue
-
-        if _is_table_row(stripped):
-            flush_paragraph()
-            block, i = _consume_while(lines, i, _is_table_row)
-            blocks.append(TextBlock("table", block))
-            continue
-
-        paragraph.append(line.rstrip())
-        i += 1
-
-    flush_paragraph()
-    return blocks
+def _block_kind(token: Token, source: str) -> BlockKind:
+    if token.type == "heading_open":
+        return "heading"
+    if token.type in {"fence", "code_block"}:
+        return "code"
+    if token.type == "table_open":
+        return "table"
+    if token.type == "html_block" and "<table" in source.lower():
+        return "html_table"
+    if token.type in {"bullet_list_open", "ordered_list_open", "blockquote_open"}:
+        return "line_block"
+    return "paragraph"
 
 
 def _split_block(block: TextBlock) -> list[str]:
     text = block.text.strip()
     if len(text) <= MAX_CHUNK_CHARS:
         return [text]
-    if block.kind in {"code", "table", "html_table"}:
+    if block.kind in {"code", "table", "html_table", "line_block"}:
         return _split_by_lines(text)
     return _split_prose(text)
 
@@ -253,78 +243,3 @@ def _best_soft_cut(text: str) -> int:
         if idx >= MIN_SOFT_BREAK_CHARS:
             return idx + 1
     return MAX_CHUNK_CHARS
-
-
-def _fence_marker(stripped_line: str) -> str | None:
-    for marker in _FENCE_MARKERS:
-        if stripped_line.startswith(marker):
-            return marker
-    return None
-
-
-def _consume_fenced_block(
-    lines: list[str],
-    start: int,
-    marker: str,
-) -> tuple[str, int]:
-    out = [lines[start].rstrip()]
-    i = start + 1
-    while i < len(lines):
-        line = lines[i].rstrip()
-        out.append(line)
-        if line.strip().startswith(marker):
-            i += 1
-            break
-        i += 1
-    return "\n".join(out).strip(), i
-
-
-def _consume_until(
-    lines: list[str],
-    start: int,
-    closing_token: str,
-) -> tuple[str, int]:
-    out: list[str] = []
-    i = start
-    closing = closing_token.lower()
-    while i < len(lines):
-        line = lines[i].rstrip()
-        out.append(line)
-        i += 1
-        if closing in line.lower():
-            break
-    return "\n".join(out).strip(), i
-
-
-def _consume_while(
-    lines: list[str],
-    start: int,
-    predicate: Callable[[str], bool],
-) -> tuple[str, int]:
-    out: list[str] = []
-    i = start
-    while i < len(lines) and predicate(lines[i].strip()):
-        out.append(lines[i].rstrip())
-        i += 1
-    return "\n".join(out).strip(), i
-
-
-def _starts_html_table(stripped_line: str) -> bool:
-    return "<table" in stripped_line.lower()
-
-
-def _is_heading(stripped_line: str) -> bool:
-    hashes = len(stripped_line) - len(stripped_line.lstrip("#"))
-    return (
-        1 <= hashes <= 6
-        and len(stripped_line) > hashes
-        and stripped_line[hashes] == " "
-    )
-
-
-def _is_table_row(stripped_line: str) -> bool:
-    return (
-        stripped_line.startswith("|")
-        and stripped_line.endswith("|")
-        and stripped_line.count("|") >= 2
-    )
