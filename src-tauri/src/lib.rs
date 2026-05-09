@@ -178,19 +178,26 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     use crate::services::search::SupervisorState;
                     use std::time::Duration;
-                    // Wait up to 60 s for the sidecar to be Running.
-                    let mut waited = Duration::ZERO;
+                    // Wait for the sidecar to be Running. Local OCR
+                    // model initialisation can exceed a fixed timeout
+                    // in dev, and skipping this task leaves existing
+                    // nodes un-forwarded until another mutation happens.
                     let step = Duration::from_millis(500);
-                    while waited < Duration::from_secs(60) {
-                        if matches!(resync_supervisor.state(), SupervisorState::Running { .. }) {
-                            break;
+                    loop {
+                        match resync_supervisor.state() {
+                            SupervisorState::Running { .. } => break,
+                            SupervisorState::Failed {
+                                retryable: false, ..
+                            } => {
+                                log::info!(
+                                    "startup resync skipped: sidecar failed terminally before Running"
+                                );
+                                return;
+                            }
+                            _ => {
+                                tokio::time::sleep(step).await;
+                            }
                         }
-                        tokio::time::sleep(step).await;
-                        waited += step;
-                    }
-                    if !matches!(resync_supervisor.state(), SupervisorState::Running { .. }) {
-                        log::info!("startup resync skipped: sidecar never reached Running");
-                        return;
                     }
                     let summary = services::search::forwarder::resync_all_nodes(
                         &resync_db,

@@ -42,7 +42,7 @@ fn rescans_mounts_after_restart_and_handles_unavailable_paths() {
             .iter()
             .find(|node| node.kind == "mount")
             .expect("mount");
-        assert_eq!(mount.state, "ready");
+        assert_eq!(mount.state, "pending");
         assert!(mount.children.iter().any(|child| child.name == "alpha.txt"));
         assert!(mount.children.iter().any(|child| child.name == "beta.txt"));
     }
@@ -87,7 +87,7 @@ fn rescans_mounts_after_restart_and_handles_unavailable_paths() {
             .iter()
             .find(|node| node.kind == "mount")
             .expect("mount");
-        assert_eq!(mount.state, "ready");
+        assert_eq!(mount.state, "pending");
         assert_eq!(mount.children.len(), 1);
         assert_eq!(mount.children[0].name, "gamma.txt");
     }

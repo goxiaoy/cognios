@@ -128,6 +128,9 @@ fn build_snapshot(records: Vec<NodeRecord>) -> ExplorerSnapshotDto {
 
         if matches!(node.kind.as_str(), "folder" | "mount") {
             node.size_bytes = node.children.iter().map(|child| child.size_bytes).sum();
+            if node.state != NodeState::Unavailable.as_str() {
+                node.state = aggregate_container_state(&node.children).to_string();
+            }
         }
 
         node
@@ -141,6 +144,58 @@ fn build_snapshot(records: Vec<NodeRecord>) -> ExplorerSnapshotDto {
     }
 }
 
+fn aggregate_container_state(children: &[ExplorerNodeDto]) -> &'static str {
+    let mut has_leaf = false;
+    let mut has_error = false;
+    let mut has_indexing = false;
+    let mut has_unindexed = false;
+
+    fn visit(
+        node: &ExplorerNodeDto,
+        has_leaf: &mut bool,
+        has_error: &mut bool,
+        has_indexing: &mut bool,
+        has_unindexed: &mut bool,
+    ) {
+        if matches!(node.kind.as_str(), "folder" | "mount") {
+            for child in &node.children {
+                visit(child, has_leaf, has_error, has_indexing, has_unindexed);
+            }
+            return;
+        }
+
+        *has_leaf = true;
+        match node.state.as_str() {
+            "error" => *has_error = true,
+            "indexing" => *has_indexing = true,
+            "indexed" | "unsupported" => {}
+            _ => *has_unindexed = true,
+        }
+    }
+
+    for child in children {
+        visit(
+            child,
+            &mut has_leaf,
+            &mut has_error,
+            &mut has_indexing,
+            &mut has_unindexed,
+        );
+    }
+
+    if !has_leaf {
+        "ready"
+    } else if has_error {
+        "error"
+    } else if has_indexing {
+        "indexing"
+    } else if has_unindexed {
+        "pending"
+    } else {
+        "indexed"
+    }
+}
+
 pub fn touch_node_modified_at(conn: &Connection, node_id: Option<&str>) -> rusqlite::Result<()> {
     if let Some(node_id) = node_id {
         conn.execute(
@@ -150,4 +205,69 @@ pub fn touch_node_modified_at(conn: &Connection, node_id: Option<&str>) -> rusql
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(id: &str, parent_id: Option<&str>, kind: NodeKind, state: NodeState) -> NodeRecord {
+        NodeRecord {
+            id: id.to_string(),
+            parent_id: parent_id.map(ToString::to_string),
+            name: id.to_string(),
+            kind,
+            state,
+            created_at: "2026-05-09T00:00:00Z".to_string(),
+            updated_at: "2026-05-09T00:00:00Z".to_string(),
+            size_bytes: 0,
+        }
+    }
+
+    #[test]
+    fn snapshot_container_state_follows_pending_descendant() {
+        let snapshot = build_snapshot(vec![
+            record("mount", None, NodeKind::Mount, NodeState::Indexed),
+            record(
+                "folder",
+                Some("mount"),
+                NodeKind::Folder,
+                NodeState::Indexed,
+            ),
+            record("note", Some("folder"), NodeKind::Note, NodeState::Pending),
+        ]);
+
+        let mount = &snapshot.roots[0];
+        let folder = &mount.children[0];
+        assert_eq!(folder.state, "pending");
+        assert_eq!(mount.state, "pending");
+    }
+
+    #[test]
+    fn snapshot_container_state_is_indexed_when_descendants_are_settled() {
+        let snapshot = build_snapshot(vec![
+            record("folder", None, NodeKind::Folder, NodeState::Pending),
+            record("note", Some("folder"), NodeKind::Note, NodeState::Indexed),
+            record(
+                "zip",
+                Some("folder"),
+                NodeKind::File,
+                NodeState::Unsupported,
+            ),
+        ]);
+
+        assert_eq!(snapshot.roots[0].state, "indexed");
+    }
+
+    #[test]
+    fn snapshot_empty_container_state_is_ready() {
+        let snapshot = build_snapshot(vec![record(
+            "folder",
+            None,
+            NodeKind::Folder,
+            NodeState::Indexed,
+        )]);
+
+        assert_eq!(snapshot.roots[0].state, "ready");
+    }
 }

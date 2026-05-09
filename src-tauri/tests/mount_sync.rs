@@ -39,7 +39,7 @@ fn creates_a_mount_and_mirrors_non_ignored_entries() {
         .find(|node| node.kind == "mount")
         .expect("mount root");
 
-    assert_eq!(mount.state, "ready");
+    assert_eq!(mount.state, "pending");
     assert!(mount.children.iter().any(|child| child.name == "docs"));
     assert!(mount.children.iter().any(|child| child.name == "root.txt"));
     assert!(!mount

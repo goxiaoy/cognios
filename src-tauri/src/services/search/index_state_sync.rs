@@ -22,10 +22,11 @@
 //!   as a snapshot, paid once. After that the steady-state delta-poll
 //!   resumes.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use tauri::{AppHandle, Emitter};
 
 use crate::infrastructure::db::connection::Database;
@@ -60,6 +61,7 @@ pub fn apply_index_changes(
     }
     let conn = db.connect()?;
     let mut updated = 0_usize;
+    let mut containers_to_refresh = HashSet::new();
     for t in transitions {
         let mapped = match t.state.as_str() {
             "indexed" => "indexed",
@@ -85,17 +87,14 @@ pub fn apply_index_changes(
                 continue;
             }
         };
+        for container_id in lineage_containers(&conn, &t.node_id)? {
+            containers_to_refresh.insert(container_id);
+        }
         // Only touch rows whose state is actually changing — keeps
         // updated_at stable for unchanged nodes and prevents the vfs
         // event emit below from firing on no-op batches.
-        //
-        // Skip container kinds (folder / mount): the
-        // sidecar's dispatcher mark_errors them ("no processor for
-        // kind=folder") because they have no body to index, but
-        // surfacing that as the explorer's "error" state would
-        // paint every folder with a red dot. The frontend already
-        // treats containers' ``ready`` as silent, so we just keep
-        // them out of the writeback entirely.
+        // Container rows are refreshed below from their descendants'
+        // states rather than from their own sidecar queue rows.
         let rows = conn.execute(
             "UPDATE nodes SET state = ?2
              WHERE id = ?1 AND state != ?2
@@ -104,7 +103,89 @@ pub fn apply_index_changes(
         )?;
         updated += rows;
     }
+    updated += refresh_container_states(&conn, &containers_to_refresh)?;
     Ok(updated)
+}
+
+fn lineage_containers(conn: &rusqlite::Connection, node_id: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "
+        WITH RECURSIVE lineage(id, parent_id, kind) AS (
+          SELECT id, parent_id, kind
+          FROM nodes
+          WHERE id = ?1
+          UNION ALL
+          SELECT n.id, n.parent_id, n.kind
+          FROM nodes n
+          INNER JOIN lineage l ON n.id = l.parent_id
+        )
+        SELECT id
+        FROM lineage
+        WHERE kind IN ('folder', 'mount')
+        ",
+    )?;
+    let rows = stmt.query_map(params![node_id], |row| row.get::<_, String>(0))?;
+    rows.collect()
+}
+
+fn refresh_container_states(
+    conn: &rusqlite::Connection,
+    container_ids: &HashSet<String>,
+) -> rusqlite::Result<usize> {
+    let mut updated = 0_usize;
+    for container_id in container_ids {
+        let Some(next_state) = aggregate_container_state(conn, container_id)? else {
+            continue;
+        };
+        let rows = conn.execute(
+            "
+            UPDATE nodes
+            SET state = ?2
+            WHERE id = ?1
+              AND kind IN ('folder', 'mount')
+              AND state != 'unavailable'
+              AND state != ?2
+            ",
+            params![container_id, next_state],
+        )?;
+        updated += rows;
+    }
+    Ok(updated)
+}
+
+fn aggregate_container_state(
+    conn: &rusqlite::Connection,
+    container_id: &str,
+) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "
+        WITH RECURSIVE descendants(id, kind, state) AS (
+          SELECT id, kind, state
+          FROM nodes
+          WHERE parent_id = ?1
+          UNION ALL
+          SELECT n.id, n.kind, n.state
+          FROM nodes n
+          INNER JOIN descendants d ON n.parent_id = d.id
+        ),
+        leaves AS (
+          SELECT state
+          FROM descendants
+          WHERE kind NOT IN ('folder', 'mount')
+        )
+        SELECT CASE
+          WHEN COUNT(*) = 0 THEN 'ready'
+          WHEN SUM(CASE WHEN state = 'error' THEN 1 ELSE 0 END) > 0 THEN 'error'
+          WHEN SUM(CASE WHEN state = 'indexing' THEN 1 ELSE 0 END) > 0 THEN 'indexing'
+          WHEN SUM(CASE WHEN state IN ('pending', 'ready') THEN 1 ELSE 0 END) > 0 THEN 'pending'
+          ELSE 'indexed'
+        END
+        FROM leaves
+        ",
+        params![container_id],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
 }
 
 /// True for the dispatcher's "no processor" mark_error message.
@@ -128,26 +209,9 @@ pub async fn run_index_state_sync(
     db: Database,
     app_handle: AppHandle,
 ) {
-    // Wait for the supervisor to reach Running before issuing the
-    // first poll. Bounded so a sidecar that never starts doesn't
-    // spin this loop forever (it'll exit and the task ends).
-    let mut waited = Duration::ZERO;
-    let warmup_step = Duration::from_millis(500);
-    while waited < Duration::from_secs(60) {
-        if matches!(supervisor.state(), SupervisorState::Running { .. }) {
-            break;
-        }
-        tokio::time::sleep(warmup_step).await;
-        waited += warmup_step;
-    }
-    if !matches!(supervisor.state(), SupervisorState::Running { .. }) {
-        log::info!("index-state-sync: sidecar never reached Running; not starting loop");
-        return;
-    }
-
     let mut cursor: u64 = 0;
     log::info!(
-        "index-state-sync: started (cursor=0, poll={:?})",
+        "index-state-sync: started and waiting for Running sidecar (cursor=0, poll={:?})",
         POLL_INTERVAL
     );
 
@@ -258,10 +322,21 @@ mod tests {
     }
 
     fn insert_node_with_kind(db: &Database, id: &str, kind: &str, state: &str) {
+        insert_node_with_parent_kind(db, id, None, kind, state);
+    }
+
+    fn insert_node_with_parent_kind(
+        db: &Database,
+        id: &str,
+        parent_id: Option<&str>,
+        kind: &str,
+        state: &str,
+    ) {
         let conn = db.connect().unwrap();
         conn.execute(
-            "INSERT INTO nodes (id, kind, name, state) VALUES (?1, ?2, 'n', ?3)",
-            params![id, kind, state],
+            "INSERT INTO nodes (id, parent_id, kind, name, state)
+             VALUES (?1, ?2, ?3, 'n', ?4)",
+            params![id, parent_id, kind, state],
         )
         .unwrap();
     }
@@ -360,26 +435,67 @@ mod tests {
     }
 
     #[test]
-    fn container_kinds_are_never_touched() {
-        // The sidecar's dispatcher marks folders as ``error``
-        // because there's no processor for them — but we don't
-        // want the explorer to paint every folder red. Container
-        // kinds (folder / mount) must stay at
-        // whatever state Rust set them to.
+    fn container_sidecar_rows_do_not_override_descendant_rollup() {
+        // The sidecar may emit transitions for folders/mounts, but
+        // containers have no body of their own. Their visible state
+        // comes from descendants instead.
         let db = setup_db();
-        insert_node_with_kind(&db, "folder-1", "folder", "ready");
-        insert_node_with_kind(&db, "mount-1", "mount", "ready");
+        insert_node_with_kind(&db, "folder-1", "folder", "indexed");
+        insert_node_with_parent_kind(&db, "note-1", Some("folder-1"), "note", "indexed");
         let updated = apply_index_changes(
             &db,
             &[
                 change("folder-1", "error", 1),
-                change("mount-1", "error", 2),
+                change("note-1", "indexed", 2),
             ],
         )
         .unwrap();
         assert_eq!(updated, 0);
+        assert_eq!(read_state(&db, "folder-1"), "indexed");
+    }
+
+    #[test]
+    fn container_rollup_follows_pending_descendant() {
+        let db = setup_db();
+        insert_node_with_kind(&db, "mount-1", "mount", "indexed");
+        insert_node_with_parent_kind(&db, "folder-1", Some("mount-1"), "folder", "indexed");
+        insert_node_with_parent_kind(&db, "note-1", Some("folder-1"), "note", "indexed");
+        insert_node_with_parent_kind(&db, "file-1", Some("folder-1"), "file", "indexed");
+
+        let updated = apply_index_changes(&db, &[change("file-1", "pending", 1)]).unwrap();
+
+        assert_eq!(updated, 3);
+        assert_eq!(read_state(&db, "file-1"), "pending");
+        assert_eq!(read_state(&db, "folder-1"), "pending");
+        assert_eq!(read_state(&db, "mount-1"), "pending");
+    }
+
+    #[test]
+    fn container_rollup_becomes_indexed_when_descendants_are_settled() {
+        let db = setup_db();
+        insert_node_with_kind(&db, "mount-1", "mount", "pending");
+        insert_node_with_parent_kind(&db, "folder-1", Some("mount-1"), "folder", "pending");
+        insert_node_with_parent_kind(&db, "note-1", Some("folder-1"), "note", "indexed");
+        insert_node_with_parent_kind(&db, "file-1", Some("folder-1"), "file", "pending");
+        insert_node_with_parent_kind(&db, "zip-1", Some("folder-1"), "file", "unsupported");
+
+        let updated = apply_index_changes(&db, &[change("file-1", "indexed", 1)]).unwrap();
+
+        assert_eq!(updated, 3);
+        assert_eq!(read_state(&db, "file-1"), "indexed");
+        assert_eq!(read_state(&db, "folder-1"), "indexed");
+        assert_eq!(read_state(&db, "mount-1"), "indexed");
+    }
+
+    #[test]
+    fn empty_container_rollup_stays_ready() {
+        let db = setup_db();
+        insert_node_with_kind(&db, "folder-1", "folder", "ready");
+
+        let updated = apply_index_changes(&db, &[change("folder-1", "indexed", 1)]).unwrap();
+
+        assert_eq!(updated, 0);
         assert_eq!(read_state(&db, "folder-1"), "ready");
-        assert_eq!(read_state(&db, "mount-1"), "ready");
     }
 
     #[test]
