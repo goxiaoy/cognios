@@ -14,7 +14,7 @@ import pytest
 
 from search_sidecar.index.embedder import StubEmbedder
 from search_sidecar.index.processors.pdf import PdfProcessor
-from search_sidecar.index.queue import IndexingJob, JobState
+from search_sidecar.index.queue import IndexingJob, JobState, open_queue
 from search_sidecar.storage import open_store, role_or_default
 
 UUID_A = "11111111-1111-1111-1111-111111111111"
@@ -61,6 +61,18 @@ def _make_job(path: Path, *, node_id: str = UUID_A) -> IndexingJob:
         created_at=now,
         modified_at=now,
     )
+
+
+def _claim_pdf_job(queue, path: Path, *, node_id: str = UUID_A) -> IndexingJob:
+    queue.enqueue(
+        node_id=node_id,
+        kind="file",
+        name=path.name,
+        absolute_content_path=str(path),
+    )
+    job = queue.claim_next()
+    assert job is not None
+    return job
 
 
 @pytest.fixture
@@ -147,6 +159,104 @@ def test_process_handles_image_only_pdf_with_zero_chunks(tmp_path: Path, proc):
     written = processor.process(_make_job(pdf))
     assert written == 0
     assert store.count() == 0
+
+
+def test_process_flags_text_pdf_for_enhancement(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        pdf = tmp_path / "doc.pdf"
+        _make_pdf(pdf, ["Plain text layer first."])
+        processor = PdfProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            advanced_ocr_extract=lambda _p: "advanced layout OCR",
+        )
+
+        job = _claim_pdf_job(queue, pdf)
+        processor.process(job)
+        queue.mark_indexed(job.node_id)
+
+        assert queue.claim_next_enhancement() is not None
+    finally:
+        queue.close()
+
+
+def test_process_flags_scanned_pdf_without_deleting_previous_chunks(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        old_pdf = tmp_path / "doc.pdf"
+        _make_pdf(old_pdf, ["previous searchable OCR"])
+        PdfProcessor(store, StubEmbedder()).process(_make_job(old_pdf))
+        assert "previous searchable OCR" in "\n".join(
+            r["text"] for r in store.scan(UUID_A)
+        )
+
+        blank = pymupdf.open()
+        blank.new_page()
+        old_pdf.unlink()
+        blank.save(str(old_pdf))
+        blank.close()
+        processor = PdfProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            advanced_ocr_extract=lambda _p: "fresh scanned PDF OCR",
+        )
+
+        job = _claim_pdf_job(queue, old_pdf)
+        assert processor.process(job) == 0
+        assert "previous searchable OCR" in "\n".join(
+            r["text"] for r in store.scan(UUID_A)
+        )
+
+        queue.mark_indexed(job.node_id)
+        claim = queue.claim_next_enhancement()
+        assert claim is not None
+        processor.process_enhancement(*claim)
+
+        joined = "\n".join(r["text"] for r in store.scan(UUID_A))
+        assert "previous searchable OCR" not in joined
+        assert "fresh scanned PDF OCR" in joined
+    finally:
+        queue.close()
+
+
+def test_empty_pdf_enhancement_clears_stale_chunks_after_second_pass(
+    tmp_path: Path,
+):
+    store = open_store(tmp_path / "index.lance")
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        pdf = tmp_path / "doc.pdf"
+        _make_pdf(pdf, ["old searchable text"])
+        PdfProcessor(store, StubEmbedder()).process(_make_job(pdf))
+
+        blank = pymupdf.open()
+        blank.new_page()
+        pdf.unlink()
+        blank.save(str(pdf))
+        blank.close()
+        processor = PdfProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            advanced_ocr_extract=lambda _p: "-",
+        )
+        job = _claim_pdf_job(queue, pdf)
+        processor.process(job)
+        queue.mark_indexed(job.node_id)
+        claim = queue.claim_next_enhancement()
+        assert claim is not None
+
+        processor.process_enhancement(*claim)
+
+        assert store.scan(UUID_A) == []
+        assert queue.claim_next_enhancement() is None
+    finally:
+        queue.close()
 
 
 def test_process_raises_on_encrypted_pdf(tmp_path: Path, proc):

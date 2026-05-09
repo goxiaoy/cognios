@@ -27,6 +27,7 @@ vi.mock("../lib/tauri/ipc", () => ({
   saveNoteContent: vi.fn(),
   readFileContent: (nodeId: string) => readFileContent(nodeId),
   showNodeInFileManager: (nodeId: string) => showNodeInFileManager(nodeId),
+  showNodeExtractArtifacts: vi.fn().mockResolvedValue(undefined),
   // Phase 2 / Unit 7 search-sidecar bridge — stubbed for the App test.
   searchQuery: vi.fn().mockResolvedValue({ state: "initialising" }),
   getIndexingStatus: vi.fn().mockResolvedValue({ state: "initialising" }),

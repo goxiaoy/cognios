@@ -113,6 +113,10 @@ export async function showNodeInFileManager(nodeId: string): Promise<void> {
   return invoke<void>("show_node_in_file_manager", { input: { nodeId } });
 }
 
+export async function showNodeExtractArtifacts(nodeId: string): Promise<void> {
+  return invoke<void>("show_node_extract_artifacts", { input: { nodeId } });
+}
+
 // ---- search-sidecar bridge ------------------------------------------------
 
 export async function searchQuery(

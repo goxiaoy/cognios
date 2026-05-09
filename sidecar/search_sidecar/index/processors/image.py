@@ -29,18 +29,30 @@ runner won't retry).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Literal
-
-import httpx
+from typing import Callable
 
 from ...storage import LanceDBStore, NodeChunk
 from ..chunking import chunk_text
 from ..embedder import Embedder
-from ..queue import IndexingJob, IndexingQueue, MAX_ENHANCEMENT_ATTEMPTS
+from ..extract_artifacts import (
+    ArtifactKind,
+    clear_extract_artifacts,
+    write_extract_artifact,
+)
+from ..queue import IndexingJob, IndexingQueue
+from .enhancement import (
+    AdvancedOcrExtract,
+    EnhancementTransientError,
+    ExtractAssets,
+    classify_enhancement_error as _classify_enhancement_error,
+    extract_text_and_assets as _extract_text_and_assets,
+    handle_enhancement_error,
+    meaningful_chunks as _meaningful_chunks,
+    strip_image_references as _strip_image_references,
+)
 
 LOG = logging.getLogger("search_sidecar.index.processors.image")
 
@@ -63,8 +75,6 @@ SUPPORTED_EXTENSIONS = (
 # only what it looks like once it arrives.
 OcrExtract = Callable[[Path], str]
 CaptionExtract = Callable[[Path], str]
-AdvancedOcrExtract = Callable[[Path], str]
-ArtifactKind = Literal["basic", "advanced", "caption"]
 
 
 class ImageProcessor:
@@ -108,33 +118,28 @@ class ImageProcessor:
         if not path.is_file():
             raise FileNotFoundError(f"missing image: {path}")
 
-        # Always replace previous chunks for this node — same contract
-        # TextProcessor + PdfProcessor follow. Runs first so a partial
-        # re-index where one extractor fails doesn't leave a stale
-        # row from the *other* role behind.
-        self._store.delete_by_node_id(job.node_id)
-
         # Basic pass only. Advanced OCR is a separate background
         # enhancement so every image becomes searchable quickly.
         body_text = _safe_extract(self._ocr_extract, path, label="OCR")
         summary_text = _safe_extract(
             self._caption_extract, path, label="Caption"
         )
-        self._write_extract_artifact(job, "basic", body_text)
-        self._write_extract_artifact(job, "caption", summary_text)
         body_chunks = chunk_text(body_text) if body_text else []
         summary_chunks = chunk_text(summary_text) if summary_text else []
         if not body_chunks and not summary_chunks:
             # No extractor yielded usable text. Record as indexed
             # with zero chunks; the runner doesn't retry zero-chunk
             # results because they're a valid steady state.
+            self._store.replace_node_chunks(job.node_id, [])
+            self._replace_basic_extract_artifacts(job, body_text, summary_text)
             return 0
 
         rows = self._build_rows(job, body_chunks, summary_chunks)
-        self._store.upsert(rows)
+        written = self._store.replace_node_chunks(job.node_id, rows)
+        self._replace_basic_extract_artifacts(job, body_text, summary_text)
         if body_chunks and self.has_advanced_ocr() and self._queue is not None:
             self._queue.set_enhancement_pending(job.node_id)
-        return len(rows)
+        return written
 
     def has_advanced_ocr(self) -> bool:
         return self._advanced_ocr_extract is not None
@@ -151,45 +156,46 @@ class ImageProcessor:
             return
 
         try:
-            advanced_text = extractor(path) or ""
+            advanced_output = extractor(path)
         except Exception as err:
             self._handle_enhancement_error(job.node_id, err)
             return
+        advanced_text, advanced_assets = _extract_text_and_assets(advanced_output)
         advanced_text = advanced_text.strip()
         if not self._queue.matches_content_claim(
             job.node_id, job.content_version, claim_seq
         ):
             return
-        self._write_extract_artifact(job, "advanced", advanced_text)
-
-        body_chunks = _meaningful_chunks(advanced_text)
+        body_chunks = _meaningful_chunks(_strip_image_references(advanced_text))
         if not body_chunks:
+            self._write_extract_artifact(
+                job,
+                "advanced",
+                advanced_text,
+                assets=advanced_assets,
+            )
             self._queue.clear_enhancement_pending(job.node_id)
             return
 
         rows = self._build_rows(job, body_chunks, [])
-        self._store.delete_chunks_by_role(job.node_id, "body")
-        self._store.upsert(rows)
+        self._store.replace_chunks_by_role(job.node_id, "body", rows)
+        self._write_extract_artifact(
+            job,
+            "advanced",
+            advanced_text,
+            assets=advanced_assets,
+        )
 
         self._queue.clear_enhancement_pending_if_transition_seq(
             job.node_id, claim_seq
         )
 
     def _handle_enhancement_error(self, node_id: str, err: Exception) -> None:
-        if _classify_enhancement_error(err) == "transient":
-            attempts = (
-                self._queue.bump_enhancement_attempts(node_id)
-                if self._queue
-                else 0
-            )
-            if attempts < MAX_ENHANCEMENT_ATTEMPTS:
-                raise EnhancementTransientError(str(err)) from err
-        if self._queue is not None:
-            self._queue.mark_enhancement_failed(node_id)
-        LOG.warning(
-            "advanced-OCR enhancement failed terminally for %s: %s",
+        handle_enhancement_error(
+            self._queue,
             node_id,
             err,
+            log=LOG,
         )
 
     def _build_rows(
@@ -252,11 +258,19 @@ class ImageProcessor:
         job: IndexingJob,
         kind: ArtifactKind,
         text: str,
+        *,
+        assets: ExtractAssets | None = None,
     ) -> None:
         if self._extract_dir is None or not text.strip():
             return
         try:
-            write_extract_artifact(self._extract_dir, job, kind, text)
+            write_extract_artifact(
+                self._extract_dir,
+                job.node_id,
+                kind,
+                text,
+                assets=assets,
+            )
         except Exception as err:
             LOG.warning(
                 "failed to write %s OCR artifact for %s: %s",
@@ -265,45 +279,27 @@ class ImageProcessor:
                 err,
             )
 
+    def _replace_basic_extract_artifacts(
+        self,
+        job: IndexingJob,
+        body_text: str,
+        summary_text: str,
+    ) -> None:
+        self._clear_extract_artifacts(job)
+        self._write_extract_artifact(job, "basic", body_text)
+        self._write_extract_artifact(job, "caption", summary_text)
 
-class EnhancementTransientError(Exception):
-    """Raised after a retryable enhancement failure is recorded."""
-
-
-def _classify_enhancement_error(
-    exc: Exception,
-) -> Literal["transient", "terminal"]:
-    if isinstance(
-        exc,
-        (
-            httpx.TransportError,
-            httpx.ConnectError,
-            httpx.ReadTimeout,
-            httpx.WriteTimeout,
-            asyncio.TimeoutError,
-            ConnectionError,
-        ),
-    ):
-        return "transient"
-    if isinstance(exc, httpx.HTTPStatusError):
-        status = exc.response.status_code
-        if status in (429, 500, 502, 503, 504):
-            return "transient"
-        return "terminal"
-
-    message = str(exc)
-    if isinstance(exc, RuntimeError):
-        if any(token in message for token in ("429", "500", "502", "503", "504")):
-            return "transient"
-        return "terminal"
-    return "terminal"
-
-
-def _meaningful_chunks(text: str) -> list[str]:
-    """Chunk advanced output and drop punctuation-only garbage."""
-    return [
-        chunk for chunk in chunk_text(text) if any(ch.isalnum() for ch in chunk)
-    ]
+    def _clear_extract_artifacts(self, job: IndexingJob) -> None:
+        if self._extract_dir is None:
+            return
+        try:
+            clear_extract_artifacts(self._extract_dir, job.node_id)
+        except Exception as err:
+            LOG.warning(
+                "failed to clear stale OCR artifacts for %s: %s",
+                job.node_id,
+                err,
+            )
 
 
 def _safe_extract(
@@ -326,36 +322,3 @@ def _safe_extract(
         LOG.warning("%s extractor failed for %s: %s", label, path.name, err)
         return ""
     return text.strip()
-
-
-def write_extract_artifact(
-    extract_dir: Path,
-    job: IndexingJob,
-    kind: ArtifactKind,
-    text: str,
-) -> Path:
-    """Persist OCR/caption text beside the search index for inspection."""
-    image_dir = extract_dir / _safe_path_segment(job.node_id, "node")
-    image_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{kind}.md"
-    artifact_path = image_dir / filename
-    tmp_path = image_dir / f".{filename}.tmp"
-    tmp_path.write_text(text.strip() + "\n", encoding="utf-8")
-    tmp_path.replace(artifact_path)
-    return artifact_path
-
-
-def _safe_path_segment(value: str, fallback: str) -> str:
-    cleaned_chars: list[str] = []
-    last_was_dash = False
-    for char in value.strip():
-        if char.isalnum() or char in {"_", ".", "-"}:
-            cleaned_chars.append(char)
-            last_was_dash = False
-        elif not last_was_dash:
-            cleaned_chars.append("-")
-            last_was_dash = True
-    cleaned = "".join(cleaned_chars).strip(".-")
-    if not cleaned:
-        cleaned = fallback
-    return cleaned[:120]

@@ -78,10 +78,8 @@ class URLCacheProcessor:
         readable = extract_readable_text(raw)
         chunks = chunk_text(readable)
 
-        # Always replace the previous chunks for this node — the
-        # simplest way to keep the index consistent on re-fetch.
-        self._store.delete_by_node_id(job.node_id)
         if not chunks:
+            self._store.replace_node_chunks(job.node_id, [])
             return 0
 
         vectors = self._embedder.embed(chunks)
@@ -107,8 +105,7 @@ class URLCacheProcessor:
             )
             for i, (chunk, vec) in enumerate(zip(chunks, vectors))
         ]
-        self._store.upsert(rows)
-        return len(rows)
+        return self._store.replace_node_chunks(job.node_id, rows)
 
 
 def extract_readable_text(html: bytes | str) -> str:

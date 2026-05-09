@@ -105,6 +105,62 @@ def test_delete_chunks_by_role_preserves_summary(tmp_path: Path):
     assert rows[0]["text"] == "caption"
 
 
+def test_replace_node_chunks_writes_new_rows_then_removes_stale(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    store.upsert(
+        [
+            _make_chunk("node-a", idx=0, text="old 0"),
+            _make_chunk("node-a", idx=1, text="old 1"),
+            _make_chunk("node-b", idx=0, text="other"),
+        ]
+    )
+
+    written = store.replace_node_chunks(
+        "node-a",
+        [
+            _make_chunk("node-a", idx=0, text="new 0"),
+        ],
+    )
+
+    assert written == 1
+    assert store.count() == 2
+    rows = store.scan("node-a")
+    assert [r["text"] for r in rows] == ["new 0"]
+    assert store.scan("node-b")[0]["text"] == "other"
+
+
+def test_replace_chunks_by_role_preserves_summary(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    store.upsert(
+        [
+            _make_chunk("node-a", idx=0, text="old body 0", role="body"),
+            _make_chunk("node-a", idx=1, text="old body 1", role="body"),
+            NodeChunk(
+                id="node-a:summary:0",
+                node_id="node-a",
+                kind="file",
+                name="img",
+                text="caption",
+                vector=[0.0] * EMBEDDING_DIMENSION,
+                role="summary",
+            ),
+        ]
+    )
+
+    written = store.replace_chunks_by_role(
+        "node-a",
+        "body",
+        [_make_chunk("node-a", idx=0, text="new body", role="body")],
+    )
+
+    assert written == 1
+    rows = sorted(store.scan("node-a"), key=lambda r: r["id"])
+    assert [(r["id"], r["text"]) for r in rows] == [
+        ("node-a:0", "new body"),
+        ("node-a:summary:0", "caption"),
+    ]
+
+
 def test_delete_chunks_by_role_is_noop_for_missing_role(tmp_path: Path):
     store = open_store(tmp_path / "index.lance")
     store.upsert([_make_chunk("node-a", idx=0, role="body")])

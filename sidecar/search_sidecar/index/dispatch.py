@@ -13,13 +13,14 @@ from typing import Protocol
 
 from ..storage import LanceDBStore
 from .embedder import Embedder
+from .processors.enhancement import AdvancedOcrExtract
 from .processors.image import (
-    AdvancedOcrExtract,
     CaptionExtract,
     ImageProcessor,
     OcrExtract,
+    SUPPORTED_EXTENSIONS as IMAGE_EXTENSIONS,
 )
-from .processors.pdf import PdfProcessor
+from .processors.pdf import SUPPORTED_EXTENSIONS as PDF_EXTENSIONS, PdfProcessor
 from .processors.text import TextProcessor
 from .processors.url_cache import URLCacheProcessor
 from .queue import IndexingJob, IndexingQueue
@@ -28,6 +29,11 @@ from .queue import IndexingJob, IndexingQueue
 class Processor(Protocol):
     def can_handle(self, job: IndexingJob) -> bool: ...
     def process(self, job: IndexingJob) -> int: ...
+
+
+class EnhancementProcessor(Processor, Protocol):
+    def has_advanced_ocr(self) -> bool: ...
+    def process_enhancement(self, job: IndexingJob, claim_seq: int) -> None: ...
 
 
 class Dispatcher:
@@ -57,11 +63,26 @@ class Dispatcher:
             advanced_ocr_extract=advanced_ocr_extract,
             extract_dir=extract_dir,
         )
+        self.pdf_processor = PdfProcessor(
+            store,
+            embedder,
+            queue=queue,
+            advanced_ocr_extract=(
+                advanced_ocr_extract
+                if _supports_pdf_advanced_ocr(advanced_ocr_extract)
+                else None
+            ),
+            extract_dir=extract_dir,
+        )
         self._processors: list[Processor] = [
             TextProcessor(store, embedder),
-            PdfProcessor(store, embedder),
+            self.pdf_processor,
             self.image_processor,
             URLCacheProcessor(store, embedder),
+        ]
+        self._enhancement_processors: list[EnhancementProcessor] = [
+            self.image_processor,
+            self.pdf_processor,
         ]
 
     def find(self, job: IndexingJob) -> Processor | None:
@@ -69,3 +90,29 @@ class Dispatcher:
             if proc.can_handle(job):
                 return proc
         return None
+
+    def has_advanced_ocr(self) -> bool:
+        return any(proc.has_advanced_ocr() for proc in self._enhancement_processors)
+
+    def find_enhancement(self, job: IndexingJob) -> EnhancementProcessor | None:
+        for proc in self._enhancement_processors:
+            if proc.has_advanced_ocr() and proc.can_handle(job):
+                return proc
+        return None
+
+    def enhancement_extensions(self) -> tuple[str, ...]:
+        extensions: list[str] = []
+        if self.image_processor.has_advanced_ocr():
+            extensions.extend(IMAGE_EXTENSIONS)
+        if self.pdf_processor.has_advanced_ocr():
+            extensions.extend(PDF_EXTENSIONS)
+        return tuple(extensions)
+
+
+def _supports_pdf_advanced_ocr(extractor: AdvancedOcrExtract | None) -> bool:
+    if extractor is None:
+        return False
+    if bool(getattr(extractor, "supports_pdf", False)):
+        return True
+    bound_owner = getattr(extractor, "__self__", None)
+    return bool(getattr(bound_owner, "supports_pdf", False))

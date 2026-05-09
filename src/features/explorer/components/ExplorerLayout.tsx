@@ -2,6 +2,7 @@ import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useStat
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import type { ExistingMount, ExplorerClient, ExplorerNode, MountSetupContext } from "../types/explorer";
+import { isPdfNode } from "../utils/presentation";
 import type { CreateAction } from "./CreateMenu";
 import type { SelectModifiers } from "./ExplorerRow";
 import { useExplorerEvents } from "../hooks/useExplorerEvents";
@@ -148,7 +149,7 @@ export function ExplorerLayout({
   // center pane and breadcrumbs. Mutual-exclusion enforcement: note editor
   // takes render priority if multiple fields are inadvertently set.
   //
-  // Cannot-preview files (PDF, binary, ...) don't populate any active*
+  // Cannot-preview files (binary, unsupported documents, ...) don't populate any active*
   // slot, but the user still selected a single file — surface that in
   // the breadcrumbs so the header doesn't disappear when you click a
   // non-previewable item.
@@ -547,6 +548,9 @@ export function ExplorerLayout({
                 ) : null}
                 {showImage ? (
                   <ImagePreview
+                    contentKind={
+                      isPdfNode(store.activeImagePreview!) ? "pdf" : "image"
+                    }
                     searchClient={searchClient}
                     name={store.activeImagePreview!.name}
                     nodeId={store.activeImagePreviewId!}

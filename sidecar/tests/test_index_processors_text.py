@@ -14,6 +14,11 @@ from search_sidecar.index.queue import IndexingJob, JobState
 from search_sidecar.storage import open_store, role_or_default
 
 
+class FailingEmbedder:
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("embedding failed")
+
+
 def _make_job(path: Path, *, kind: str = "note", node_id: str = "11111111-1111-1111-1111-111111111111") -> IndexingJob:
     now = datetime.now(timezone.utc)
     return IndexingJob(
@@ -81,6 +86,23 @@ def test_process_replaces_previous_chunks_on_re_index(tmp_path: Path):
     proc.process(job)
     # Old single chunk replaced with two new
     assert store.count() == 2
+
+
+def test_process_keeps_previous_chunks_when_embedding_fails(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    note = tmp_path / "note.md"
+    job = _make_job(note)
+
+    note.write_text("Original body.")
+    TextProcessor(store, StubEmbedder()).process(job)
+
+    note.write_text("Replacement body.")
+    with pytest.raises(RuntimeError, match="embedding failed"):
+        TextProcessor(store, FailingEmbedder()).process(job)
+
+    rows = store.scan(job.node_id)
+    assert len(rows) == 1
+    assert rows[0]["text"] == "Original body."
 
 
 def test_process_handles_empty_file(tmp_path: Path):

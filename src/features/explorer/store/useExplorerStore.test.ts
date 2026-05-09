@@ -19,6 +19,7 @@ function makeClient(snapshot: { roots: unknown[] }) {
     saveNoteContent: vi.fn(),
     readFileContent: vi.fn(),
     showNodeInFileManager: vi.fn(),
+    showNodeExtractArtifacts: vi.fn(),
   };
 }
 
@@ -77,6 +78,17 @@ describe("useExplorerStore", () => {
             createdAt: "2026-04-26 00:00:00",
             modifiedAt: "2026-04-26 00:00:00",
             sizeBytes: 1024,
+            children: [],
+          },
+          {
+            id: "pdf-1",
+            parentId: "mount-1",
+            name: "scan.pdf",
+            kind: "file",
+            state: "indexed",
+            createdAt: "2026-04-26 00:00:00",
+            modifiedAt: "2026-04-26 00:00:00",
+            sizeBytes: 2048,
             children: [],
           },
           {
@@ -187,6 +199,20 @@ describe("useExplorerStore", () => {
     });
     expect(result.current.activeImagePreviewId).toBe("img-1");
     expect(result.current.activeImagePreview?.name).toBe("logo.png");
+  });
+
+  it("activateArtifact on a PDF file sets activeImagePreviewId", async () => {
+    const client = makeClient(baseSnapshot);
+    const { result } = renderHook(() => useExplorerStore(client));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    act(() => {
+      result.current.activateArtifact("pdf-1");
+    });
+    expect(result.current.activeImagePreviewId).toBe("pdf-1");
+    expect(result.current.activeImagePreview?.name).toBe("scan.pdf");
   });
 
   it("activateArtifact on an unsupported file kind does not set any surface", async () => {

@@ -4,7 +4,7 @@
 //! Local PP-StructureV3 ships as 13 separate model repos under the
 //! ``advanced-ocr-*`` role prefix in the sidecar's manifest. The user
 //! can enable the ``advanced-ocr`` feature long before all 13 stages
-//! finish downloading; existing indexed images should become eligible
+//! finish downloading; existing indexed documents should become eligible
 //! for enhancement once the local bundle is usable.
 //!
 //! Mechanism: every 10 s, fetch ``GET /models/status`` and check
@@ -118,7 +118,7 @@ async fn request_backfill(client: &SearchSidecarClient) {
         SidecarEnvelopeState::Ready => {
             let flagged = backfill.data.map(|data| data.flagged).unwrap_or(0);
             log::info!(
-                "advanced-ocr-watcher: enhancement backfill flagged {flagged} image node(s)"
+                "advanced-ocr-watcher: enhancement backfill flagged {flagged} document node(s)"
             );
         }
         SidecarEnvelopeState::Initialising => {

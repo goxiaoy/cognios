@@ -48,11 +48,8 @@ class TextProcessor:
         text = path.read_text(encoding="utf-8", errors="replace")
         chunks = chunk_text(text)
 
-        # Always replace the node's previous chunks — the simplest way
-        # to keep the store consistent on re-index of an existing node.
-        self._store.delete_by_node_id(job.node_id)
-
         if not chunks:
+            self._store.replace_node_chunks(job.node_id, [])
             return 0
 
         vectors = self._embedder.embed(chunks)
@@ -78,5 +75,4 @@ class TextProcessor:
             )
             for i, (chunk, vec) in enumerate(zip(chunks, vectors))
         ]
-        self._store.upsert(rows)
-        return len(rows)
+        return self._store.replace_node_chunks(job.node_id, rows)

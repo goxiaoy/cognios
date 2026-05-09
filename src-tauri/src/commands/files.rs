@@ -20,6 +20,12 @@ pub struct ShowNodeInFileManagerInput {
     pub node_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowNodeExtractArtifactsInput {
+    pub node_id: String,
+}
+
 #[tauri::command]
 pub fn read_file_content(
     state: State<'_, AppState>,
@@ -44,6 +50,27 @@ pub fn show_node_in_file_manager(
     let notes_dir = state.storage_dir.join("notes");
     let path = resolve_real_node_path(&conn, &input.node_id, &notes_dir)?;
     reveal_in_file_manager(&path)
+}
+
+#[tauri::command]
+pub fn show_node_extract_artifacts(
+    state: State<'_, AppState>,
+    input: ShowNodeExtractArtifactsInput,
+) -> Result<(), String> {
+    let conn = state
+        .db
+        .connect()
+        .map_err(|_| "extracted files unavailable".to_string())?;
+    ensure_extractable_node(&conn, &input.node_id)?;
+    let path = state
+        .storage_dir
+        .join("search")
+        .join("extract")
+        .join(safe_extract_path_segment(&input.node_id));
+    if !path.is_dir() {
+        return Err("Extracted files are not available yet.".into());
+    }
+    open_directory_in_file_manager(&path)
 }
 
 fn resolve_real_node_path(
@@ -92,6 +119,54 @@ fn resolve_real_node_path(
     }
 }
 
+fn ensure_extractable_node(conn: &rusqlite::Connection, node_id: &str) -> Result<(), String> {
+    let record = conn
+        .query_row(
+            "SELECT kind, name FROM nodes WHERE id = ?1",
+            [node_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "extracted files unavailable".to_string())?;
+    if record.0 != "file" || !has_extract_artifacts_extension(&record.1) {
+        return Err("Extracted files are only available for images and PDFs.".into());
+    }
+    Ok(())
+}
+
+fn has_extract_artifacts_extension(name: &str) -> bool {
+    let extension = Path::new(name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "webp" | "bmp" | "tif" | "tiff" | "gif" | "pdf"
+    )
+}
+
+fn safe_extract_path_segment(value: &str) -> String {
+    let mut cleaned = String::new();
+    let mut last_was_dash = false;
+    for char in value.trim().chars() {
+        if char.is_alphanumeric() || matches!(char, '_' | '.' | '-') {
+            cleaned.push(char);
+            last_was_dash = false;
+        } else if !last_was_dash {
+            cleaned.push('-');
+            last_was_dash = true;
+        }
+    }
+    let cleaned = cleaned.trim_matches(&['.', '-'][..]).to_string();
+    if cleaned.is_empty() {
+        "node".to_string()
+    } else {
+        cleaned.chars().take(120).collect()
+    }
+}
+
 fn reveal_in_file_manager(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Err("file unavailable".into());
@@ -119,6 +194,27 @@ fn reveal_in_file_manager(path: &Path) -> Result<(), String> {
     }
 }
 
+fn open_directory_in_file_manager(path: &Path) -> Result<(), String> {
+    if !path.is_dir() {
+        return Err("directory unavailable".into());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        run_command_with_target("open", std::iter::empty::<&str>(), path)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        run_command_with_target("explorer", std::iter::empty::<&str>(), path)
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        run_command_with_target("xdg-open", std::iter::empty::<&str>(), path)
+    }
+}
+
 fn run_command_with_target<'a, I>(program: &str, args: I, target: &Path) -> Result<(), String>
 where
     I: IntoIterator<Item = &'a str>,
@@ -133,6 +229,27 @@ where
         Ok(())
     } else {
         Err(format!("failed to open file manager ({program})"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{has_extract_artifacts_extension, safe_extract_path_segment};
+
+    #[test]
+    fn extract_artifact_path_segment_matches_node_id_storage_contract() {
+        assert_eq!(
+            safe_extract_path_segment("abc/../node id"),
+            "abc-..-node-id"
+        );
+        assert_eq!(safe_extract_path_segment("..."), "node");
+    }
+
+    #[test]
+    fn extract_artifacts_are_available_for_images_and_pdfs() {
+        assert!(has_extract_artifacts_extension("receipt.PNG"));
+        assert!(has_extract_artifacts_extension("scan.pdf"));
+        assert!(!has_extract_artifacts_extension("note.md"));
     }
 }
 

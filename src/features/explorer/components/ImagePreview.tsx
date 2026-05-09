@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 import type { NodeContentChunk } from "../../../lib/contracts/search";
 import { VFS_EVENT_NAME, type VfsChangeEvent } from "../../../lib/tauri/events";
 import type { SearchClient } from "../../search/types/search";
+import { MarkdownRenderer } from "./MarkdownRenderer";
+import { MarkdownView } from "./MarkdownView";
+
+type ViewMode = "preview" | "source";
+type PreviewContentKind = "image" | "pdf";
 
 /**
- * Center-pane preview for image nodes — renders the **indexed** text
- * (OCR + caption) as markdown, while the inspector on the right
- * shows the actual image thumbnail. The split keeps the workspace
- * readable: searchable text content takes the wide pane, the raster
- * stays in a sidebar where its size is bounded.
+ * Center-pane preview for extracted document content — renders the
+ * **indexed** OCR / text-layer output as markdown. Images may also
+ * include a caption summary; PDFs use the same body chunks for
+ * text-layer and advanced-OCR markdown.
  *
  * Content shape:
  *
@@ -28,17 +31,21 @@ import type { SearchClient } from "../../search/types/search";
  *   isn't staring at a blank pane.
  */
 export function ImagePreview({
+  contentKind = "image",
   searchClient,
   nodeId,
   name,
 }: {
+  contentKind?: PreviewContentKind;
   searchClient: SearchClient;
   nodeId: string;
   name: string;
 }) {
   const [chunks, setChunks] = useState<NodeContentChunk[] | null>(null);
+  const [assets, setAssets] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<ViewMode>("preview");
 
   const fetchChunks = useCallback(
     async (signal: { cancelled: boolean }, withSpinner: boolean) => {
@@ -51,6 +58,7 @@ export function ImagePreview({
         if (signal.cancelled) return;
         if (env.state === "ready" && env.data) {
           setChunks(env.data.chunks);
+          setAssets(env.data.assets ?? {});
           setError(null);
         } else if (env.state === "initialising") {
           if (withSpinner) setError("Search subsystem is still starting…");
@@ -97,12 +105,42 @@ export function ImagePreview({
     };
   }, [fetchChunks]);
 
-  const sections = buildSections(chunks ?? []);
+  const sections = buildSections(chunks ?? [], contentKind);
+  const renderedSections = sections.map((section) => ({
+    ...section,
+    previewBody: rewriteAssetReferences(section.body, assets),
+  }));
 
   return (
     <div className="image-preview">
       <header className="image-preview-header">
         <h2 className="image-preview-title">{name}</h2>
+        {renderedSections.length > 0 ? (
+          <div
+            className="markdown-preview-mode-toggle"
+            role="tablist"
+            aria-label="View mode"
+          >
+            <button
+              aria-pressed={mode === "preview"}
+              className={`markdown-preview-mode-button${mode === "preview" ? " is-active" : ""}`}
+              onClick={() => setMode("preview")}
+              role="tab"
+              type="button"
+            >
+              Preview
+            </button>
+            <button
+              aria-pressed={mode === "source"}
+              className={`markdown-preview-mode-button${mode === "source" ? " is-active" : ""}`}
+              onClick={() => setMode("source")}
+              role="tab"
+              type="button"
+            >
+              Source
+            </button>
+          </div>
+        ) : null}
       </header>
 
       {isLoading ? (
@@ -113,12 +151,16 @@ export function ImagePreview({
         <p className="image-preview-empty image-preview-error" role="status">
           {error}
         </p>
-      ) : sections.length === 0 ? (
-        <ImagePreviewEmptyState />
+      ) : renderedSections.length === 0 ? (
+        <ImagePreviewEmptyState contentKind={contentKind} />
       ) : (
         <div className="image-preview-body">
-          {sections.map((section) => (
-            <ImagePreviewSection key={section.label} section={section} />
+          {renderedSections.map((section) => (
+            <ImagePreviewSection
+              key={section.label}
+              mode={mode}
+              section={section}
+            />
           ))}
         </div>
       )}
@@ -129,9 +171,13 @@ export function ImagePreview({
 interface PreviewSection {
   label: string;
   body: string;
+  previewBody?: string;
 }
 
-function buildSections(chunks: NodeContentChunk[]): PreviewSection[] {
+function buildSections(
+  chunks: NodeContentChunk[],
+  contentKind: PreviewContentKind
+): PreviewSection[] {
   // Chunks arrive pre-sorted by the sidecar: body first (numeric idx
   // ascending), summary after (also numeric idx ascending). We split
   // by role and stitch each side back into one rendered section.
@@ -146,23 +192,59 @@ function buildSections(chunks: NodeContentChunk[]): PreviewSection[] {
     .filter((t) => t.trim().length > 0)
     .join("\n\n");
   const sections: PreviewSection[] = [];
-  if (body) sections.push({ label: "OCR", body });
+  if (body) {
+    sections.push({
+      label: contentKind === "pdf" ? "Extracted Text" : "OCR",
+      body,
+    });
+  }
   if (summary) sections.push({ label: "Caption", body: summary });
   return sections;
 }
 
-function ImagePreviewSection({ section }: { section: PreviewSection }) {
+function ImagePreviewSection({
+  mode,
+  section,
+}: {
+  mode: ViewMode;
+  section: PreviewSection;
+}) {
   return (
     <section className="image-preview-section">
       <h3 className="image-preview-section-label">{section.label}</h3>
-      <div className="image-preview-section-body markdown-body">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{section.body}</ReactMarkdown>
-      </div>
+      {mode === "preview" ? (
+        <div className="image-preview-section-body markdown-body">
+          <MarkdownRenderer>
+            {section.previewBody ?? section.body}
+          </MarkdownRenderer>
+        </div>
+      ) : (
+        <MarkdownView
+          className="image-preview-section-source"
+          readOnly={true}
+          value={section.body}
+        />
+      )}
     </section>
   );
 }
 
-function ImagePreviewEmptyState() {
+function ImagePreviewEmptyState({
+  contentKind,
+}: {
+  contentKind: PreviewContentKind;
+}) {
+  if (contentKind === "pdf") {
+    return (
+      <div className="image-preview-empty muted-copy">
+        <p>
+          This PDF hasn't produced extracted text yet. Text-layer
+          indexing runs first, then PaddleOCR enhancement can render
+          structured markdown here once it finishes.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="image-preview-empty muted-copy">
       <p>
@@ -173,4 +255,24 @@ function ImagePreviewEmptyState() {
       </p>
     </div>
   );
+}
+
+function rewriteAssetReferences(
+  text: string,
+  assets: Record<string, string>
+): string {
+  let rendered = text;
+  for (const [source, filePath] of Object.entries(assets)) {
+    if (!source || !filePath) continue;
+    rendered = rendered.split(source).join(toAssetUrl(filePath));
+  }
+  return rendered;
+}
+
+function toAssetUrl(filePath: string): string {
+  try {
+    return convertFileSrc(filePath);
+  } catch {
+    return filePath;
+  }
 }

@@ -97,6 +97,13 @@ export interface NodeContent {
   kind?: string | null;
   chunks: NodeContentChunk[];
   joined: string;
+  /**
+   * Local extract assets referenced by OCR markdown. Keys are the
+   * relative paths PaddleOCR emitted in markdown (for example
+   * `imgs/crop.png`); values are absolute filesystem paths that the
+   * UI converts with Tauri's asset protocol before rendering.
+   */
+  assets?: Record<string, string>;
 }
 
 export type ModelRoleName = "embedding" | "reranker" | "ocr" | "captioner";

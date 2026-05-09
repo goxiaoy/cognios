@@ -22,6 +22,13 @@ def _index_image(queue, node_id: str = UUID_A) -> None:
     queue.mark_indexed(node_id)
 
 
+def _pdf_advanced(_path: Path) -> str:
+    return "advanced"
+
+
+_pdf_advanced.supports_pdf = True
+
+
 def test_advanced_ocr_backfill_on_boot_flags_when_available(tmp_path: Path):
     store = open_store(tmp_path / "index.lance")
     queue = open_queue(tmp_path / "queue.db")
@@ -32,6 +39,27 @@ def test_advanced_ocr_backfill_on_boot_flags_when_available(tmp_path: Path):
             embedder=StubEmbedder(),
             queue=queue,
             advanced_ocr_extract=lambda _p: "advanced",
+        )
+        _run_advanced_ocr_backfill_on_boot(queue, dispatcher)
+        assert queue.claim_next_enhancement() is not None
+    finally:
+        queue.close()
+
+
+def test_advanced_ocr_backfill_on_boot_includes_pdf_when_supported(
+    tmp_path: Path,
+):
+    store = open_store(tmp_path / "index.lance")
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        queue.enqueue(node_id=UUID_A, kind="file", name="scan.pdf")
+        queue.claim_next()
+        queue.mark_indexed(UUID_A)
+        dispatcher = Dispatcher(
+            store=store,
+            embedder=StubEmbedder(),
+            queue=queue,
+            advanced_ocr_extract=_pdf_advanced,
         )
         _run_advanced_ocr_backfill_on_boot(queue, dispatcher)
         assert queue.claim_next_enhancement() is not None
@@ -93,10 +121,13 @@ def test_advanced_ocr_backfill_on_boot_logs_and_continues(caplog):
             raise RuntimeError("db locked")
 
     class DispatcherWithAdvanced:
-        class image_processor:
-            @staticmethod
-            def has_advanced_ocr() -> bool:
-                return True
+        @staticmethod
+        def has_advanced_ocr() -> bool:
+            return True
+
+        @staticmethod
+        def enhancement_extensions() -> tuple[str, ...]:
+            return ("png",)
 
     _run_advanced_ocr_backfill_on_boot(RaisingQueue(), DispatcherWithAdvanced())
     assert "advanced-OCR boot backfill failed" in caplog.text

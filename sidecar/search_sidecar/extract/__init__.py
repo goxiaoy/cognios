@@ -1,4 +1,4 @@
-"""Image-extractor wiring.
+"""Document/image extractor wiring.
 
 Three extractor families plug into :class:`ImageProcessor`:
 
@@ -6,8 +6,9 @@ Three extractor families plug into :class:`ImageProcessor`:
   the image. Stored as ``role="body"`` chunks.
 - ``caption_extract: Callable[[Path], str]`` — generates a short
   description of the image. Stored as ``role="summary"`` chunks.
-- ``advanced_ocr_extract: Callable[[Path], str]`` — layout-aware
-  OCR that emits Markdown (tables / formulas / structured text).
+- ``advanced_ocr_extract: Callable[[Path], str | ExtractedMarkdown]`` —
+  layout-aware OCR that emits Markdown (tables / formulas /
+  structured text) plus optional extracted image assets.
   When wired and successful, takes priority over the basic
   ``ocr_extract`` for the body chunks.
 

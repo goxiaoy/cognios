@@ -159,7 +159,7 @@ describe("SettingsLayout", () => {
     expect(screen.getAllByText("Ready").length).toBeGreaterThan(0);
   });
 
-  it("renders image OCR enhancement diagnostics when advanced OCR is ready", async () => {
+  it("renders OCR enhancement diagnostics when advanced OCR is ready", async () => {
     const client = makeClient({
       settings: vi.fn().mockResolvedValue(readySettings()),
       indexStatus: vi.fn().mockResolvedValue({
@@ -190,7 +190,7 @@ describe("SettingsLayout", () => {
     });
     render(<SettingsLayout client={client} />);
     await waitFor(() => {
-      expect(screen.getByText("Image OCR enhancement")).toBeInTheDocument();
+      expect(screen.getByText("OCR enhancement")).toBeInTheDocument();
     });
     expect(screen.getByText("5 / 10")).toBeInTheDocument();
     expect(screen.getByText("4 remaining")).toBeInTheDocument();

@@ -74,6 +74,7 @@ function makeClient(): ExplorerClient {
     saveNoteContent: vi.fn(),
     readFileContent: vi.fn(),
     showNodeInFileManager: vi.fn(),
+    showNodeExtractArtifacts: vi.fn(),
   };
 }
 

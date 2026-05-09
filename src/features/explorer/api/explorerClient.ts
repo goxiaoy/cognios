@@ -13,6 +13,7 @@ import {
   renameNode,
   retryUrl,
   saveNoteContent,
+  showNodeExtractArtifacts,
   showNodeInFileManager,
 } from "../../../lib/tauri/ipc";
 import type { ExplorerClient } from "../types/explorer";
@@ -33,4 +34,5 @@ export const explorerClient: ExplorerClient = {
   saveNoteContent,
   readFileContent,
   showNodeInFileManager,
+  showNodeExtractArtifacts,
 };

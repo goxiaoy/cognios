@@ -16,8 +16,10 @@ from pathlib import Path
 import httpx
 import pytest
 
+from search_sidecar.extract.types import ExtractedMarkdown
 from search_sidecar.index.dispatch import Dispatcher
 from search_sidecar.index.embedder import StubEmbedder
+from search_sidecar.index.extract_artifacts import write_extract_artifact
 from search_sidecar.index.processors.image import (
     EnhancementTransientError,
     ImageProcessor,
@@ -32,6 +34,16 @@ from search_sidecar.index.queue import (
 from search_sidecar.storage import open_store, role_or_default
 
 UUID_A = "11111111-1111-1111-1111-111111111111"
+
+
+class DummyImage:
+    def save(self, path: Path, *, format: str | None = None) -> None:
+        path.write_bytes(b"dummy image")
+
+
+class FailingEmbedder:
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("embedding failed")
 
 
 def _make_job(path: Path, *, node_id: str = UUID_A) -> IndexingJob:
@@ -216,6 +228,61 @@ def test_process_writes_basic_and_caption_extract_artifacts(
     image_dir = extract_dir / UUID_A
     assert (image_dir / "basic.md").read_text() == "Basic OCR markdown\n"
     assert (image_dir / "caption.md").read_text() == "Caption markdown\n"
+
+
+def test_process_clears_stale_extract_artifacts_before_basic_pass(
+    store, tmp_path: Path
+):
+    extract_dir = tmp_path / "extract"
+    write_extract_artifact(extract_dir, UUID_A, "advanced", "old advanced")
+    write_extract_artifact(extract_dir, UUID_A, "caption", "old caption")
+    proc = ImageProcessor(
+        store,
+        StubEmbedder(),
+        ocr_extract=lambda _p: "new basic",
+        caption_extract=None,
+        extract_dir=extract_dir,
+    )
+    img = tmp_path / "image.png"
+    img.write_bytes(b"")
+
+    proc.process(_make_job(img))
+
+    image_dir = extract_dir / UUID_A
+    assert (image_dir / "basic.md").read_text() == "new basic\n"
+    assert not (image_dir / "advanced.md").exists()
+    assert not (image_dir / "caption.md").exists()
+
+
+def test_process_keeps_previous_chunks_and_artifacts_when_embedding_fails(
+    store, tmp_path: Path
+):
+    extract_dir = tmp_path / "extract"
+    img = tmp_path / "image.png"
+    img.write_bytes(b"")
+    job = _make_job(img)
+    ImageProcessor(
+        store,
+        StubEmbedder(),
+        ocr_extract=lambda _p: "old OCR",
+        caption_extract=lambda _p: "old caption",
+        extract_dir=extract_dir,
+    ).process(job)
+
+    with pytest.raises(RuntimeError, match="embedding failed"):
+        ImageProcessor(
+            store,
+            FailingEmbedder(),
+            ocr_extract=lambda _p: "new OCR",
+            caption_extract=lambda _p: "new caption",
+            extract_dir=extract_dir,
+        ).process(job)
+
+    rows = store.scan(UUID_A)
+    assert "old OCR" in "\n".join(r["text"] for r in rows)
+    assert "old caption" in "\n".join(r["text"] for r in rows)
+    assert (extract_dir / UUID_A / "basic.md").read_text() == "old OCR\n"
+    assert (extract_dir / UUID_A / "caption.md").read_text() == "old caption\n"
 
 
 def test_process_continues_when_ocr_extractor_raises(store, tmp_path: Path):
@@ -459,6 +526,47 @@ def test_process_enhancement_writes_advanced_extract_artifact(
         assert (extract_dir / UUID_A / "advanced.md").read_text() == (
             "advanced table markdown\n"
         )
+    finally:
+        queue.close()
+
+
+def test_process_enhancement_writes_advanced_extract_assets(
+    store, tmp_path: Path
+):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        extract_dir = tmp_path / "extract"
+        img = tmp_path / "a.png"
+        img.write_bytes(b"")
+        job = _claim_image_job(queue, img)
+        proc = ImageProcessor(
+            store,
+            StubEmbedder(),
+            queue=queue,
+            ocr_extract=lambda _p: "basic OCR text",
+            advanced_ocr_extract=lambda _p: ExtractedMarkdown(
+                '<img src="imgs/crop.jpg" alt="crop" />\n\ninvoice text',
+                {"imgs/crop.jpg": DummyImage()},
+            ),
+            extract_dir=extract_dir,
+        )
+        proc.process(job)
+        queue.mark_indexed(job.node_id)
+        claim = queue.claim_next_enhancement()
+        assert claim is not None
+
+        proc.process_enhancement(*claim)
+
+        image_dir = extract_dir / UUID_A
+        assert (image_dir / "advanced.md").read_text() == (
+            '<img src="imgs/crop.jpg" alt="crop" />\n\ninvoice text\n'
+        )
+        asset_path = image_dir / "assets" / "advanced" / "imgs" / "crop.png"
+        assert asset_path.read_bytes() == b"dummy image"
+        body = [r for r in store.scan(UUID_A) if role_or_default(r) == "body"]
+        assert len(body) == 1
+        assert "invoice text" in body[0]["text"]
+        assert "<img" not in body[0]["text"]
     finally:
         queue.close()
 

@@ -8,14 +8,19 @@ middleware.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from ..index.processors.image import SUPPORTED_EXTENSIONS
+from ..index.extract_artifacts import read_image_preview_artifacts
+from ..index.processors.image import SUPPORTED_EXTENSIONS as IMAGE_EXTENSIONS
+from ..index.processors.pdf import SUPPORTED_EXTENSIONS as PDF_EXTENSIONS
 from ..index.queue import IndexingQueue, JobState
 from ..storage import LanceDBStore, role_or_default
 
 router = APIRouter(prefix="/index", tags=["index"])
+ENHANCEMENT_EXTENSIONS = IMAGE_EXTENSIONS + PDF_EXTENSIONS
 
 
 class RunnerPauseRequest(BaseModel):
@@ -36,8 +41,16 @@ def _get_store(request: Request) -> LanceDBStore | None:
     return getattr(request.app.state, "lancedb_store", None)
 
 
+def _get_extract_dir(request: Request) -> Path | None:
+    return getattr(request.app.state, "extract_dir", None)
+
+
 def _get_runner(request: Request):
     return getattr(request.app.state, "indexing_runner", None)
+
+
+def _get_enhancement_extensions(request: Request) -> tuple[str, ...]:
+    return getattr(request.app.state, "enhancement_extensions", ENHANCEMENT_EXTENSIONS)
 
 
 @router.get("/status")
@@ -56,16 +69,16 @@ def get_index_status(request: Request) -> dict:
         "enhancement_pending": queue.count_enhancement_pending(),
         "enhancement_failed": queue.count_enhancement_failed(),
         "enhancement_total_images": queue.count_enhancement_eligible_total(
-            SUPPORTED_EXTENSIONS
+            _get_enhancement_extensions(request)
         ),
     }
 
 
 @router.post("/backfill-enhancement")
 def post_backfill_enhancement(request: Request) -> dict:
-    """Flag indexed image rows for advanced-OCR enhancement."""
+    """Flag indexed image/PDF rows for advanced-OCR enhancement."""
     queue = _get_queue(request)
-    flagged = queue.backfill_enhancement_pending(SUPPORTED_EXTENSIONS)
+    flagged = queue.backfill_enhancement_pending(_get_enhancement_extensions(request))
     return {"flagged": flagged}
 
 
@@ -106,7 +119,7 @@ def get_node_status(node_id: str, request: Request) -> dict:
 
 @router.get("/node/{node_id}/content")
 def get_node_content(node_id: str, request: Request) -> dict:
-    """Indexed text for a single node.
+    """Indexed or cached extracted text for a single node.
 
     Returns the raw chunk array (each entry tagged with its ``role``
     — ``"body"`` for literal content, ``"summary"`` for generated
@@ -123,12 +136,28 @@ def get_node_content(node_id: str, request: Request) -> dict:
     parsing ``joined``.
 
     Used by the image preview surface, which filters ``chunks`` by
-    role to render OCR (body) and Caption (summary) sections.
+    role to render OCR (body) and Caption (summary) sections. When
+    image extraction artifacts exist on disk, those are authoritative
+    for preview: ``advanced.md`` beats ``basic.md`` for OCR, and
+    ``caption.md`` renders as summary.
 
     Returns ``{node_id, kind, chunks: [], joined: ""}`` for nodes
     that have nothing in lancedb yet (image-only PDF, image with no
     extractors wired, fresh node before the runner drains).
     """
+    artifact_chunks, artifact_assets = _extract_artifact_content(node_id, request)
+    if artifact_chunks:
+        joined = "\n\n".join(
+            c["text"] for c in artifact_chunks if c["text"].strip()
+        )
+        return {
+            "node_id": node_id,
+            "kind": "file",
+            "chunks": artifact_chunks,
+            "joined": joined,
+            "assets": artifact_assets,
+        }
+
     store = _get_store(request)
     if store is None:
         return {
@@ -136,6 +165,7 @@ def get_node_content(node_id: str, request: Request) -> dict:
             "kind": None,
             "chunks": [],
             "joined": "",
+            "assets": {},
         }
     rows = store.scan(node_id)
     rows_sorted = sorted(rows, key=_chunk_index_key)
@@ -154,7 +184,29 @@ def get_node_content(node_id: str, request: Request) -> dict:
         "kind": kind,
         "chunks": chunks,
         "joined": joined,
+        "assets": {},
     }
+
+
+def _extract_artifact_content(
+    node_id: str,
+    request: Request,
+) -> tuple[list[dict], dict[str, str]]:
+    artifacts = read_image_preview_artifacts(_get_extract_dir(request), node_id)
+    chunks: list[dict] = []
+    assets: dict[str, str] = {}
+    for artifact in artifacts:
+        chunks.append(
+            {
+                "id": f"{node_id}:extract:{artifact.kind}",
+                "role": artifact.role,
+                "text": artifact.text,
+            }
+        )
+        assets.update(
+            {source: str(path) for source, path in artifact.assets.items()}
+        )
+    return chunks, assets
 
 
 def _chunk_index_key(row: dict) -> tuple[int, int, str]:

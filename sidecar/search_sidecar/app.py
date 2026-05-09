@@ -39,6 +39,8 @@ def build_app(
     search_orchestrator: "SearchOrchestrator | None" = None,
     settings_path: Path | None = None,
     boot_settings_signature: str | None = None,
+    extract_dir: Path | None = None,
+    enhancement_extensions: tuple[str, ...] | None = None,
 ) -> FastAPI:
     """Construct a FastAPI app with bearer-auth + the Phase-2 routers.
 
@@ -86,5 +88,9 @@ def build_app(
         app.state.settings_path = settings_path
     if boot_settings_signature is not None:
         app.state.boot_settings_signature = boot_settings_signature
+    if extract_dir is not None:
+        app.state.extract_dir = extract_dir
+    if enhancement_extensions is not None:
+        app.state.enhancement_extensions = enhancement_extensions
 
     return app

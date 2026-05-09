@@ -40,6 +40,7 @@ from ..settings import SearchSettings
 from .cloud_vision import OpenAICompatVisionClient
 from .local_advanced_ocr import PpStructureV3Extractor, can_load_local_advanced_ocr
 from .local_ocr import RapidOcrExtractor, can_load_local_ocr
+from .types import ExtractedMarkdown
 
 if TYPE_CHECKING:
     from ..models import ModelManager
@@ -48,10 +49,10 @@ LOG = logging.getLogger("search_sidecar.extract.factory")
 
 # Type alias for the callable shape ImageProcessor expects. The
 # concrete callables (RapidOcrExtractor, OpenAICompatVisionClient
-# methods, PpStructureV3Extractor) all take ``Path`` and return str —
+# methods, PpStructureV3Extractor) all take ``Path`` and return text —
 # match that signature so type-checkers don't widen ``object`` over
 # the actual contract.
-Extractor = Callable[[Path], str]
+Extractor = Callable[[Path], str | ExtractedMarkdown]
 
 
 def select_ocr_extractor(

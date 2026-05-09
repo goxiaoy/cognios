@@ -98,7 +98,7 @@ export function SettingsDiagnostics({
 
         {enhancement ? (
           <div className="settings-diag-cell">
-            <div className="k">Image OCR enhancement</div>
+            <div className="k">OCR enhancement</div>
             <div className="v">{enhancement.value}</div>
             <div className="sub">{enhancement.subLabel}</div>
             {enhancement.failedLabel ? (

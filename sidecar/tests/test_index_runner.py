@@ -40,6 +40,14 @@ def _index_image(queue, path: Path, *, node_id: str = UUID_A) -> None:
     queue.set_enhancement_pending(node_id)
 
 
+def _pdf_advanced(text: str = "advanced PDF text"):
+    def extractor(_path: Path) -> str:
+        return text
+
+    extractor.supports_pdf = True
+    return extractor
+
+
 def test_process_one_returns_false_when_empty(tmp_path: Path):
     _, queue, runner = _make_setup(tmp_path)
     try:
@@ -276,6 +284,30 @@ def test_runner_drains_enhancement_when_no_pending_work(tmp_path: Path):
         assert runner.process_one() is True
         assert queue.claim_next_enhancement() is None
         assert "advanced image text" in " ".join(r["text"] for r in store.scan(UUID_A))
+    finally:
+        queue.close()
+
+
+def test_runner_drains_pdf_enhancement_when_no_pending_work(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    queue = open_queue(tmp_path / "queue.db")
+    dispatcher = Dispatcher(
+        store=store,
+        embedder=StubEmbedder(),
+        queue=queue,
+        advanced_ocr_extract=_pdf_advanced("advanced PDF OCR text"),
+    )
+    runner = IndexingRunner(queue=queue, dispatcher=dispatcher)
+    try:
+        pdf = tmp_path / "scan.pdf"
+        pdf.write_bytes(b"%PDF-1.7\n")
+        _index_image(queue, pdf)
+
+        assert runner.process_one() is True
+        assert queue.claim_next_enhancement() is None
+        assert "advanced PDF OCR text" in " ".join(
+            r["text"] for r in store.scan(UUID_A)
+        )
     finally:
         queue.close()
 

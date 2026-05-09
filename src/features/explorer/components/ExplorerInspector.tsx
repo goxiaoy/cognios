@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { FolderOpen, RefreshCw } from "lucide-react";
 
 import type { ExplorerClient, ExplorerNode } from "../types/explorer";
 import {
@@ -7,6 +7,7 @@ import {
   formatNodeDate,
   formatNodeSize,
   formatNodeKindLabel,
+  hasExtractArtifacts,
   isImageNode,
 } from "../utils/presentation";
 import { InspectorImageThumbnail } from "./InspectorImageThumbnail";
@@ -115,8 +116,8 @@ function InspectorActions({
 }) {
   type Status =
     | { kind: "idle" }
-    | { kind: "running" }
-    | { kind: "done"; enqueued: number }
+    | { kind: "running"; action: "reindex" | "reveal" }
+    | { kind: "done"; message: string }
     | { kind: "error"; message: string };
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
@@ -137,10 +138,29 @@ function InspectorActions({
   }, [node.id]);
 
   async function handleReindex() {
-    setStatus({ kind: "running" });
+    setStatus({ kind: "running", action: "reindex" });
     try {
       const { enqueued } = await client.reindexNode({ nodeId: node.id });
-      setStatus({ kind: "done", enqueued });
+      setStatus({
+        kind: "done",
+        message:
+          enqueued === 0
+            ? "Nothing to reindex."
+            : `Re-enqueued ${enqueued} node${enqueued === 1 ? "" : "s"}.`,
+      });
+    } catch (cause) {
+      setStatus({
+        kind: "error",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
+  }
+
+  async function handleRevealExtracted() {
+    setStatus({ kind: "running", action: "reveal" });
+    try {
+      await client.showNodeExtractArtifacts(node.id);
+      setStatus({ kind: "done", message: "Opened extracted files." });
     } catch (cause) {
       setStatus({
         kind: "error",
@@ -151,31 +171,50 @@ function InspectorActions({
 
   const isContainer = node.kind === "folder" || node.kind === "mount";
   const reindexLabel = isContainer ? "Reindex contents" : "Reindex";
+  const showExtractedAction = hasExtractArtifacts(node);
+  const isReindexing = status.kind === "running" && status.action === "reindex";
+  const isRevealing = status.kind === "running" && status.action === "reveal";
+  const isRunning = status.kind === "running";
 
   return (
     <section className="inspector-actions" aria-label="Actions">
       <h3 className="inspector-section-label">Actions</h3>
-      <button
-        type="button"
-        className="inspector-action-button"
-        onClick={() => void handleReindex()}
-        disabled={status.kind === "running"}
-      >
-        <RefreshCw
-          size={12}
-          aria-hidden="true"
-          className={
-            status.kind === "running" ? "inspector-action-icon is-spinning" : "inspector-action-icon"
-          }
-        />
-        {status.kind === "running" ? "Reindexing…" : reindexLabel}
-      </button>
+      <div className="inspector-action-list">
+        <button
+          type="button"
+          className="inspector-action-button"
+          onClick={() => void handleReindex()}
+          disabled={isRunning}
+        >
+          <RefreshCw
+            size={12}
+            aria-hidden="true"
+            className={
+              isReindexing
+                ? "inspector-action-icon is-spinning"
+                : "inspector-action-icon"
+            }
+          />
+          {isReindexing ? "Reindexing…" : reindexLabel}
+        </button>
+        {showExtractedAction ? (
+          <button
+            type="button"
+            className="inspector-action-button"
+            onClick={() => void handleRevealExtracted()}
+            disabled={isRunning}
+          >
+            <FolderOpen
+              size={12}
+              aria-hidden="true"
+              className="inspector-action-icon"
+            />
+            {isRevealing ? "Opening…" : "Reveal Extracted"}
+          </button>
+        ) : null}
+      </div>
       {status.kind === "done" ? (
-        <p className="inspector-action-status">
-          {status.enqueued === 0
-            ? "Nothing to reindex."
-            : `Re-enqueued ${status.enqueued} node${status.enqueued === 1 ? "" : "s"}.`}
-        </p>
+        <p className="inspector-action-status">{status.message}</p>
       ) : null}
       {status.kind === "error" ? (
         <p className="inspector-action-status is-error">{status.message}</p>

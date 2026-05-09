@@ -32,8 +32,8 @@ to learn which nodes' states have changed since its last poll —
 the cost is proportional to the change rate, not the corpus size,
 which is the property the snapshot endpoint lacks at scale.
 
-The ``enhancement_*`` columns power the two-pass image OCR flow.
-The basic OCR pass runs on every image and lands chunks fast; the
+The ``enhancement_*`` columns power the two-pass OCR enhancement flow.
+The basic pass runs first and lands chunks fast; the
 slow advanced OCR pass (PP-StructureV3) runs as a background
 enhancement that replaces only the body chunks. ``enhancement_pending``
 is the runner's claim filter; ``enhancement_attempts`` caps transient
@@ -82,6 +82,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+
+from .migrations import run_migrations
 
 LOG = logging.getLogger("search_sidecar.index.queue")
 
@@ -515,37 +517,35 @@ class IndexingQueue:
             )
             return True
 
-    def backfill_enhancement_pending(
-        self, image_extensions: tuple[str, ...]
-    ) -> int:
-        """Idempotent: flag every eligible indexed image for enhancement.
+    def backfill_enhancement_pending(self, file_extensions: tuple[str, ...]) -> int:
+        """Idempotent: flag every eligible indexed OCR target for enhancement.
 
         Called from the Rust watcher on the local-bundle ready
         transition AND from the sidecar startup hook (cross-version
-        upgrade case). ``image_extensions`` is a tuple of suffixes
+        upgrade case). ``file_extensions`` is a tuple of suffixes
         WITHOUT the leading dot (e.g. ``("png", "jpg", ...)``).
 
         Predicate excludes already-pending rows, already-completed rows,
         terminally-failed rows, and already-cap-exhausted rows. The
         exclusion of ``enhancement_completed_at IS NULL`` is
         load-bearing: without it, sidecar restart would replay every
-        successfully enhanced image indefinitely. The exclusion of
+        successfully enhanced target indefinitely. The exclusion of
         ``enhancement_failed=1`` is load-bearing: without it, a watcher
         re-trigger (e.g., sidecar restart) would replay every
         previously-given-up row indefinitely.
 
         Returns the number of rows newly flagged.
         """
-        if not image_extensions:
+        if not file_extensions:
             return 0
         # Build a parameterised LOWER(name) LIKE OR-chain. Doing the
         # extension match in SQL avoids loading the entire jobs table
         # into Python just to filter on suffixes.
         like_clauses = " OR ".join(
-            ["LOWER(name) LIKE ?" for _ in image_extensions]
+            ["LOWER(name) LIKE ?" for _ in file_extensions]
         )
         params: list[object] = [
-            f"%.{ext.lower().lstrip('.')}" for ext in image_extensions
+            f"%.{ext.lower().lstrip('.')}" for ext in file_extensions
         ]
         params.append(JobState.INDEXED.value)
         params.append(MAX_ENHANCEMENT_ATTEMPTS)
@@ -594,23 +594,23 @@ class IndexingQueue:
         return int(row[0]) if row is not None else 0
 
     def count_enhancement_eligible_total(
-        self, image_extensions: tuple[str, ...]
+        self, file_extensions: tuple[str, ...]
     ) -> int:
-        """Denominator for the diagnostics counter: indexed images.
+        """Denominator for the diagnostics counter: indexed OCR targets.
 
         Mirrors the predicate of ``backfill_enhancement_pending`` minus
-        the eligibility filters — every indexed image counts, including
+        the eligibility filters — every indexed target counts, including
         ones that are still pending and ones that terminally failed.
-        ``image_extensions`` has the same shape (without leading dot)
+        ``file_extensions`` has the same shape (without leading dot)
         for symmetry with the backfill helper.
         """
-        if not image_extensions:
+        if not file_extensions:
             return 0
         like_clauses = " OR ".join(
-            ["LOWER(name) LIKE ?" for _ in image_extensions]
+            ["LOWER(name) LIKE ?" for _ in file_extensions]
         )
         params: list[object] = [
-            f"%.{ext.lower().lstrip('.')}" for ext in image_extensions
+            f"%.{ext.lower().lstrip('.')}" for ext in file_extensions
         ]
         params.append(JobState.INDEXED.value)
         with self._lock:
@@ -791,6 +791,10 @@ def open_queue(path: Path) -> IndexingQueue:
     """Open ``queue.db`` (creating it if absent) with WAL +
     integrity-check + stale-row reset.
 
+    Schema migrations are declared in
+    :mod:`search_sidecar.index.migrations` and applied before stale
+    ``indexing`` rows are reset.
+
     On corruption, renames the file to ``queue.db.corrupt-<unix-ts>``
     and creates a fresh schema. The caller (lifecycle bootstrap) is
     expected to log this and rely on the resync ping (Unit 7) to
@@ -823,7 +827,7 @@ def _open_or_create(path: Path) -> IndexingQueue:
         integrity = conn.execute("PRAGMA quick_check").fetchone()[0]
         if integrity != "ok":
             raise sqlite3.DatabaseError(f"quick_check returned {integrity!r}")
-        _ensure_schema(conn)
+        run_migrations(conn)
     except sqlite3.DatabaseError:
         conn.close()
         raise
@@ -832,88 +836,6 @@ def _open_or_create(path: Path) -> IndexingQueue:
     if reset:
         LOG.info("queue: reset %d stale 'indexing' rows to 'pending'", reset)
     return queue
-
-
-def _ensure_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS jobs (
-            node_id               TEXT PRIMARY KEY,
-            kind                  TEXT NOT NULL,
-            name                  TEXT NOT NULL,
-            absolute_content_path TEXT,
-            mount_id              TEXT,
-            state                 TEXT NOT NULL,
-            enqueued_at           TEXT NOT NULL,
-            indexed_at            TEXT,
-            last_error            TEXT,
-            attempts              INTEGER NOT NULL DEFAULT 0,
-            created_at            TEXT NOT NULL,
-            modified_at           TEXT NOT NULL,
-            content_version       TEXT,
-            indexed_content_version TEXT,
-            transition_seq        INTEGER NOT NULL DEFAULT 0,
-            enhancement_pending   INTEGER NOT NULL DEFAULT 0,
-            enhancement_attempts  INTEGER NOT NULL DEFAULT 0,
-            enhancement_failed    INTEGER NOT NULL DEFAULT 0,
-            enhancement_completed_at TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);
-        CREATE INDEX IF NOT EXISTS idx_jobs_transition_seq ON jobs(transition_seq);
-        """
-    )
-    # Idempotent migration: ALTER TABLE ADD COLUMN for installs whose
-    # queue.db predates each column. SQLite has no "ADD COLUMN IF NOT
-    # EXISTS"; introspect first. ``row_factory`` isn't set on the
-    # connection at this point — row[1] is the column name in the
-    # default tuple shape.
-    cols = {
-        row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
-    }
-    if "transition_seq" not in cols:
-        conn.execute(
-            "ALTER TABLE jobs ADD COLUMN transition_seq INTEGER NOT NULL DEFAULT 0"
-        )
-        # Backfill: assign distinct seq values so existing rows
-        # appear once in the next /index/changes poll. Without
-        # this, all rows have seq=0 and would be invisible (the
-        # reader filters ``WHERE transition_seq > since``, with
-        # since defaulting to 0). The ROWID order is stable and
-        # gives us a deterministic backfill ordering.
-        conn.execute(
-            """
-            UPDATE jobs
-            SET transition_seq = (
-                SELECT COUNT(*) FROM jobs AS j2
-                WHERE j2.rowid <= jobs.rowid
-            )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_jobs_transition_seq ON jobs(transition_seq)"
-        )
-    if "content_version" not in cols:
-        conn.execute("ALTER TABLE jobs ADD COLUMN content_version TEXT")
-    if "indexed_content_version" not in cols:
-        conn.execute("ALTER TABLE jobs ADD COLUMN indexed_content_version TEXT")
-    # Two-pass image OCR columns. Defaults are correct for legacy
-    # rows: every existing image starts as "not enhanced, not failed,
-    # zero attempts" and the watcher / startup auto-fire flips
-    # enhancement_pending=1 for eligible rows on the next cycle.
-    if "enhancement_pending" not in cols:
-        conn.execute(
-            "ALTER TABLE jobs ADD COLUMN enhancement_pending INTEGER NOT NULL DEFAULT 0"
-        )
-    if "enhancement_attempts" not in cols:
-        conn.execute(
-            "ALTER TABLE jobs ADD COLUMN enhancement_attempts INTEGER NOT NULL DEFAULT 0"
-        )
-    if "enhancement_failed" not in cols:
-        conn.execute(
-            "ALTER TABLE jobs ADD COLUMN enhancement_failed INTEGER NOT NULL DEFAULT 0"
-        )
-    if "enhancement_completed_at" not in cols:
-        conn.execute("ALTER TABLE jobs ADD COLUMN enhancement_completed_at TEXT")
 
 
 def _now() -> datetime:

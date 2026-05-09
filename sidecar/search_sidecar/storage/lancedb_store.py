@@ -45,7 +45,6 @@ that machinery is Unit 6 territory.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,7 +53,7 @@ from typing import Iterable, Literal
 import lancedb
 import pyarrow as pa
 
-LOG = logging.getLogger("search_sidecar.storage.lancedb_store")
+from .migrations import run_migrations
 
 EMBEDDING_DIMENSION = 768
 TABLE_NAME = "nodes"
@@ -215,12 +214,87 @@ class LanceDBStore:
             f"node_id = '{_quote(node_id)}' AND role = '{_quote(role)}'"
         )
 
+    def replace_node_chunks(
+        self,
+        node_id: str,
+        chunks: Iterable[NodeChunk],
+    ) -> int:
+        """Replace one node's chunks after new rows are ready.
+
+        Re-indexing should not make an existing node disappear from
+        search while extraction / embedding is still in progress. This
+        method writes replacement ids first, then removes stale ids
+        from the same node. If ``chunks`` is empty, the successful
+        replacement is "no content" and all previous chunks are
+        removed.
+        """
+        rows = list(chunks)
+        self._validate_replacement_rows(node_id, rows)
+        if rows:
+            self.upsert(rows)
+            self._delete_stale_node_rows(node_id, [row.id for row in rows])
+        else:
+            self.delete_by_node_id(node_id)
+        return len(rows)
+
+    def replace_chunks_by_role(
+        self,
+        node_id: str,
+        role: Literal["body", "summary"],
+        chunks: Iterable[NodeChunk],
+    ) -> int:
+        """Replace one role's chunks after new rows are ready."""
+        if role not in ROLE_VALUES:
+            raise ValueError(f"role {role!r} not in {sorted(ROLE_VALUES)!r}")
+        rows = list(chunks)
+        self._validate_replacement_rows(node_id, rows, role=role)
+        if rows:
+            self.upsert(rows)
+            self._delete_stale_node_rows(
+                node_id,
+                [row.id for row in rows],
+                role=role,
+            )
+        else:
+            self.delete_chunks_by_role(node_id, role)
+        return len(rows)
+
     def delete_by_node_ids(self, node_ids: Iterable[str]) -> None:
         ids = [i for i in node_ids if i]
         if not ids:
             return
         in_clause = ", ".join(f"'{_quote(i)}'" for i in ids)
         self._table.delete(f"node_id IN ({in_clause})")
+
+    def _validate_replacement_rows(
+        self,
+        node_id: str,
+        rows: list[NodeChunk],
+        *,
+        role: Literal["body", "summary"] | None = None,
+    ) -> None:
+        for row in rows:
+            if row.node_id != node_id:
+                raise ValueError(
+                    f"replacement row node_id {row.node_id!r} != {node_id!r}"
+                )
+            if role is not None and row.role != role:
+                raise ValueError(
+                    f"replacement row role {row.role!r} != {role!r}"
+                )
+
+    def _delete_stale_node_rows(
+        self,
+        node_id: str,
+        keep_ids: list[str],
+        *,
+        role: Literal["body", "summary"] | None = None,
+    ) -> None:
+        in_clause = ", ".join(f"'{_quote(i)}'" for i in keep_ids)
+        predicate = f"node_id = '{_quote(node_id)}' AND id NOT IN ({in_clause})"
+        if role is not None:
+            predicate += f" AND role = '{_quote(role)}'"
+        self._table.delete(predicate)
 
     def count(self) -> int:
         """Total row count across all nodes."""
@@ -430,8 +504,8 @@ def open_store(path: Path) -> LanceDBStore:
 
     The first call creates an empty ``nodes`` table with the schema
     declared at module level. Subsequent calls open the existing
-    table and run any additive column migrations (currently: the
-    ``role`` column added in 2026-05). Schema migrations beyond
+    table and run the additive column migrations declared in
+    :mod:`search_sidecar.storage.migrations`. Schema migrations beyond
     additive column adds — type changes, vector dimension swaps —
     require a re-index (Unit 6 territory).
     """
@@ -444,41 +518,8 @@ def open_store(path: Path) -> LanceDBStore:
         table = db.open_table(TABLE_NAME)
     except Exception:
         table = db.create_table(TABLE_NAME, schema=_schema(), exist_ok=True)
-    _migrate_schema(table)
+    run_migrations(table)
     return LanceDBStore(db, table)
-
-
-def _migrate_schema(table: lancedb.Table) -> None:
-    """Add columns the current schema declares but the on-disk table
-    is missing.
-
-    lancedb 0.30's ``add_columns`` is the supported additive path —
-    it backfills the column with NULLs in place, no rebuild. Calling
-    it for a column that already exists raises (the exact exception
-    type varies across patch versions); we treat any failure here as
-    "already present" and let the next read surface a real schema
-    mismatch via ``role_or_default``'s NULL fallback.
-    """
-    existing = set(table.schema.names)
-    for new_field in (
-        pa.field("role", pa.string()),
-        pa.field("content_version", pa.string()),
-    ):
-        if new_field.name in existing:
-            continue
-        try:
-            table.add_columns(new_field)
-        except Exception as err:
-            # Idempotent: another process may have added it between
-            # the schema read and the call. Legacy reads stay safe
-            # because every consumer uses ``role_or_default``. Log
-            # so a real failure (disk full, permissions) surfaces in
-            # operator logs rather than disappearing silently.
-            LOG.warning(
-                "_migrate_schema: add_columns(%s) failed: %s",
-                new_field.name,
-                err,
-            )
 
 
 def _quote(value: str) -> str:

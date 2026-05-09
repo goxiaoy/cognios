@@ -266,7 +266,12 @@ impl SearchSidecarSupervisor {
     }
 
     pub fn stop_gracefully(&self) {
-        self.terminate_current_child("stop");
+        self.terminate_current_child("stop", ORPHAN_SIGTERM_GRACE);
+        self.set_state(SupervisorState::Stopped);
+    }
+
+    pub fn stop_gracefully_with_timeout(&self, sigterm_grace: Duration) {
+        self.terminate_current_child("stop", sigterm_grace);
         self.set_state(SupervisorState::Stopped);
     }
 
@@ -291,14 +296,14 @@ impl SearchSidecarSupervisor {
     ///    one more poll round for the kernel to reap.
     /// 5. Spawn a new sidecar via ``start(app)``.
     pub fn restart(self: &Arc<Self>, app: &AppHandle) -> Result<(), String> {
-        self.terminate_current_child("restart");
+        self.terminate_current_child("restart", ORPHAN_SIGTERM_GRACE);
         self.set_state(SupervisorState::Stopped);
         // Spawn fresh.
         self.start(app);
         Ok(())
     }
 
-    fn terminate_current_child(&self, context: &str) {
+    fn terminate_current_child(&self, context: &str, sigterm_grace: Duration) {
         let pid_before = read_lock_holder_pid(&self.lock_path);
 
         // Send SIGTERM if we know who's holding the lock.
@@ -308,7 +313,7 @@ impl SearchSidecarSupervisor {
                     log::warn!("{context}: SIGTERM to pid {pid} failed: {err}");
                 }
                 // Wait for graceful exit + flock release.
-                let deadline = Instant::now() + ORPHAN_SIGTERM_GRACE;
+                let deadline = Instant::now() + sigterm_grace;
                 while Instant::now() < deadline {
                     if !process_is_alive(pid) {
                         break;
@@ -335,7 +340,7 @@ impl SearchSidecarSupervisor {
         // One more poll to be sure the lock is released before we
         // try to re-acquire it.
         if let Some(pid) = pid_before {
-            let deadline = Instant::now() + ORPHAN_SIGTERM_GRACE;
+            let deadline = Instant::now() + sigterm_grace;
             while Instant::now() < deadline {
                 if !process_is_alive(pid) {
                     break;

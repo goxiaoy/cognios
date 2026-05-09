@@ -11,9 +11,11 @@ pipeline on each image:
    reconstruction
 6. Formula recognition (LaTeX)
 
-The output is rendered to **Markdown** (tables → GFM, formulas →
-``$...$``) so the existing chunker can ingest it without a schema
-change. Plain prose stays as paragraphs.
+The output is PaddleOCR's Markdown/HTML hybrid (plain prose,
+layout ``<div>`` blocks, HTML tables, formulas) so the preview layer
+can render the same structure Paddle produced. The search index
+ingests the same text until we split display artifacts from embedding
+text.
 
 Heavyweight dependency. ``paddleocr`` + ``paddlepaddle`` together are
 ~600 MB on disk; we declare them in the optional ``advanced-ocr``
@@ -38,8 +40,9 @@ import re
 from pathlib import Path
 from typing import Any, Callable, cast
 
+from .types import ExtractedMarkdown
+
 LOG = logging.getLogger("search_sidecar.extract.local_advanced_ocr")
-HTML_TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
 BLANK_LINE_RE = re.compile(r"\n{3,}")
 
 
@@ -58,8 +61,8 @@ def can_load_local_advanced_ocr() -> bool:
 
 
 class PpStructureV3Extractor:
-    """Callable that runs PP-StructureV3 against an image and returns
-    a single Markdown string.
+    """Callable that runs PP-StructureV3 against an image/PDF and returns
+    a single Markdown artifact.
 
     ``model_dir_by_stage`` maps each pipeline stage name to the
     directory holding its inference files (``inference.json`` /
@@ -147,6 +150,7 @@ class PpStructureV3Extractor:
     STAGE_TO_KWARG: dict[str, str] = {
         stage: dir_kwarg for stage, (dir_kwarg, _) in STAGE_TO_KWARGS.items()
     }
+    supports_pdf = True
 
     def __init__(
         self,
@@ -173,10 +177,10 @@ class PpStructureV3Extractor:
         # Pipeline is constructed on first call; see class docstring.
         self._pipeline: Any | None = None
 
-    def __call__(self, path: Path) -> str:
-        """Run PP-StructureV3 on ``path``; return Markdown (may be empty)."""
+    def __call__(self, path: Path) -> ExtractedMarkdown:
+        """Run PP-StructureV3 on ``path``; return Markdown + images."""
         if not path.is_file():
-            raise RuntimeError(f"local-advanced-ocr: missing image {path}")
+            raise RuntimeError(f"local-advanced-ocr: missing document {path}")
         pipeline = self._ensure_pipeline()
         try:
             results = pipeline.predict(str(path))
@@ -209,9 +213,9 @@ class PpStructureV3Extractor:
         return self._pipeline
 
 
-def _results_to_markdown(results: Any) -> str:
+def _results_to_markdown(results: Any) -> ExtractedMarkdown:
     """Flatten paddleocr's PP-StructureV3 result object into a
-    single Markdown string.
+    single Markdown artifact.
 
     paddleocr 3.x's result type (paddlex's ``LayoutParsingResultV2``)
     is iterable yielding per-page ``MarkdownMixin`` instances. Each
@@ -224,114 +228,37 @@ def _results_to_markdown(results: Any) -> str:
           "input_path": str,
         }
 
-    We only consume ``markdown_texts``; the embedded images are
-    discarded because the chunker only ingests text and our
-    storage layer doesn't reference images by their internal
-    paddleocr-rendered paths.
+    ``markdown_images`` are preserved under the same relative paths
+    referenced by ``markdown_texts``. If multiple pages reuse the
+    same image path, later pages receive a deterministic suffix and
+    that page's markdown is rewritten to match.
 
     Returns an empty string when the pipeline produces no output —
     matches the basic OCR contract (the runner doesn't retry empty
     results).
     """
     if results is None:
-        return ""
+        return ExtractedMarkdown("")
     fragments: list[str] = []
+    images: dict[str, Any] = {}
     iterable = results if _is_iterable(results) else [results]
     for entry in iterable:
         text = _extract_markdown_text(entry)
+        entry_images = _extract_markdown_images(entry)
         if text:
-            fragments.append(_normalize_markdown_text(text))
-    return "\n\n".join(f for f in fragments if f)
+            clean_text = _clean_markdown_text(text)
+            for source, image in entry_images.items():
+                target = _unique_image_key(source, images)
+                if target != source:
+                    clean_text = clean_text.replace(source, target)
+                images[target] = image
+            fragments.append(clean_text)
+    return ExtractedMarkdown("\n\n".join(f for f in fragments if f), images)
 
 
-def _normalize_markdown_text(text: str) -> str:
-    """Convert Paddle's raw HTML blocks into Markdown-friendly text.
-
-    PP-StructureV3 usually calls its output "markdown", but table and
-    layout regions may arrive as raw HTML fragments such as
-    ``<div><html><body><table>...``. Leaving those fragments intact
-    breaks both chunking (tags can be split mid-element) and the image
-    preview (raw HTML shows up as OCR text). Normalize before storage
-    so every downstream caller sees text/Markdown rather than Paddle's
-    internal HTML.
-    """
-    text = text.strip()
-    if not text or not HTML_TAG_RE.search(text):
-        return text
-
-    from selectolax.parser import HTMLParser  # type: ignore[import-not-found]
-
-    markdownish_html = _replace_html_tables_with_markdown(
-        text,
-        parser_factory=HTMLParser,
-    )
-    visible_text = _strip_html_to_visible_text(
-        markdownish_html,
-        parser_factory=HTMLParser,
-    )
-    return _collapse_blank_lines(visible_text)
-
-
-def _replace_html_tables_with_markdown(
-    html_text: str,
-    *,
-    parser_factory: Callable[[str], Any],
-) -> str:
-    parser = parser_factory(html_text)
-    for table in parser.css("table"):
-        table_html = table.html
-        table_markdown = _html_table_to_markdown(table)
-        if table_html and table_markdown:
-            html_text = html_text.replace(table_html, f"\n\n{table_markdown}\n\n")
-    return html_text
-
-
-def _strip_html_to_visible_text(
-    html_text: str,
-    *,
-    parser_factory: Callable[[str], Any],
-) -> str:
-    parser = parser_factory(html_text)
-    for image in parser.css("img"):
-        image.decompose()
-    rendered = parser.text(separator="\n", strip=True)
-    lines = [line.strip() for line in rendered.splitlines()]
-    return "\n".join(line for line in lines if line)
-
-
-def _collapse_blank_lines(text: str) -> str:
+def _clean_markdown_text(text: str) -> str:
+    """Preserve PaddleOCR's Markdown/HTML and only trim noisy whitespace."""
     return BLANK_LINE_RE.sub("\n\n", text).strip()
-
-
-def _html_table_to_markdown(table: Any) -> str:
-    rows: list[list[str]] = []
-    for tr in table.css("tr"):
-        cells = [
-            _escape_markdown_table_cell(cell.text(separator=" ", strip=True))
-            for cell in tr.css("th,td")
-        ]
-        if any(cells):
-            rows.append(cells)
-    if not rows:
-        return table.text(separator="\n", strip=True)
-
-    width = max(len(row) for row in rows)
-    padded = [row + [""] * (width - len(row)) for row in rows]
-    header = padded[0]
-    separator = ["---"] * width
-    body = padded[1:]
-    return "\n".join(
-        [_markdown_table_row(header), _markdown_table_row(separator)]
-        + [_markdown_table_row(row) for row in body]
-    )
-
-
-def _markdown_table_row(cells: list[str]) -> str:
-    return "| " + " | ".join(cells) + " |"
-
-
-def _escape_markdown_table_cell(text: str) -> str:
-    return " ".join(text.replace("|", r"\|").split())
 
 
 def _extract_markdown_text(entry: Any) -> str | None:
@@ -363,6 +290,36 @@ def _extract_markdown_text(entry: Any) -> str | None:
     return None
 
 
+def _extract_markdown_images(entry: Any) -> dict[str, Any]:
+    """Pull PaddleOCR ``markdown_images`` out of one result entry."""
+    md = _read_attr(entry, "markdown")
+    images = _dict_mapping(md, "markdown_images")
+    if images is not None:
+        return images
+    images = _dict_mapping(entry, "markdown_images")
+    if images is not None:
+        return images
+    nested = _read_dict_key(entry, "markdown")
+    images = _dict_mapping(nested, "markdown_images")
+    return images or {}
+
+
+def _unique_image_key(source: str, existing: dict[str, Any]) -> str:
+    if source not in existing:
+        return source
+    path = source.replace("\\", "/")
+    parent, sep, name = path.rpartition("/")
+    stem, dot, suffix = name.rpartition(".")
+    if not dot:
+        stem, suffix = name, ""
+    for idx in range(2, len(existing) + 3):
+        next_name = f"{stem}-{idx}.{suffix}" if suffix else f"{stem}-{idx}"
+        candidate = f"{parent}{sep}{next_name}" if parent else next_name
+        if candidate not in existing:
+            return candidate
+    return f"{path}-{len(existing) + 1}"
+
+
 def _dict_str(obj: Any, key: str) -> str | None:
     """If ``obj`` is a dict and ``obj[key]`` is a string, return it.
     Otherwise ``None``. Takes ``Any`` and does both isinstance
@@ -373,6 +330,16 @@ def _dict_str(obj: Any, key: str) -> str | None:
     typed: dict[Any, Any] = cast("dict[Any, Any]", obj)
     val: Any = typed.get(key)
     return val if isinstance(val, str) else None
+
+
+def _dict_mapping(obj: Any, key: str) -> dict[str, Any] | None:
+    if not isinstance(obj, dict):
+        return None
+    typed: dict[Any, Any] = cast("dict[Any, Any]", obj)
+    val: Any = typed.get(key)
+    if not isinstance(val, dict):
+        return None
+    return {str(k): v for k, v in cast("dict[Any, Any]", val).items()}
 
 
 def _read_dict_key(obj: Any, key: str) -> Any:
@@ -410,4 +377,4 @@ def _is_iterable(obj: Any) -> bool:
 
 
 # Public type alias for the callable shape ImageProcessor expects.
-AdvancedOcrExtractor = Callable[[Path], str]
+AdvancedOcrExtractor = Callable[[Path], str | ExtractedMarkdown]

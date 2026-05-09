@@ -394,6 +394,8 @@ pub struct NodeContentDto {
     pub kind: Option<String>,
     pub chunks: Vec<NodeContentChunkDto>,
     pub joined: String,
+    #[serde(default)]
+    pub assets: HashMap<String, String>,
 }
 
 /// One frame of the ``POST /models/download/{role}`` SSE stream.
@@ -1042,18 +1044,21 @@ mod tests {
                 {"id": "img-1:0", "role": "body", "text": "OCR text"},
                 {"id": "img-1:summary:0", "role": "summary", "text": "A diagram."}
             ],
-            "joined": "OCR text\n\nA diagram."
+            "joined": "OCR text\n\nA diagram.",
+            "assets": {"imgs/crop.png": "/tmp/crop.png"}
         }"#;
         let parsed: NodeContentDto =
             serde_json::from_str(from_python).expect("decode node content");
         assert_eq!(parsed.chunks.len(), 2);
         assert_eq!(parsed.chunks[0].role, "body");
         assert_eq!(parsed.chunks[1].role, "summary");
+        assert_eq!(parsed.assets["imgs/crop.png"], "/tmp/crop.png");
 
         let to_ts = serde_json::to_value(&parsed).unwrap();
         assert_eq!(to_ts["nodeId"], "img-1");
         assert_eq!(to_ts["chunks"][0]["role"], "body");
         assert_eq!(to_ts["chunks"][1]["role"], "summary");
+        assert_eq!(to_ts["assets"]["imgs/crop.png"], "/tmp/crop.png");
         // ``role`` is a single word — no camelCase rename should
         // mangle it. Asserting both spellings catches a future
         // typo in the rename rule.
@@ -1071,6 +1076,7 @@ mod tests {
         }"#;
         let parsed: NodeContentDto = serde_json::from_str(legacy).expect("legacy decode");
         assert_eq!(parsed.chunks[0].role, "body");
+        assert!(parsed.assets.is_empty());
     }
 
     #[test]

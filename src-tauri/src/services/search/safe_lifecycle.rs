@@ -1,7 +1,7 @@
 //! Safe sidecar drain helpers used before dev restarts and app quit.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 
@@ -10,6 +10,9 @@ use crate::services::search::supervisor::SearchSidecarSupervisor;
 use crate::services::search::SidecarEnvelopeState;
 
 const SAFE_DRAIN_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const RESTART_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
+const APP_CLOSE_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+const APP_CLOSE_SIGTERM_GRACE: Duration = Duration::from_secs(10);
 
 pub async fn safe_restart_when_idle(
     supervisor: Arc<SearchSidecarSupervisor>,
@@ -17,8 +20,21 @@ pub async fn safe_restart_when_idle(
     app_handle: AppHandle,
     context: &str,
 ) {
-    pause_and_wait_until_idle(&client, context).await;
-    log::info!("{context}: active sidecar work drained; restarting sidecar");
+    let outcome = pause_and_wait_until_idle(&client, context, RESTART_DRAIN_TIMEOUT).await;
+    match outcome {
+        DrainOutcome::Drained => {
+            log::info!("{context}: active sidecar work drained; restarting sidecar");
+        }
+        DrainOutcome::TimedOut => {
+            log::warn!(
+                "{context}: active sidecar work did not drain within {:?}; restarting anyway",
+                RESTART_DRAIN_TIMEOUT
+            );
+        }
+        DrainOutcome::Proceeding => {
+            log::info!("{context}: sidecar not ready for drain; restarting sidecar");
+        }
+    }
     if let Err(err) = supervisor.restart(&app_handle) {
         log::warn!("{context}: restart failed: {err}");
     }
@@ -29,12 +45,36 @@ pub async fn safe_stop_when_idle(
     client: Arc<SearchSidecarClient>,
     context: &str,
 ) {
-    pause_and_wait_until_idle(&client, context).await;
-    log::info!("{context}: active sidecar work drained; stopping sidecar");
-    supervisor.stop_gracefully();
+    let outcome = pause_and_wait_until_idle(&client, context, APP_CLOSE_DRAIN_TIMEOUT).await;
+    match outcome {
+        DrainOutcome::Drained => {
+            log::info!("{context}: active sidecar work drained; stopping sidecar");
+        }
+        DrainOutcome::TimedOut => {
+            log::warn!(
+                "{context}: active sidecar work did not drain within {:?}; stopping sidecar anyway",
+                APP_CLOSE_DRAIN_TIMEOUT
+            );
+        }
+        DrainOutcome::Proceeding => {
+            log::info!("{context}: sidecar not ready for drain; stopping sidecar");
+        }
+    }
+    supervisor.stop_gracefully_with_timeout(APP_CLOSE_SIGTERM_GRACE);
 }
 
-async fn pause_and_wait_until_idle(client: &SearchSidecarClient, context: &str) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DrainOutcome {
+    Drained,
+    TimedOut,
+    Proceeding,
+}
+
+async fn pause_and_wait_until_idle(
+    client: &SearchSidecarClient,
+    context: &str,
+    max_wait: Duration,
+) -> DrainOutcome {
     let pause = client.set_indexing_paused(true).await;
     match pause.state {
         SidecarEnvelopeState::Ready => {
@@ -42,26 +82,30 @@ async fn pause_and_wait_until_idle(client: &SearchSidecarClient, context: &str) 
         }
         SidecarEnvelopeState::Initialising => {
             log::debug!("{context}: sidecar initialising before pause; proceeding");
-            return;
+            return DrainOutcome::Proceeding;
         }
         SidecarEnvelopeState::Unavailable => {
             log::debug!(
                 "{context}: sidecar unavailable before pause ({}); proceeding",
                 pause.error.as_deref().unwrap_or("(no detail)")
             );
-            return;
+            return DrainOutcome::Proceeding;
         }
     }
 
+    let deadline = Instant::now() + max_wait;
     loop {
         let status = client.index_status().await;
         match status.state {
             SidecarEnvelopeState::Ready => {
                 let Some(data) = status.data else {
-                    break;
+                    return DrainOutcome::Proceeding;
                 };
                 if !index_status_has_active_work(&data) {
-                    break;
+                    return DrainOutcome::Drained;
+                }
+                if Instant::now() >= deadline {
+                    return DrainOutcome::TimedOut;
                 }
                 log::info!(
                     "{context}: waiting for active sidecar work (in_flight={}, enhancement_in_flight={})",
@@ -71,14 +115,14 @@ async fn pause_and_wait_until_idle(client: &SearchSidecarClient, context: &str) 
             }
             SidecarEnvelopeState::Initialising => {
                 log::debug!("{context}: sidecar initialising while waiting; proceeding");
-                break;
+                return DrainOutcome::Proceeding;
             }
             SidecarEnvelopeState::Unavailable => {
                 log::debug!(
                     "{context}: sidecar unavailable while waiting ({}); proceeding",
                     status.error.as_deref().unwrap_or("(no detail)")
                 );
-                break;
+                return DrainOutcome::Proceeding;
             }
         }
         tokio::time::sleep(SAFE_DRAIN_POLL_INTERVAL).await;

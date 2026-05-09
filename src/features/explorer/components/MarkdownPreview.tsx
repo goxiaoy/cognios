@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeRaw from "rehype-raw";
 import type { ExplorerClient } from "../types/explorer";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 import { MarkdownView } from "./MarkdownView";
 
 type ViewMode = "preview" | "source";
@@ -99,13 +97,8 @@ export function MarkdownPreview({
           <p className="markdown-preview-error">{loadError}</p>
         ) : !isLoading ? (
           mode === "preview" ? (
-            <div className="markdown-preview-rendered">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeRaw]}
-              >
-                {body}
-              </ReactMarkdown>
+            <div className="markdown-preview-rendered markdown-body">
+              <MarkdownRenderer>{body}</MarkdownRenderer>
             </div>
           ) : (
             <MarkdownView

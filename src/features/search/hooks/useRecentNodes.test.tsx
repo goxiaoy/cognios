@@ -42,6 +42,7 @@ function makeClient(): ExplorerClient {
     saveNoteContent: vi.fn(),
     readFileContent: vi.fn().mockResolvedValue(""),
     showNodeInFileManager: vi.fn(),
+    showNodeExtractArtifacts: vi.fn(),
   };
 }
 

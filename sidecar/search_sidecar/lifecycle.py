@@ -38,7 +38,8 @@ from .extract import (
 )
 from .index import IndexingRunner
 from .index.dispatch import Dispatcher
-from .index.processors.image import SUPPORTED_EXTENSIONS
+from .index.processors.image import SUPPORTED_EXTENSIONS as IMAGE_EXTENSIONS
+from .index.processors.pdf import SUPPORTED_EXTENSIONS as PDF_EXTENSIONS
 from .index.queue import open_queue
 from .models import DEFAULTS, ModelManager
 from .rerank import select_reranker
@@ -62,6 +63,7 @@ STARTUP_DEADLINE_SECONDS = 30.0
 STARTUP_POLL_INTERVAL_SECONDS = 0.05
 ADVANCED_OCR_AUTORUN_ENV = "COGNIOS_ADVANCED_OCR_AUTORUN"
 _FALSE_ENV_VALUES = {"0", "false", "no", "off"}
+ENHANCEMENT_EXTENSIONS = IMAGE_EXTENSIONS + PDF_EXTENSIONS
 
 
 def prepare_search_dir(storage_dir: Path) -> Path:
@@ -173,6 +175,8 @@ def serve(storage_dir: Path) -> int:
         search_orchestrator=search_orchestrator,
         settings_path=settings_path,
         boot_settings_signature=boot_signature(settings),
+        extract_dir=search_dir / "extract",
+        enhancement_extensions=dispatcher.enhancement_extensions(),
     )
     config = uvicorn.Config(
         app,
@@ -266,17 +270,16 @@ def _run_advanced_ocr_backfill_on_boot(
     *,
     enabled: bool = True,
 ) -> None:  # type: ignore[no-untyped-def]
-    """Flag indexed images when advanced OCR is already available at boot."""
+    """Flag indexed OCR targets when advanced OCR is already available at boot."""
     if not enabled:
         LOG.info("advanced-OCR boot backfill skipped: autorun disabled")
         return
     try:
-        image_processor = getattr(dispatcher, "image_processor", None)
-        if image_processor is None or not image_processor.has_advanced_ocr():
+        if not dispatcher.has_advanced_ocr():
             return
-        flagged = queue.backfill_enhancement_pending(SUPPORTED_EXTENSIONS)
+        flagged = queue.backfill_enhancement_pending(dispatcher.enhancement_extensions())
         LOG.info(
-            "advanced-OCR boot backfill flagged %d indexed image(s)",
+            "advanced-OCR boot backfill flagged %d indexed document(s)",
             flagged,
         )
     except Exception as err:

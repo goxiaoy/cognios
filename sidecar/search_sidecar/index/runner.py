@@ -19,7 +19,7 @@ import time
 from typing import Optional
 
 from .dispatch import Dispatcher
-from .processors.image import EnhancementTransientError
+from .processors.enhancement import EnhancementTransientError
 from .queue import IndexingJob, IndexingQueue
 
 LOG = logging.getLogger("search_sidecar.index.runner")
@@ -144,17 +144,25 @@ class IndexingRunner:
     def _try_process_enhancement(self) -> bool:
         if not self._enable_enhancement:
             return False
-        image_processor = self._dispatcher.image_processor
-        if not image_processor.has_advanced_ocr():
+        if not self._dispatcher.has_advanced_ocr():
             return False
         result = self._queue.claim_next_enhancement()
         if result is None:
             return False
         job, claim_seq = result
+        processor = self._dispatcher.find_enhancement(job)
+        if processor is None:
+            LOG.warning(
+                "advanced-OCR enhancement has no processor for %s (%s)",
+                job.node_id,
+                job.name,
+            )
+            self._queue.mark_enhancement_failed(job.node_id)
+            return True
         with self._enhancement_lock:
             self._enhancement_in_flight = job.node_id
         try:
-            image_processor.process_enhancement(job, claim_seq)
+            processor.process_enhancement(job, claim_seq)
         except EnhancementTransientError:
             LOG.info("advanced-OCR enhancement transient failure for %s", job.node_id)
         except Exception as err:

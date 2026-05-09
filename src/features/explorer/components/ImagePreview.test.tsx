@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -12,6 +13,10 @@ import { ImagePreview } from "./ImagePreview";
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => Promise.resolve()),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (path: string) => `http://asset.localhost${path}`,
 }));
 
 afterEach(() => cleanup());
@@ -45,11 +50,14 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
   };
 }
 
-function clientWithChunks(chunks: NodeContentChunk[]): SearchClient {
+function clientWithChunks(
+  chunks: NodeContentChunk[],
+  assets: Record<string, string> = {}
+): SearchClient {
   return makeClient({
     nodeContent: vi.fn().mockResolvedValue({
       state: "ready",
-      data: { nodeId: "img-1", kind: "file", chunks, joined: "" },
+      data: { nodeId: "img-1", kind: "file", chunks, joined: "", assets },
     }),
   });
 }
@@ -74,6 +82,30 @@ describe("ImagePreview", () => {
     expect(screen.getByText(/PKCE flow/)).toBeInTheDocument();
     expect(screen.getByText(/Photo of a receipt/)).toBeInTheDocument();
     expect(client.nodeContent).toHaveBeenCalledWith("img-1");
+  });
+
+  it("renders PDF extracted markdown as a body section", async () => {
+    const client = clientWithChunks([
+      {
+        id: "pdf-1:0",
+        role: "body",
+        text: "| item | total |\n| --- | --- |\n| CT | 144 |",
+      },
+    ]);
+    const { container } = render(
+      <ImagePreview
+        contentKind="pdf"
+        searchClient={client}
+        nodeId="pdf-1"
+        name="scan.pdf"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/^Extracted Text$/)).toBeInTheDocument();
+      expect(container.querySelector("table")).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/^OCR$/)).not.toBeInTheDocument();
   });
 
   it("omits Caption when no summary chunks exist", async () => {
@@ -141,6 +173,86 @@ describe("ImagePreview", () => {
     });
   });
 
+  it("renders OCR markdown with inline HTML and GFM tables", async () => {
+    const client = clientWithChunks([
+      {
+        id: "img-1:0",
+        role: "body",
+        text: '<div align="center"><img src="https://example.com/invoice.png" alt="invoice" /></div>\n\n| item | total |\n| --- | --- |\n| CT | 144 |',
+      },
+    ]);
+    const { container } = render(
+      <ImagePreview searchClient={client} nodeId="img-1" name="x.png" />
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='invoice']")).toBeInTheDocument();
+      expect(container.querySelector("table")).toBeInTheDocument();
+    });
+  });
+
+  it("toggles OCR markdown from rendered preview to raw source", async () => {
+    const client = clientWithChunks([
+      {
+        id: "img-1:0",
+        role: "body",
+        text: '<div align="center"><img src="https://example.com/invoice.png" alt="invoice" /></div>',
+      },
+    ]);
+    const { container } = render(
+      <ImagePreview searchClient={client} nodeId="img-1" name="x.png" />
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='invoice']")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: /^source$/i }));
+
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='invoice']")).toBeNull();
+      expect(container.querySelector(".cm-content")?.textContent).toContain(
+        '<div align="center">'
+      );
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: /^preview$/i }));
+
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='invoice']")).toBeInTheDocument();
+    });
+  });
+
+  it("rewrites cached OCR asset references in preview only", async () => {
+    const client = clientWithChunks(
+      [
+        {
+          id: "img-1:0",
+          role: "body",
+          text: '<img src="imgs/crop.png" alt="crop" />',
+        },
+      ],
+      { "imgs/crop.png": "/tmp/crop.png" }
+    );
+    const { container } = render(
+      <ImagePreview searchClient={client} nodeId="img-1" name="x.png" />
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='crop']")?.getAttribute("src")).toBe(
+        "http://asset.localhost/tmp/crop.png"
+      );
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: /^source$/i }));
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-content")?.textContent).toContain(
+        'src="imgs/crop.png"'
+      );
+    });
+  });
+
   it("renders the explanatory empty state when no chunks have been indexed", async () => {
     const client = clientWithChunks([]);
     render(
@@ -149,6 +261,23 @@ describe("ImagePreview", () => {
     await waitFor(() => {
       expect(
         screen.getByText(/hasn'?t been indexed yet/i)
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("renders the PDF empty state when no extracted text is available", async () => {
+    const client = clientWithChunks([]);
+    render(
+      <ImagePreview
+        contentKind="pdf"
+        searchClient={client}
+        nodeId="pdf-1"
+        name="scan.pdf"
+      />
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByText(/this PDF hasn't produced extracted text yet/i)
       ).toBeInTheDocument();
     });
   });

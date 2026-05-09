@@ -108,6 +108,14 @@ export function isImageNode(node: ExplorerNode) {
   return node.kind === "file" && IMAGE_EXTENSIONS.has(extensionOf(node.name));
 }
 
+export function isPdfNode(node: ExplorerNode) {
+  return node.kind === "file" && extensionOf(node.name) === "pdf";
+}
+
+export function hasExtractArtifacts(node: ExplorerNode) {
+  return isImageNode(node) || isPdfNode(node);
+}
+
 export function isMarkdownFile(node: ExplorerNode) {
   return node.kind === "file" && MARKDOWN_EXTENSIONS.has(extensionOf(node.name));
 }
@@ -164,7 +172,16 @@ function extensionOf(name: string) {
   return extension.toLowerCase();
 }
 
-const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+const IMAGE_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "tif",
+  "tiff",
+]);
 const MARKDOWN_EXTENSIONS = new Set(["md", "mdx"]);
 const PLAIN_TEXT_EXTENSIONS = new Set([
   "txt",

@@ -5,7 +5,7 @@ import type {
   ExplorerNode,
   ExplorerSnapshot
 } from "../types/explorer";
-import { isImageNode, isTextLikeFile } from "../utils/presentation";
+import { hasExtractArtifacts, isTextLikeFile } from "../utils/presentation";
 
 const EMPTY_SNAPSHOT: ExplorerSnapshot = { roots: [] };
 
@@ -145,7 +145,9 @@ export function useExplorerStore(client: ExplorerClient) {
           setActivePreviewId(node.id);
           return;
         }
-        if (isImageNode(node)) {
+        if (hasExtractArtifacts(node)) {
+          // Historical name: this slot now hosts extracted markdown
+          // previews for image/PDF nodes.
           setActiveImagePreviewId(node.id);
           return;
         }

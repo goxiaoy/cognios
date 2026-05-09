@@ -10,13 +10,19 @@ from fastapi.testclient import TestClient
 from search_sidecar.app import build_app
 from search_sidecar.index.dispatch import Dispatcher
 from search_sidecar.index.embedder import StubEmbedder
+from search_sidecar.index.extract_artifacts import write_extract_artifact
 from search_sidecar.index.queue import JobState, open_queue
 from search_sidecar.index.runner import IndexingRunner
-from search_sidecar.storage import open_store
+from search_sidecar.storage import EMBEDDING_DIMENSION, NodeChunk, open_store
 
 TOKEN = "0123456789abcdef" * 4
 UUID_A = "11111111-1111-1111-1111-111111111111"
 UUID_B = "22222222-2222-2222-2222-222222222222"
+
+
+class DummyImage:
+    def save(self, path: Path, *, format: str | None = None) -> None:
+        path.write_bytes(b"dummy image")
 
 
 def _auth() -> dict[str, str]:
@@ -258,7 +264,7 @@ def test_get_index_status_includes_enhancement_counts(stack):
     body = resp.json()
     assert body["enhancement_pending"] == 1
     assert body["enhancement_failed"] == 1
-    assert body["enhancement_total_images"] == 3
+    assert body["enhancement_total_images"] == 4
 
 
 def test_post_pause_toggles_runner_pause(stack):
@@ -283,7 +289,7 @@ def test_post_pause_toggles_runner_pause(stack):
     assert runner.paused is False
 
 
-def test_post_backfill_enhancement_flags_indexed_images(stack):
+def test_post_backfill_enhancement_flags_indexed_documents(stack):
     app, queue, _, _, _ = stack
     for node_id, name in [
         (UUID_A, "a.png"),
@@ -299,7 +305,7 @@ def test_post_backfill_enhancement_flags_indexed_images(stack):
         second = client.post("/index/backfill-enhancement", headers=_auth())
 
     assert resp.status_code == 200
-    assert resp.json() == {"flagged": 2}
+    assert resp.json() == {"flagged": 3}
     assert second.json() == {"flagged": 0}
 
 
@@ -431,6 +437,7 @@ def test_get_node_content_returns_empty_for_unindexed_node(stack):
         "kind": None,
         "chunks": [],
         "joined": "",
+        "assets": {},
     }
 
 
@@ -474,8 +481,6 @@ def test_get_node_content_orders_body_then_summary(stack):
     after (also by numeric idx). The ``role`` field carries through
     to the response."""
     from datetime import datetime, timezone
-
-    from search_sidecar.storage import EMBEDDING_DIMENSION, NodeChunk
 
     app, _queue, store, _runner, _tmp = stack
     now = datetime.now(timezone.utc)
@@ -561,6 +566,104 @@ def test_get_node_content_orders_body_then_summary(stack):
     assert body_end < summary_start
 
 
+def test_get_node_content_prefers_cached_advanced_artifact(tmp_path: Path):
+    """Image preview reads extract artifacts directly.
+
+    ``advanced.md`` is the preferred OCR body when present; ``basic.md``
+    and stale lancedb body rows must not leak into the preview.
+    """
+    from datetime import datetime, timezone
+
+    extract_dir = tmp_path / "extract"
+    write_extract_artifact(extract_dir, UUID_A, "basic", "basic OCR text")
+    write_extract_artifact(extract_dir, UUID_A, "advanced", "advanced OCR table")
+    write_extract_artifact(extract_dir, UUID_A, "caption", "caption text")
+
+    store = open_store(tmp_path / "index.lance")
+    now = datetime.now(timezone.utc)
+    store.upsert(
+        [
+            NodeChunk(
+                id=f"{UUID_A}:0",
+                node_id=UUID_A,
+                kind="file",
+                name="img.png",
+                text="stale lancedb OCR",
+                vector=[0.0] * EMBEDDING_DIMENSION,
+                created_at=now,
+                modified_at=now,
+            )
+        ]
+    )
+    app = build_app(token=TOKEN, lancedb_store=store, extract_dir=extract_dir)
+
+    with TestClient(app) as client:
+        resp = client.get(f"/index/node/{UUID_A}/content", headers=_auth())
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["kind"] == "file"
+    assert body["chunks"] == [
+        {
+            "id": f"{UUID_A}:extract:advanced",
+            "role": "body",
+            "text": "advanced OCR table",
+        },
+        {
+            "id": f"{UUID_A}:extract:caption",
+            "role": "summary",
+            "text": "caption text",
+        },
+    ]
+    assert "basic OCR text" not in body["joined"]
+    assert "stale lancedb OCR" not in body["joined"]
+    assert body["assets"] == {}
+
+
+def test_get_node_content_returns_cached_advanced_assets(tmp_path: Path):
+    extract_dir = tmp_path / "extract"
+    write_extract_artifact(
+        extract_dir,
+        UUID_A,
+        "advanced",
+        '<img src="imgs/crop.jpg" alt="crop" />',
+        assets={"imgs/crop.jpg": DummyImage()},
+    )
+    app = build_app(token=TOKEN, extract_dir=extract_dir)
+
+    with TestClient(app) as client:
+        resp = client.get(f"/index/node/{UUID_A}/content", headers=_auth())
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["chunks"][0]["text"] == '<img src="imgs/crop.jpg" alt="crop" />'
+    assert body["assets"] == {
+        "imgs/crop.jpg": str(
+            extract_dir / UUID_A / "assets" / "advanced" / "imgs" / "crop.png"
+        )
+    }
+
+
+def test_get_node_content_falls_back_to_cached_basic_artifact(tmp_path: Path):
+    extract_dir = tmp_path / "extract"
+    write_extract_artifact(extract_dir, UUID_A, "basic", "basic OCR text")
+    app = build_app(token=TOKEN, extract_dir=extract_dir)
+
+    with TestClient(app) as client:
+        resp = client.get(f"/index/node/{UUID_A}/content", headers=_auth())
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["chunks"] == [
+        {
+            "id": f"{UUID_A}:extract:basic",
+            "role": "body",
+            "text": "basic OCR text",
+        }
+    ]
+    assert body["joined"] == "basic OCR text"
+
+
 def test_get_node_content_returns_unindexed_node_unchanged(stack):
     """Empty stores still emit the documented shape — chunks list and
     joined string both empty, no role chatter."""
@@ -573,4 +676,5 @@ def test_get_node_content_returns_unindexed_node_unchanged(stack):
         "kind": None,
         "chunks": [],
         "joined": "",
+        "assets": {},
     }

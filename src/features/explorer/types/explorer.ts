@@ -46,4 +46,5 @@ export interface ExplorerClient {
   saveNoteContent(noteId: string, body: string): Promise<void>;
   readFileContent(nodeId: string): Promise<string>;
   showNodeInFileManager(nodeId: string): Promise<void>;
+  showNodeExtractArtifacts(nodeId: string): Promise<void>;
 }

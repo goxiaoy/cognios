@@ -237,7 +237,7 @@ pub fn run() {
 
             // Advanced-OCR watcher: when the 13-stage PP-StructureV3
             // bundle finishes downloading, ask the sidecar to backfill
-            // indexed images for background enhancement. Cloud
+            // indexed documents for background enhancement. Cloud
             // advanced-OCR doesn't trigger this — keys are usable
             // immediately and bulk cloud backfill is intentionally
             // manual.
@@ -295,6 +295,7 @@ pub fn run() {
             commands::notes::save_note_content,
             commands::files::read_file_content,
             commands::files::show_node_in_file_manager,
+            commands::files::show_node_extract_artifacts,
             commands::thumbnails::get_node_thumbnail,
             commands::urls::create_url,
             commands::urls::retry_url,

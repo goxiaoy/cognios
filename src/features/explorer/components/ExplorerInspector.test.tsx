@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ExplorerInspector } from "./ExplorerInspector";
 import type { ExplorerClient } from "../types/explorer";
 
@@ -23,10 +23,15 @@ function makeClient(): ExplorerClient {
     saveNoteContent: vi.fn(),
     readFileContent: vi.fn(),
     showNodeInFileManager: vi.fn(),
+    showNodeExtractArtifacts: vi.fn().mockResolvedValue(undefined),
   };
 }
 
 describe("ExplorerInspector", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   it("shows url indexing state in single-node mode", () => {
     render(
       <ExplorerInspector
@@ -151,5 +156,118 @@ describe("ExplorerInspector", () => {
     expect(client.getNodeThumbnail).toHaveBeenCalledWith("img-1");
     // Wait for the async image to render.
     await screen.findByAltText("diagram.png");
+  });
+
+  it("opens the inspector image preview on double click", async () => {
+    const client = makeClient();
+    render(
+      <ExplorerInspector
+        client={client}
+        node={{
+          id: "img-1",
+          parentId: null,
+          name: "diagram.png",
+          kind: "file",
+          state: "indexed",
+          createdAt: "2026-04-13 00:00:00",
+          modifiedAt: "2026-04-13 00:00:00",
+          sizeBytes: 1024,
+          children: [],
+        }}
+        selectedArtifacts={[]}
+        selectionCount={0}
+      />
+    );
+
+    const thumb = await screen.findByRole("button", {
+      name: /open image preview for diagram\.png/i,
+    });
+    fireEvent.doubleClick(thumb);
+
+    expect(
+      screen.getByRole("dialog", { name: /image preview: diagram\.png/i })
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(
+      screen.queryByRole("dialog", { name: /image preview: diagram\.png/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("reveals extracted artifacts for image and PDF nodes", async () => {
+    const imageClient = makeClient();
+    const { rerender } = render(
+      <ExplorerInspector
+        client={imageClient}
+        node={{
+          id: "img-1",
+          parentId: null,
+          name: "diagram.png",
+          kind: "file",
+          state: "indexed",
+          createdAt: "2026-04-13 00:00:00",
+          modifiedAt: "2026-04-13 00:00:00",
+          sizeBytes: 1024,
+          children: [],
+        }}
+        selectedArtifacts={[]}
+        selectionCount={0}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /reveal extracted/i }));
+    await waitFor(() => {
+      expect(imageClient.showNodeExtractArtifacts).toHaveBeenCalledWith("img-1");
+    });
+
+    const pdfClient = makeClient();
+    rerender(
+      <ExplorerInspector
+        client={pdfClient}
+        node={{
+          id: "pdf-1",
+          parentId: null,
+          name: "scan.pdf",
+          kind: "file",
+          state: "indexed",
+          createdAt: "2026-04-13 00:00:00",
+          modifiedAt: "2026-04-13 00:00:00",
+          sizeBytes: 2048,
+          children: [],
+        }}
+        selectedArtifacts={[]}
+        selectionCount={0}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /reveal extracted/i }));
+    await waitFor(() => {
+      expect(pdfClient.showNodeExtractArtifacts).toHaveBeenCalledWith("pdf-1");
+    });
+  });
+
+  it("does not show extracted artifacts action for regular documents", () => {
+    render(
+      <ExplorerInspector
+        client={makeClient()}
+        node={{
+          id: "doc-1",
+          parentId: null,
+          name: "notes.md",
+          kind: "file",
+          state: "indexed",
+          createdAt: "2026-04-13 00:00:00",
+          modifiedAt: "2026-04-13 00:00:00",
+          sizeBytes: 1024,
+          children: [],
+        }}
+        selectedArtifacts={[]}
+        selectionCount={0}
+      />
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /reveal extracted/i })
+    ).not.toBeInTheDocument();
   });
 });

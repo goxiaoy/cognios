@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from search_sidecar.index.migrations import LATEST_QUEUE_SCHEMA_VERSION
 from search_sidecar.index.queue import (
     MAX_ENHANCEMENT_ATTEMPTS,
     JobState,
@@ -30,6 +31,8 @@ def test_open_queue_creates_schema_and_pragmas(tmp_path: Path):
     queue = open_queue(tmp_path / "queue.db")
     try:
         assert queue.queue_depth() == 0
+        version = queue._conn.execute("PRAGMA user_version").fetchone()[0]
+        assert version == LATEST_QUEUE_SCHEMA_VERSION
     finally:
         queue.close()
 
@@ -506,6 +509,8 @@ def test_legacy_queue_db_gets_enhancement_columns_idempotently(tmp_path: Path):
     try:
         assert "enhancement_pending" in _columns(queue2)
         assert "enhancement_completed_at" in _columns(queue2)
+        version = queue2._conn.execute("PRAGMA user_version").fetchone()[0]
+        assert version == LATEST_QUEUE_SCHEMA_VERSION
     finally:
         queue2.close()
 
@@ -748,15 +753,15 @@ def test_enqueue_resets_enhancement_bookkeeping(tmp_path: Path):
         queue.close()
 
 
-def test_backfill_enhancement_pending_flags_only_eligible_images(tmp_path: Path):
-    """``backfill_enhancement_pending`` flags indexed images by suffix
+def test_backfill_enhancement_pending_flags_only_eligible_targets(tmp_path: Path):
+    """``backfill_enhancement_pending`` flags indexed rows by suffix
     while skipping already-pending, already-completed, failed,
-    cap-exhausted, non-image, and non-indexed rows."""
+    cap-exhausted, non-target, and non-indexed rows."""
     queue = open_queue(tmp_path / "queue.db")
     try:
         _enqueue_indexed_image(queue, "img-png", "photo.png")
         _enqueue_indexed_image(queue, "img-jpg", "scan.JPG")  # case-insensitive
-        _enqueue_indexed_image(queue, "img-pdf", "doc.pdf")  # not an image
+        _enqueue_indexed_image(queue, "img-pdf", "doc.pdf")  # not requested
         _enqueue_indexed_image(queue, "img-already", "ready.png")
         queue.set_enhancement_pending("img-already")  # already flagged
         _enqueue_indexed_image(queue, "img-completed", "done.png")
