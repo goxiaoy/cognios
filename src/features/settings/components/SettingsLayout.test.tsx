@@ -3,6 +3,7 @@ import {
   cleanup,
   render,
   screen,
+  within,
   waitFor,
 } from "@testing-library/react";
 
@@ -157,6 +158,34 @@ describe("SettingsLayout", () => {
     // The local-gte provider's role is "ready" in the makeClient
     // mock, so its row's status pill reads "Ready".
     expect(screen.getAllByText("Ready").length).toBeGreaterThan(0);
+  });
+
+  it("labels ready cloud provider actions as Details instead of Edit", async () => {
+    const ready = readySettings();
+    ready.data.providers.openai = {
+      providerId: "openai",
+      enabled: true,
+      apiKeyRef: "keychain://cognios-search/provider:openai",
+      baseUrl: "https://api.openai.com/v1",
+      modelPerCapability: {},
+    };
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(ready),
+      hasProviderSecret: vi.fn().mockImplementation(({ providerId }) =>
+        Promise.resolve(providerId === "openai")
+      ),
+    });
+    render(<SettingsLayout client={client} />);
+
+    const openaiName = await screen.findByText("OpenAI");
+    const openaiRow = openaiName.closest("li");
+    expect(openaiRow).not.toBeNull();
+    expect(
+      within(openaiRow as HTMLElement).getByRole("button", { name: /Details/i })
+    ).toBeInTheDocument();
+    expect(
+      within(openaiRow as HTMLElement).queryByRole("button", { name: /Edit/i })
+    ).toBeNull();
   });
 
   it("renders OCR enhancement diagnostics when advanced OCR is ready", async () => {

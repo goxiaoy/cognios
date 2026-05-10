@@ -62,7 +62,7 @@ type Filter = {
 
 /**
  * Always-visible Providers section. Lists every preset (configured
- * or not) with an Add/Edit affordance. For local providers the row
+ * or not) with an Add/Details affordance. For local providers the row
  * also surfaces the underlying model role state (downloaded / pending
  * license / error) plus the action that unblocks it — replacing the
  * old "Show Diagnostics" toggle's separate Models card.
@@ -576,7 +576,7 @@ function ProviderActions({
       onClick={onToggle}
       aria-expanded={isOpen}
     >
-      {isOpen ? "Close" : isConfigured ? "Edit" : "Add"}
+      {isOpen ? "Close" : isConfigured ? "Details" : "Add"}
     </button>
   );
 }
