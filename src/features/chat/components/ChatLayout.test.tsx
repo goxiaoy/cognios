@@ -315,6 +315,55 @@ describe("ChatLayout", () => {
     });
   });
 
+  it("uses the mount icon for a mount added as context", async () => {
+    const client = makeClient();
+    const searchClient = makeSearchClient();
+    vi.mocked(searchClient.search).mockResolvedValue({
+      state: "ready",
+      data: {
+        results: [
+          {
+            nodeId: "mount-1",
+            kind: "mount",
+            name: "20260301",
+            score: 0.94,
+            snippet: "事故资料目录",
+            matchedIn: "name",
+            path: "/incidents/20260301",
+          },
+        ],
+        degraded: false,
+        nextCursor: null,
+      },
+    });
+    vi.mocked(searchClient.nodeContent).mockResolvedValue({
+      state: "ready",
+      data: {
+        nodeId: "mount-1",
+        kind: "mount",
+        chunks: [],
+        joined: "",
+        assets: {},
+      },
+    });
+
+    render(
+      <ExplorerStoreProvider client={makeExplorerClient()}>
+        <ChatLayout client={client} searchClient={searchClient} />
+      </ExplorerStoreProvider>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add context" }));
+    fireEvent.change(screen.getByPlaceholderText(/Search notes/i), {
+      target: { value: "20260301" },
+    });
+    fireEvent.click(await screen.findByRole("option", { name: /20260301/ }));
+
+    const chip = (await screen.findByText("20260301")).closest(".chat-context-chip");
+    expect(chip?.querySelector(".lucide-hard-drive")).not.toBeNull();
+    expect(chip?.querySelector(".lucide-file-text")).toBeNull();
+  });
+
   it("does not duplicate a freshly persisted assistant answer", async () => {
     const client = makeClient();
     const emptyDetail: ChatSessionDetail = {

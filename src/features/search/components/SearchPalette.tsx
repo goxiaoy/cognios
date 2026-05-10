@@ -80,6 +80,7 @@ export function SearchPalette({
         kind: "recent" as const,
         nodeId: node.id,
         label: node.name,
+        nodeKind: node.kind,
       }));
     }
     return state.results.map((result) => ({
@@ -283,7 +284,7 @@ export function SearchPalette({
 }
 
 type NavigableItem =
-  | { kind: "recent"; nodeId: string; label: string }
+  | { kind: "recent"; nodeId: string; label: string; nodeKind: string }
   | { kind: "result"; nodeId: string; label: string; result: SearchResult };
 
 export interface SearchPaletteSelection {
@@ -356,6 +357,7 @@ function PaletteBody({
                     kind: "recent",
                     nodeId: node.id,
                     label: node.name,
+                    nodeKind: node.kind,
                   })
                 }
               >
@@ -462,6 +464,7 @@ function selectionFromItem(item: NavigableItem): SearchPaletteSelection {
   return {
     nodeId: item.nodeId,
     name: item.label,
+    kind: item.nodeKind,
   };
 }
 

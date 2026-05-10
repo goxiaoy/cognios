@@ -1,5 +1,18 @@
 import { FormEvent, useEffect, useState } from "react";
-import { CircleAlert, FileText, Globe, MessageSquare, Paperclip, Plus, Search, Send, X } from "lucide-react";
+import {
+  CircleAlert,
+  File,
+  FileText,
+  Folder,
+  Globe,
+  HardDrive,
+  MessageSquare,
+  Paperclip,
+  Plus,
+  Search,
+  Send,
+  X,
+} from "lucide-react";
 
 import type {
   ChatContextNode,
@@ -348,7 +361,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
                 <div className="chat-context-chips" aria-label="Context nodes">
                   {contextNodes.map((node) => (
                     <span className="chat-context-chip" key={node.nodeId}>
-                      <FileText size={13} aria-hidden="true" />
+                      <ContextNodeIcon node={node} />
                       <span>{node.title}</span>
                       <button
                         type="button"
@@ -477,6 +490,34 @@ function shouldRetitleSession(detail: ChatSessionDetail): boolean {
 
 function isCurrentChatEmpty(detail: ChatSessionDetail | null, turn: ChatTurnResponse | null): boolean {
   return !turn && (!detail || detail.messages.length === 0);
+}
+
+function ContextNodeIcon({ node }: { node: ChatContextNode }) {
+  const Icon = iconForContextNode(node);
+  return <Icon size={13} aria-hidden="true" />;
+}
+
+function iconForContextNode(node: ChatContextNode) {
+  switch (node.kind) {
+    case "mount":
+      return HardDrive;
+    case "folder":
+      return Folder;
+    case "url":
+      return Globe;
+    case "file": {
+      const ext = extensionOf(node.path ?? node.title);
+      if (["md", "mdx", "txt", "markdown"].includes(ext)) return FileText;
+      return File;
+    }
+    case "note":
+    default:
+      return FileText;
+  }
+}
+
+function extensionOf(name: string) {
+  return (name.split(".").pop() ?? "").toLowerCase();
 }
 
 function chatStatusMessage(state: string): string {
