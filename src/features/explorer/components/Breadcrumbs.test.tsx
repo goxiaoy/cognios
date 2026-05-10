@@ -40,4 +40,25 @@ describe("Breadcrumbs", () => {
     const separators = container.querySelectorAll(".breadcrumb-separator");
     expect(separators.length).toBe(2);
   });
+
+  it("collapses the middle of long paths", () => {
+    render(
+      <Breadcrumbs
+        nodes={[
+          node("root", "workspace"),
+          node("docs", "docs"),
+          node("cases", "cases"),
+          node("incident", "incident"),
+          node("photos", "photos"),
+        ]}
+      />
+    );
+
+    expect(screen.getByText("workspace")).toBeInTheDocument();
+    expect(screen.getByText("incident")).toBeInTheDocument();
+    expect(screen.getByText("photos")).toBeInTheDocument();
+    expect(screen.getByLabelText("Collapsed path: docs / cases")).toBeInTheDocument();
+    expect(screen.queryByText("docs")).not.toBeInTheDocument();
+    expect(screen.queryByText("cases")).not.toBeInTheDocument();
+  });
 });

@@ -1530,7 +1530,7 @@ body.is-resizing-pane {
 .breadcrumbs {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.25rem;
   padding: 0.5rem 0;
   margin-bottom: 0;
@@ -1539,24 +1539,53 @@ body.is-resizing-pane {
   color: var(--ink-3);
   white-space: nowrap;
   overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .breadcrumb-segment-group {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
+  min-width: 0;
+  max-width: min(14rem, 42%);
+  flex: 0 1 auto;
+}
+
+.breadcrumb-segment-group:first-child {
+  max-width: min(10rem, 30%);
+}
+
+.breadcrumb-segment-group:last-child {
+  max-width: min(18rem, 55%);
+}
+
+.breadcrumb-segment-group.is-overflow {
+  max-width: none;
+  flex: 0 0 auto;
 }
 
 .breadcrumb-separator {
+  flex: 0 0 auto;
   color: var(--ink-4);
   opacity: 1;
 }
 
 .breadcrumb-segment {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--ink-3);
   padding: 1px 4px;
   border-radius: 4px;
   transition: background 100ms ease, color 100ms ease;
+}
+
+.breadcrumb-segment-overflow {
+  overflow: visible;
 }
 
 .breadcrumb-segment-group:last-child .breadcrumb-segment {
