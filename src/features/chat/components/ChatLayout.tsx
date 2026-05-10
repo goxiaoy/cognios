@@ -118,7 +118,9 @@ export function ChatLayout({
   const memoryButtonRef = useRef<HTMLButtonElement | null>(null);
   const memoryPanelRef = useRef<HTMLElement | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const initializedRef = useRef(false);
+  const pendingComposerFocusRef = useRef(false);
 
   useEffect(() => {
     if (!visible || initializedRef.current) return;
@@ -126,6 +128,14 @@ export function ChatLayout({
     void refreshSessions();
     void refreshModels();
     void refreshProviderSettings();
+  }, [visible]);
+
+  useEffect(() => {
+    if (visible) {
+      pendingComposerFocusRef.current = true;
+      return;
+    }
+    pendingComposerFocusRef.current = false;
   }, [visible]);
 
   useEffect(() => {
@@ -596,6 +606,12 @@ export function ChatLayout({
   );
 
   useEffect(() => {
+    if (!visible || !pendingComposerFocusRef.current || composerDisabled || showProviderSetup) return;
+    composerRef.current?.focus();
+    pendingComposerFocusRef.current = false;
+  }, [visible, composerDisabled, showProviderSetup]);
+
+  useEffect(() => {
     if (!visible) return;
     transcriptEndRef.current?.scrollIntoView?.({ block: "end", inline: "nearest" });
   }, [visible, active?.session.id, transcript.length, optimisticTranscript.length, showAssistantLoading, turn?.answer]);
@@ -782,6 +798,7 @@ export function ChatLayout({
             </div>
           ) : null}
           <textarea
+            ref={composerRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={handleComposerKeyDown}

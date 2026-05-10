@@ -330,6 +330,20 @@ describe("ChatLayout", () => {
     expect(client.getSession).not.toHaveBeenCalled();
   });
 
+  it("focuses the composer when Chat becomes visible", async () => {
+    const client = makeClient();
+    const searchClient = makeSearchClient();
+    const { rerender } = render(
+      <ChatLayout client={client} searchClient={searchClient} visible={false} />
+    );
+
+    rerender(<ChatLayout client={client} searchClient={searchClient} visible />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Chat message")).toHaveFocus();
+    });
+  });
+
   it("renders context nodes saved on historical user messages", async () => {
     const client = makeClient();
     const session = {
