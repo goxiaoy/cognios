@@ -125,6 +125,7 @@ export function ProviderEditor({
       onKeyPresenceChange?.(preset.providerId, true);
       setSecret("");
       setState({ kind: "saved" });
+      onClose();
     } catch (err) {
       setState({
         kind: "error",
@@ -187,6 +188,7 @@ export function ProviderEditor({
       }
       onSettingsChange(env.data);
       setState({ kind: "saved" });
+      onClose();
     } catch (err) {
       setState({
         kind: "error",

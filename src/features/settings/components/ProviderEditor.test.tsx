@@ -53,6 +53,7 @@ describe("ProviderEditor", () => {
       data: baseSettings(),
     });
     const onSettingsChange = vi.fn();
+    const onClose = vi.fn();
     render(
       <ProviderEditor
         preset={LOCAL_OLLAMA}
@@ -60,7 +61,7 @@ describe("ProviderEditor", () => {
         settings={baseSettings()}
         client={makeStubSearchClient({ updateSettings })}
         onSettingsChange={onSettingsChange}
-        onClose={vi.fn()}
+        onClose={onClose}
       />
     );
 
@@ -81,6 +82,7 @@ describe("ProviderEditor", () => {
       modelPerCapability: {},
     });
     expect(onSettingsChange).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
   });
 
   it("tests configurable local provider connectivity without saving", async () => {
@@ -179,6 +181,7 @@ describe("ProviderEditor", () => {
   it("saves a new key + persists settings + invokes onSettingsChange", async () => {
     const setProviderSecret = vi.fn().mockResolvedValue(undefined);
     const onSettingsChange = vi.fn();
+    const onClose = vi.fn();
     const updateSettings = vi.fn().mockResolvedValue({
       state: "ready",
       data: baseSettings(),
@@ -194,7 +197,7 @@ describe("ProviderEditor", () => {
           hasProviderSecret: vi.fn().mockResolvedValue(false),
         })}
         onSettingsChange={onSettingsChange}
-        onClose={vi.fn()}
+        onClose={onClose}
       />
     );
     await waitFor(() => {
@@ -218,6 +221,7 @@ describe("ProviderEditor", () => {
     expect(arg.providers.openai.apiKeyRef).toBe(
       "keychain://cognios-search/provider:openai"
     );
+    expect(onClose).toHaveBeenCalled();
   });
 
   it("surfaces an error when setProviderSecret rejects", async () => {
