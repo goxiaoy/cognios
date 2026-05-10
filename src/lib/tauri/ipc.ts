@@ -13,6 +13,8 @@ import type {
   RecordChatClusterInput,
   StartChatTurnInput,
   StartChatTurnResult,
+  TestChatProviderInput,
+  TestChatProviderResult,
 } from "../contracts/chat";
 import type {
   IndexStatus,
@@ -180,6 +182,12 @@ export async function startChatTurn(
 
 export async function getChatModels(): Promise<GetChatModelsResult> {
   return invoke<GetChatModelsResult>("get_chat_models");
+}
+
+export async function testChatProvider(
+  input: TestChatProviderInput
+): Promise<TestChatProviderResult> {
+  return invoke<TestChatProviderResult>("test_chat_provider", { input });
 }
 
 // ---- search-sidecar bridge ------------------------------------------------

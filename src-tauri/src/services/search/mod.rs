@@ -21,10 +21,10 @@ pub mod settings_fallback;
 pub mod supervisor;
 
 pub use client::{
-    ChatModelsResponseDto, ChatTurnMessageDto, ChatTurnRequestDto, ChatTurnResponseDto,
-    FeatureConfigDto, IndexSnapshotDto, IndexSnapshotEntry, IndexStatusDto, ModelDownloadEvent,
-    ModelRoleStatusDto, ModelsStatusDto, NodeContentChunkDto, NodeContentDto, NodeEvent,
-    NodeEventAck, NodeEventKind, NodeIndexStatusDto, ProviderConfigDto, SearchInput,
+    ChatModelsResponseDto, ChatProviderTestRequestDto, ChatTurnMessageDto, ChatTurnRequestDto,
+    ChatTurnResponseDto, FeatureConfigDto, IndexSnapshotDto, IndexSnapshotEntry, IndexStatusDto,
+    ModelDownloadEvent, ModelRoleStatusDto, ModelsStatusDto, NodeContentChunkDto, NodeContentDto,
+    NodeEvent, NodeEventAck, NodeEventKind, NodeIndexStatusDto, ProviderConfigDto, SearchInput,
     SearchResponseDto, SearchResultDto, SearchSettingsDto, SearchSidecarClient, SidecarEnvelope,
     SidecarEnvelopeState,
 };

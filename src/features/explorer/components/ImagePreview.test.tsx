@@ -46,6 +46,9 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
     setProviderSecret: vi.fn().mockResolvedValue(undefined),
     hasProviderSecret: vi.fn().mockResolvedValue(false),
     deleteProviderSecret: vi.fn().mockResolvedValue(undefined),
+    testChatProvider: vi.fn().mockResolvedValue({
+      result: { state: "initialising" },
+    }),
     ...overrides,
   };
 }

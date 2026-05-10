@@ -8,6 +8,7 @@ from search_sidecar.chat.retrieval import ChatRetrieval
 from search_sidecar.chat.sources import ChatSource
 from search_sidecar.chat.types import ChatGeneration, ChatGenerationRequest
 from search_sidecar.chat.types import ChatModel, ChatModelList
+from search_sidecar.chat.types import ChatProviderError
 
 TOKEN = "0123456789abcdef" * 4
 
@@ -129,3 +130,79 @@ def test_chat_models_route_returns_cached_provider_models():
     assert body["provider_id"] == "test-provider"
     assert body["models"] == [{"id": "test-model", "name": "test-model"}]
     assert body["cache_expires_at"] == 123.0
+
+
+def test_chat_provider_test_route_probes_ollama_base_url(monkeypatch):
+    captured = {}
+
+    class _ProbeProvider:
+        provider_id = "local-ollama"
+
+        def __init__(self, *, base_url: str, model: str = "llama3.2", client=None):
+            captured["base_url"] = base_url
+
+        def list_models(self) -> ChatModelList:
+            return ChatModelList(
+                provider_id=self.provider_id,
+                models=[ChatModel(id="qwen2.5:7b", name="qwen2.5:7b")],
+                cached=False,
+                cache_expires_at=456.0,
+            )
+
+        def close(self) -> None:
+            captured["closed"] = True
+
+    monkeypatch.setattr(
+        "search_sidecar.routes.chat.OllamaChatProvider", _ProbeProvider
+    )
+    app = build_app(
+        token=TOKEN,
+        chat_orchestrator=ChatOrchestrator(retrieval=_Retrieval(), chat_provider=_Provider()),
+    )
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/chat/providers/test",
+            json={"provider_id": "local-ollama", "base_url": "http://ollama.test"},
+            headers=_auth(),
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert captured == {"base_url": "http://ollama.test", "closed": True}
+    assert body["state"] == "ready"
+    assert body["provider_id"] == "local-ollama"
+    assert body["models"] == [{"id": "qwen2.5:7b", "name": "qwen2.5:7b"}]
+    assert body["cache_expires_at"] == 456.0
+
+
+def test_chat_provider_test_route_returns_provider_error(monkeypatch):
+    class _FailingProvider:
+        def __init__(self, *, base_url: str, model: str = "llama3.2", client=None):
+            pass
+
+        def list_models(self) -> ChatModelList:
+            raise ChatProviderError("local-ollama: local runtime unreachable")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "search_sidecar.routes.chat.OllamaChatProvider", _FailingProvider
+    )
+    app = build_app(
+        token=TOKEN,
+        chat_orchestrator=ChatOrchestrator(retrieval=_Retrieval(), chat_provider=_Provider()),
+    )
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/chat/providers/test",
+            json={"provider_id": "local-ollama", "base_url": "http://ollama.test"},
+            headers=_auth(),
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "provider_error"
+    assert body["warnings"] == ["local-ollama: local runtime unreachable"]

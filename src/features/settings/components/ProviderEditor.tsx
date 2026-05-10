@@ -21,6 +21,12 @@ type EditorState =
   | { kind: "error"; message: string }
   | { kind: "saved" };
 
+type TestState =
+  | { kind: "idle" }
+  | { kind: "testing" }
+  | { kind: "connected"; message: string }
+  | { kind: "error"; message: string };
+
 export function ProviderEditor({
   preset,
   config,
@@ -42,6 +48,7 @@ export function ProviderEditor({
   onKeyPresenceChange?: (providerId: string, present: boolean) => void;
 }) {
   const [state, setState] = useState<EditorState>({ kind: "idle" });
+  const [testState, setTestState] = useState<TestState>({ kind: "idle" });
   const [secret, setSecret] = useState("");
   const [hasSecret, setHasSecret] = useState<boolean>(false);
   const [baseUrl, setBaseUrl] = useState(config?.baseUrl ?? preset.baseUrl ?? "");
@@ -188,6 +195,42 @@ export function ProviderEditor({
     }
   }
 
+  async function handleTestConfig() {
+    const trimmedBaseUrl = baseUrl.trim();
+    if (!trimmedBaseUrl) return;
+    setTestState({ kind: "testing" });
+    try {
+      const { result } = await client.testChatProvider({
+        providerId: preset.providerId,
+        baseUrl: trimmedBaseUrl,
+      });
+      const data = result.data;
+      if (result.state !== "ready" || !data) {
+        setTestState({
+          kind: "error",
+          message: result.error ?? "Could not reach provider.",
+        });
+        return;
+      }
+      if (data.state !== "ready") {
+        setTestState({
+          kind: "error",
+          message: data.warnings[0] ?? "Could not reach provider.",
+        });
+        return;
+      }
+      setTestState({
+        kind: "connected",
+        message: `Connected. Found ${formatModelCount(data.models.length)}.`,
+      });
+    } catch (err) {
+      setTestState({
+        kind: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   return (
     <div className="provider-editor" role="region" aria-label={preset.displayName}>
       {preset.authKind === "api-key" ? (
@@ -227,7 +270,10 @@ export function ProviderEditor({
               type="url"
               className="provider-editor-key-input"
               value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
+              onChange={(e) => {
+                setBaseUrl(e.target.value);
+                setTestState({ kind: "idle" });
+              }}
               placeholder={preset.baseUrl ?? "http://127.0.0.1:11434"}
             />
           </label>
@@ -249,6 +295,19 @@ export function ProviderEditor({
       {state.kind === "saved" ? (
         <p className="muted-copy">Saved ✓</p>
       ) : null}
+      {testState.kind === "testing" ? (
+        <p className="muted-copy">Testing connection…</p>
+      ) : null}
+      {testState.kind === "connected" ? (
+        <p className="muted-copy" role="status">
+          {testState.message}
+        </p>
+      ) : null}
+      {testState.kind === "error" ? (
+        <p className="settings-role-error" role="alert">
+          {testState.message}
+        </p>
+      ) : null}
 
       <div className="provider-editor-actions">
         {preset.authKind === "api-key" &&
@@ -263,14 +322,24 @@ export function ProviderEditor({
           </button>
         ) : null}
         {canEditConfig ? (
-          <button
-            type="button"
-            className="settings-action is-primary"
-            disabled={state.kind === "validating" || !baseUrl.trim()}
-            onClick={() => void handleSaveConfig()}
-          >
-            Save
-          </button>
+          <>
+            <button
+              type="button"
+              className="settings-action is-primary"
+              disabled={state.kind === "validating" || !baseUrl.trim()}
+              onClick={() => void handleSaveConfig()}
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              className="settings-action"
+              disabled={testState.kind === "testing" || !baseUrl.trim()}
+              onClick={() => void handleTestConfig()}
+            >
+              Test
+            </button>
+          </>
         ) : null}
         {hasSecret ? (
           <button
@@ -300,4 +369,8 @@ export function ProviderEditor({
       ) : null}
     </div>
   );
+}
+
+function formatModelCount(count: number): string {
+  return `${count} ${count === 1 ? "model" : "models"}`;
 }

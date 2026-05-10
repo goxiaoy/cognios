@@ -146,3 +146,12 @@ export interface StartChatTurnResult {
 export interface GetChatModelsResult {
   models: import("./search").SidecarEnvelope<ChatModelsResponse>;
 }
+
+export interface TestChatProviderInput {
+  providerId: string;
+  baseUrl?: string | null;
+}
+
+export interface TestChatProviderResult {
+  result: import("./search").SidecarEnvelope<ChatModelsResponse>;
+}

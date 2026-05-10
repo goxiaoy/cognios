@@ -83,6 +83,78 @@ describe("ProviderEditor", () => {
     expect(onSettingsChange).toHaveBeenCalled();
   });
 
+  it("tests configurable local provider connectivity without saving", async () => {
+    const testChatProvider = vi.fn().mockResolvedValue({
+      result: {
+        state: "ready",
+        data: {
+          state: "ready",
+          providerId: "local-ollama",
+          models: [{ id: "qwen2.5:7b", name: "qwen2.5:7b" }],
+          cached: false,
+          cacheExpiresAt: null,
+          warnings: [],
+        },
+      },
+    });
+    render(
+      <ProviderEditor
+        preset={LOCAL_OLLAMA}
+        config={null}
+        settings={baseSettings()}
+        client={makeStubSearchClient({ testChatProvider })}
+        onSettingsChange={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText(/base url/i), {
+      target: { value: "http://localhost:11435" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^test$/i }));
+
+    await waitFor(() => {
+      expect(testChatProvider).toHaveBeenCalledWith({
+        providerId: "local-ollama",
+        baseUrl: "http://localhost:11435",
+      });
+    });
+    expect(await screen.findByText(/connected\. found 1 model/i)).toBeInTheDocument();
+  });
+
+  it("surfaces configurable local provider test failures", async () => {
+    render(
+      <ProviderEditor
+        preset={LOCAL_OLLAMA}
+        config={null}
+        settings={baseSettings()}
+        client={makeStubSearchClient({
+          testChatProvider: vi.fn().mockResolvedValue({
+            result: {
+              state: "ready",
+              data: {
+                state: "provider_error",
+                providerId: "local-ollama",
+                models: [],
+                cached: false,
+                cacheExpiresAt: null,
+                warnings: ["local-ollama: local runtime unreachable"],
+              },
+            },
+          }),
+        })}
+        onSettingsChange={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^test$/i }));
+
+    expect(
+      await screen.findByText(/local runtime unreachable/i)
+    ).toBeInTheDocument();
+  });
+
   it("shows API key input when cloud provider has no key configured", async () => {
     render(
       <ProviderEditor

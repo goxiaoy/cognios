@@ -11,8 +11,8 @@ use crate::infrastructure::db::chat_repository::{
 };
 use crate::services::chat::live_note::update_live_note;
 use crate::services::search::{
-    ChatModelsResponseDto, ChatTurnMessageDto, ChatTurnRequestDto, ChatTurnResponseDto,
-    SidecarEnvelope, SidecarEnvelopeState,
+    ChatModelsResponseDto, ChatProviderTestRequestDto, ChatTurnMessageDto, ChatTurnRequestDto,
+    ChatTurnResponseDto, SidecarEnvelope, SidecarEnvelopeState,
 };
 use crate::AppState;
 
@@ -45,6 +45,20 @@ pub struct StartChatTurnResult {
 #[serde(rename_all = "camelCase")]
 pub struct GetChatModelsResult {
     pub models: SidecarEnvelope<ChatModelsResponseDto>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestChatProviderInput {
+    pub provider_id: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestChatProviderResult {
+    pub result: SidecarEnvelope<ChatModelsResponseDto>,
 }
 
 #[tauri::command]
@@ -191,6 +205,22 @@ pub async fn start_chat_turn(
 pub async fn get_chat_models(state: State<'_, AppState>) -> Result<GetChatModelsResult, String> {
     Ok(GetChatModelsResult {
         models: state.search_client.chat_models().await,
+    })
+}
+
+#[tauri::command]
+pub async fn test_chat_provider(
+    state: State<'_, AppState>,
+    input: TestChatProviderInput,
+) -> Result<TestChatProviderResult, String> {
+    Ok(TestChatProviderResult {
+        result: state
+            .search_client
+            .chat_provider_test(&ChatProviderTestRequestDto {
+                provider_id: input.provider_id,
+                base_url: input.base_url,
+            })
+            .await,
     })
 }
 

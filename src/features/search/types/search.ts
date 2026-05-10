@@ -1,4 +1,8 @@
 import type {
+  TestChatProviderInput,
+  TestChatProviderResult,
+} from "../../../lib/contracts/chat";
+import type {
   IndexStatus,
   ModelDownloadEvent,
   ModelsStatus,
@@ -67,4 +71,6 @@ export interface SearchClient {
   hasProviderSecret(input: ProviderSecretLookupInput): Promise<boolean>;
   /** Remove a provider's secret from the keychain. Idempotent. */
   deleteProviderSecret(input: ProviderSecretLookupInput): Promise<void>;
+  /** Probe a chat provider endpoint without persisting settings. */
+  testChatProvider(input: TestChatProviderInput): Promise<TestChatProviderResult>;
 }

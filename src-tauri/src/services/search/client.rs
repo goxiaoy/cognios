@@ -420,6 +420,14 @@ pub struct ChatTurnMessageDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ChatProviderTestRequestDto {
+    pub provider_id: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct ChatTurnSourceDto {
     pub source_id: String,
@@ -719,6 +727,13 @@ impl SearchSidecarClient {
 
     pub async fn chat_models(&self) -> SidecarEnvelope<ChatModelsResponseDto> {
         self.get_envelope("/chat/models").await
+    }
+
+    pub async fn chat_provider_test(
+        &self,
+        body: &ChatProviderTestRequestDto,
+    ) -> SidecarEnvelope<ChatModelsResponseDto> {
+        self.post_envelope("/chat/providers/test", body).await
     }
 
     /// Subscribe to the SSE stream from `POST /models/download/{role}`.

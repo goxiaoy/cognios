@@ -75,6 +75,9 @@ vi.mock("../lib/tauri/ipc", () => ({
   bindChatNote: vi.fn(),
   startChatTurn: vi.fn().mockResolvedValue({ turn: { state: "initialising" } }),
   getChatModels: vi.fn().mockResolvedValue({ models: { state: "initialising" } }),
+  testChatProvider: vi.fn().mockResolvedValue({
+    result: { state: "initialising" },
+  }),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({

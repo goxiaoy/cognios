@@ -11,6 +11,7 @@ import {
   searchQuery,
   setProviderSecret,
   startModelDownload,
+  testChatProvider,
   updateSearchSettings,
 } from "../../../lib/tauri/ipc";
 import type { SearchClient } from "../types/search";
@@ -29,4 +30,5 @@ export const searchClient: SearchClient = {
   setProviderSecret,
   hasProviderSecret: getProviderSecretPresent,
   deleteProviderSecret,
+  testChatProvider,
 };

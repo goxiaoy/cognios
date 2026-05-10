@@ -122,23 +122,16 @@ export function ProviderEditorModal({
             onClose={onClose}
             onKeyPresenceChange={onKeyPresenceChange}
           />
-          <p className="provider-modal-privacy">
-            <span className="provider-modal-privacy-icon" aria-hidden="true" />
-            <span>
-              {preset.providerType === "local" ? (
-                <>
-                  <strong>Stays on this machine.</strong> Local providers run
-                  entirely on your hardware and never reach the internet.
-                </>
-              ) : (
-                <>
-                  <strong>Stays on this machine.</strong> Credentials are
-                  stored in the OS keychain. Outbound calls go directly from
-                  your device to the provider.
-                </>
-              )}
-            </span>
-          </p>
+          {preset.providerType === "cloud" ? (
+            <p className="provider-modal-privacy">
+              <span className="provider-modal-privacy-icon" aria-hidden="true" />
+              <span>
+                <strong>Stays on this machine.</strong> Credentials are stored
+                in the OS keychain. Outbound calls go directly from your device
+                to the provider.
+              </span>
+            </p>
+          ) : null}
         </div>
       </div>
     </div>

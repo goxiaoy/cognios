@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..chat.orchestrator import ChatOrchestrator, ChatTurnRequest
+from ..chat.ollama import OllamaChatProvider
 from ..chat.types import ChatMessage, ChatProviderError
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -22,6 +23,11 @@ class ChatTurnPayload(BaseModel):
     accepted_cluster_ids: list[str] = Field(default_factory=list)
     include_web: bool = True
     model: str | None = None
+
+
+class ChatProviderTestPayload(BaseModel):
+    provider_id: str
+    base_url: str | None = None
 
 
 def _get_orchestrator(request: Request) -> ChatOrchestrator:
@@ -55,6 +61,41 @@ def get_chat_models(request: Request) -> dict:
             "cached": False,
             "warnings": ["chat provider unavailable"],
         }
+    return {
+        "state": "ready",
+        "provider_id": result.provider_id,
+        "models": [model.__dict__ for model in result.models],
+        "cached": result.cached,
+        "cache_expires_at": result.cache_expires_at,
+        "warnings": [],
+    }
+
+
+@router.post("/providers/test")
+def post_chat_provider_test(body: ChatProviderTestPayload) -> dict:
+    if body.provider_id != "local-ollama":
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported chat provider test: {body.provider_id}",
+        )
+
+    provider = OllamaChatProvider(
+        base_url=(body.base_url or "http://127.0.0.1:11434").strip()
+        or "http://127.0.0.1:11434"
+    )
+    try:
+        result = provider.list_models()
+    except ChatProviderError as err:
+        return {
+            "state": "provider_error",
+            "provider_id": body.provider_id,
+            "models": [],
+            "cached": False,
+            "warnings": [str(err)],
+        }
+    finally:
+        provider.close()
+
     return {
         "state": "ready",
         "provider_id": result.provider_id,
