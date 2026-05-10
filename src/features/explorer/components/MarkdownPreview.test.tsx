@@ -84,6 +84,29 @@ describe("MarkdownPreview", () => {
     expect(screen.queryByRole("heading", { level: 1, name: "Hello world" })).toBeNull();
   });
 
+  it("opens plain text files directly in source mode without markdown rendering", async () => {
+    const client = makeClient({
+      readFileContent: vi.fn().mockResolvedValue("**plain text**\nsecond line"),
+    });
+
+    const { container } = render(
+      <MarkdownPreview
+        client={client}
+        name="notes.txt"
+        nodeId="node-1"
+      />
+    );
+
+    expect(client.readFileContent).toHaveBeenCalledWith("node-1");
+    expect(screen.queryByRole("tab", { name: /^preview$/i })).toBeNull();
+
+    await waitFor(() => {
+      const cm = container.querySelector(".cm-content");
+      expect(cm?.textContent).toContain("**plain text**");
+    });
+    expect(container.querySelector(".markdown-preview-rendered")).toBeNull();
+  });
+
   it("renders inline HTML in preview mode (rehype-raw)", async () => {
     const client = makeClient({
       readFileContent: vi

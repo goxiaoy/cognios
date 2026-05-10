@@ -69,6 +69,16 @@ fn reads_mdx_file_contents() {
 }
 
 #[test]
+fn reads_plain_text_file_contents() {
+    let (_app, _mount, conn, mount_id) = setup_mount_with_files(&[("notes.txt", b"plain text")]);
+    let node_id = find_child_id(&conn, &mount_id, "notes.txt");
+
+    let content = read_file_content(&conn, &node_id).expect("read");
+
+    assert_eq!(content, "plain text");
+}
+
+#[test]
 fn empty_md_file_returns_empty_string() {
     let (_app, _mount, conn, mount_id) = setup_mount_with_files(&[("empty.md", b"")]);
     let node_id = find_child_id(&conn, &mount_id, "empty.md");
@@ -123,9 +133,9 @@ fn rejects_non_file_nodes() {
 }
 
 #[test]
-fn rejects_non_markdown_extension() {
-    let (_app, _mount, conn, mount_id) = setup_mount_with_files(&[("notes.txt", b"plain text")]);
-    let node_id = find_child_id(&conn, &mount_id, "notes.txt");
+fn rejects_unsupported_extension() {
+    let (_app, _mount, conn, mount_id) = setup_mount_with_files(&[("archive.bin", b"plain text")]);
+    let node_id = find_child_id(&conn, &mount_id, "archive.bin");
 
     let error = read_file_content(&conn, &node_id).expect_err("rejected");
 
@@ -214,8 +224,8 @@ fn returns_file_unavailable_for_non_utf8_contents() {
 #[test]
 fn error_strings_do_not_leak_filesystem_paths() {
     // Regression guard against the get_note_content anti-pattern of returning e.to_string().
-    let (_app, _mount, conn, mount_id) = setup_mount_with_files(&[("notes.txt", b"x")]);
-    let node_id = find_child_id(&conn, &mount_id, "notes.txt");
+    let (_app, _mount, conn, mount_id) = setup_mount_with_files(&[("archive.bin", b"x")]);
+    let node_id = find_child_id(&conn, &mount_id, "archive.bin");
 
     let error = read_file_content(&conn, &node_id).expect_err("rejected");
 
