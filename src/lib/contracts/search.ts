@@ -94,6 +94,10 @@ export interface SearchObservability {
   }>;
 }
 
+export interface SearchObservabilityInput {
+  recentDays: 7 | 30;
+}
+
 export type NodeIndexState =
   | "pending"
   | "indexing"

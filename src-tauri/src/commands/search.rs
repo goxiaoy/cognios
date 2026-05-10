@@ -40,6 +40,12 @@ pub struct StartModelDownloadInput {
     pub role: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchObservabilityInput {
+    pub recent_days: u32,
+}
+
 /// Tauri event channel the frontend listens on for download progress.
 /// One event per parsed SSE frame from the sidecar; frontends drive a
 /// progress indicator by aggregating events keyed on ``role``.
@@ -73,8 +79,12 @@ pub async fn get_indexing_status(state: State<'_, AppState>) -> EnvelopeResult<I
 #[tauri::command]
 pub async fn get_search_observability(
     state: State<'_, AppState>,
+    input: SearchObservabilityInput,
 ) -> EnvelopeResult<SearchObservabilityDto> {
-    Ok(state.search_client.observability_summary().await)
+    Ok(state
+        .search_client
+        .observability_summary(input.recent_days)
+        .await)
 }
 
 #[tauri::command]

@@ -25,6 +25,8 @@ import { useModelDownloadProgress } from "../../settings/hooks/useModelDownloadP
 import { useSearchSubsystemStatus } from "../../settings/hooks/useSearchSubsystemStatus";
 
 const POLL_INTERVAL_MS = 5_000;
+const RECENT_INDEX_WINDOWS = [7, 30] as const;
+type RecentIndexWindow = (typeof RECENT_INDEX_WINDOWS)[number];
 
 export function HomeDashboard({ client }: { client: SearchClient }) {
   const { models, indexing } = useSearchSubsystemStatus(client);
@@ -33,6 +35,8 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [observability, setObservability] =
     useState<SidecarEnvelope<SearchObservability> | null>(null);
+  const [recentIndexDays, setRecentIndexDays] =
+    useState<RecentIndexWindow>(30);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,7 +69,7 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
     let timer: ReturnType<typeof setTimeout> | null = null;
     async function poll() {
       try {
-        const env = await client.observability();
+        const env = await client.observability({ recentDays: recentIndexDays });
         if (!cancelled) setObservability(env);
       } catch {
         if (!cancelled) {
@@ -84,7 +88,7 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [client]);
+  }, [client, recentIndexDays]);
 
   const indexData = readyData(indexing);
   const modelData = readyData(models);
@@ -147,9 +151,28 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
 
       <div className="home-main-grid">
         <section className="home-section home-activity">
-          <header className="home-section-head">
-            <h2>Recent indexing</h2>
-            <span>{sumIndexed(observabilityData).toLocaleString()} nodes</span>
+          <header className="home-section-head home-section-head--with-control">
+            <div>
+              <h2>Recent indexing</h2>
+              <span>{sumIndexed(observabilityData).toLocaleString()} nodes</span>
+            </div>
+            <div
+              className="home-window-toggle"
+              role="group"
+              aria-label="Recent indexing range"
+            >
+              {RECENT_INDEX_WINDOWS.map((days) => (
+                <button
+                  key={days}
+                  type="button"
+                  className="home-window-toggle-button"
+                  aria-pressed={recentIndexDays === days}
+                  onClick={() => setRecentIndexDays(days)}
+                >
+                  {days}d
+                </button>
+              ))}
+            </div>
           </header>
           <ActivityHeatmap days={observabilityData?.recentIndexedNodes ?? []} />
         </section>

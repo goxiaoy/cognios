@@ -801,8 +801,12 @@ impl SearchSidecarClient {
         self.get_envelope("/index/status").await
     }
 
-    pub async fn observability_summary(&self) -> SidecarEnvelope<SearchObservabilityDto> {
-        self.get_envelope("/observability/summary").await
+    pub async fn observability_summary(
+        &self,
+        recent_days: u32,
+    ) -> SidecarEnvelope<SearchObservabilityDto> {
+        self.get_envelope(&format!("/observability/summary?recent_days={recent_days}"))
+            .await
     }
 
     pub async fn set_indexing_paused(&self, paused: bool) -> SidecarEnvelope<RunnerPauseResultDto> {
@@ -1247,8 +1251,7 @@ mod tests {
                 "total_tokens": 18
             }]
         }"#;
-        let parsed: SearchObservabilityDto =
-            serde_json::from_str(from_python).expect("decode");
+        let parsed: SearchObservabilityDto = serde_json::from_str(from_python).expect("decode");
         assert_eq!(parsed.recent_indexed_nodes[0].count, 4);
         assert_eq!(parsed.latency.search.p90_ms, Some(20));
         assert_eq!(parsed.token_usage[0].provider_id, "local-ollama");

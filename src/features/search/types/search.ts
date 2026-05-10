@@ -11,6 +11,7 @@ import type {
   NodeIndexStatus,
   ProviderSecretLookupInput,
   SearchObservability,
+  SearchObservabilityInput,
   SearchQueryInput,
   SearchResponse,
   SearchResult,
@@ -30,6 +31,7 @@ export type {
   NodeIndexStatus,
   ProviderSecretLookupInput,
   SearchObservability,
+  SearchObservabilityInput,
   SearchQueryInput,
   SearchResponse,
   SearchResult,
@@ -48,7 +50,9 @@ export type {
 export interface SearchClient {
   search(input: SearchQueryInput): Promise<SidecarEnvelope<SearchResponse>>;
   indexStatus(): Promise<SidecarEnvelope<IndexStatus>>;
-  observability(): Promise<SidecarEnvelope<SearchObservability>>;
+  observability(
+    input: SearchObservabilityInput
+  ): Promise<SidecarEnvelope<SearchObservability>>;
   nodeIndexStatus(nodeId: string): Promise<SidecarEnvelope<NodeIndexStatus>>;
   nodeContent(nodeId: string): Promise<SidecarEnvelope<NodeContent>>;
   modelsStatus(): Promise<SidecarEnvelope<ModelsStatus>>;

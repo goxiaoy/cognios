@@ -1,5 +1,11 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HomeDashboard } from "./HomeDashboard";
 import type { SearchClient } from "../../search/types/search";
@@ -7,6 +13,10 @@ import type { SearchClient } from "../../search/types/search";
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => Promise.resolve()),
 }));
+
+afterEach(() => {
+  cleanup();
+});
 
 function makeClient(): SearchClient {
   return {
@@ -87,7 +97,8 @@ function makeClient(): SearchClient {
 
 describe("HomeDashboard", () => {
   it("renders current status, activity, latency, and token usage", async () => {
-    render(<HomeDashboard client={makeClient()} />);
+    const client = makeClient();
+    render(<HomeDashboard client={client} />);
 
     expect(await screen.findByText("Indexed items")).toBeInTheDocument();
     expect(screen.getByText("1,234")).toBeInTheDocument();
@@ -99,5 +110,25 @@ describe("HomeDashboard", () => {
       expect(screen.getByText("llama3")).toBeInTheDocument();
       expect(screen.getByText("20")).toBeInTheDocument();
     });
+    expect(client.observability).toHaveBeenCalledWith({ recentDays: 30 });
+  });
+
+  it("reloads recent indexing when the range changes", async () => {
+    const client = makeClient();
+    render(<HomeDashboard client={client} />);
+
+    await waitFor(() => {
+      expect(client.observability).toHaveBeenCalledWith({ recentDays: 30 });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "7d" }));
+
+    await waitFor(() => {
+      expect(client.observability).toHaveBeenCalledWith({ recentDays: 7 });
+    });
+    expect(screen.getByRole("button", { name: "7d" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
   });
 });

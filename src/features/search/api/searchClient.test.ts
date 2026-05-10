@@ -96,8 +96,10 @@ describe("searchClient.observability", () => {
     };
     mockedInvoke.mockResolvedValueOnce(env);
 
-    const result = await searchClient.observability();
-    expect(mockedInvoke).toHaveBeenCalledWith("get_search_observability");
+    const result = await searchClient.observability({ recentDays: 7 });
+    expect(mockedInvoke).toHaveBeenCalledWith("get_search_observability", {
+      input: { recentDays: 7 },
+    });
     expect(result.data?.recentIndexedNodes[0].count).toBe(3);
   });
 });

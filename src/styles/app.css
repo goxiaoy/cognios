@@ -6840,6 +6840,10 @@ button.chat-context-toggle:not(:disabled):hover {
   gap: 0.75rem;
 }
 
+.home-section-head--with-control {
+  align-items: center;
+}
+
 .home-section-head h2 {
   color: var(--ink);
   font: 650 0.95rem var(--font-heading);
@@ -6848,6 +6852,33 @@ button.chat-context-toggle:not(:disabled):hover {
 .home-section-head span {
   font-size: 0.75rem;
   white-space: nowrap;
+}
+
+.home-window-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 0.15rem;
+  border: 1px solid var(--line);
+  background: var(--paper-2);
+  border-radius: var(--radius-sm);
+}
+
+.home-window-toggle-button {
+  min-width: 2.4rem;
+  height: 1.65rem;
+  padding: 0 0.55rem;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  border-radius: calc(var(--radius-sm) - 2px);
+  font: 650 0.72rem var(--font-body);
+  cursor: pointer;
+}
+
+.home-window-toggle-button[aria-pressed="true"] {
+  color: var(--ink);
+  background: var(--paper);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
 .home-heatmap {

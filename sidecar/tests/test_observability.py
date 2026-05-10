@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from search_sidecar.app import build_app
+from search_sidecar.index.queue import open_queue
 from search_sidecar.observability import ObservabilityStore
 
 TOKEN = "0" * 64
@@ -57,3 +60,31 @@ def test_observability_summary_reports_percentiles_and_usage():
         }
     ]
 
+
+def test_observability_summary_supports_recent_day_windows(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        queue.enqueue(node_id="aaa", kind="note", name="A")
+        queue.claim_next()
+        queue.mark_indexed("aaa")
+        app = build_app(token=TOKEN, indexing_queue=queue)
+
+        with TestClient(app) as client:
+            seven = client.get(
+                "/observability/summary?recent_days=7", headers=_auth()
+            )
+            thirty = client.get(
+                "/observability/summary?recent_days=30", headers=_auth()
+            )
+            invalid = client.get(
+                "/observability/summary?recent_days=14", headers=_auth()
+            )
+
+        assert seven.status_code == 200
+        assert len(seven.json()["recent_indexed_nodes"]) == 7
+        assert seven.json()["recent_indexed_nodes"][-1]["count"] >= 1
+        assert thirty.status_code == 200
+        assert len(thirty.json()["recent_indexed_nodes"]) == 30
+        assert invalid.status_code == 422
+    finally:
+        queue.close()
