@@ -294,6 +294,51 @@ describe("ChatLayout", () => {
     });
   });
 
+  it("renders assistant replies as markdown", async () => {
+    const client = makeClient();
+    const session = {
+      id: "s1",
+      title: "事故复盘",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    vi.mocked(client.listSessions).mockResolvedValue([session]);
+    vi.mocked(client.getSession).mockResolvedValue({
+      session,
+      messages: [
+        {
+          id: "m1",
+          sessionId: "s1",
+          role: "user",
+          body: "**这个不应该加粗**",
+          ordinal: 0,
+          metadataJson: "{}",
+          createdAt: "now",
+        },
+        {
+          id: "m2",
+          sessionId: "s1",
+          role: "assistant",
+          body: "### 事故时间线\n\n- **3 月 1 日**：事故发生\n\n<script>alert('x')</script>",
+          ordinal: 1,
+          metadataJson: "{}",
+          createdAt: "now",
+        },
+      ],
+      clusters: [],
+    });
+
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    expect(await screen.findByRole("heading", { name: "事故时间线", level: 3 })).toBeInTheDocument();
+    expect(screen.getByText("3 月 1 日")).toHaveProperty("tagName", "STRONG");
+    expect(screen.getByText(/事故发生/).closest("li")).toBeInTheDocument();
+    expect(screen.getByText("**这个不应该加粗**")).toBeInTheDocument();
+    expect(document.querySelector(".chat-message.is-user strong")).toBeNull();
+    expect(document.querySelector(".chat-message.is-assistant script")).toBeNull();
+  });
+
   it("scrolls to the latest chat content while a turn streams", async () => {
     const client = makeClient();
     let resolveTurn: ((value: Awaited<ReturnType<ChatClient["startTurn"]>>) => void) | null = null;

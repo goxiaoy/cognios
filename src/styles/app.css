@@ -5873,6 +5873,111 @@ button.chat-session-item:not(:disabled):hover {
   white-space: pre-wrap;
 }
 
+.chat-message-markdown {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  line-height: 1.65;
+  white-space: normal;
+}
+
+.chat-message-markdown > :first-child {
+  margin-top: 0;
+}
+
+.chat-message-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-message-markdown p {
+  margin: 0 0 0.75em;
+}
+
+.chat-message-markdown h1,
+.chat-message-markdown h2,
+.chat-message-markdown h3,
+.chat-message-markdown h4,
+.chat-message-markdown h5,
+.chat-message-markdown h6 {
+  margin: 1em 0 0.45em;
+  color: var(--ink);
+  font-family: var(--font-heading);
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.chat-message-markdown h1 {
+  font-size: 1.2rem;
+}
+
+.chat-message-markdown h2 {
+  font-size: 1.05rem;
+}
+
+.chat-message-markdown h3,
+.chat-message-markdown h4,
+.chat-message-markdown h5,
+.chat-message-markdown h6 {
+  font-size: 0.95rem;
+}
+
+.chat-message-markdown ul,
+.chat-message-markdown ol {
+  margin: 0.45em 0 0.75em;
+  padding-left: 1.35em;
+}
+
+.chat-message-markdown li {
+  margin: 0.2em 0;
+}
+
+.chat-message-markdown code {
+  padding: 0.1em 0.32em;
+  border-radius: 4px;
+  background: var(--paper-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+.chat-message-markdown pre {
+  max-width: 100%;
+  margin: 0.75em 0;
+  overflow-x: auto;
+  border: 1px solid var(--line-2);
+  background: var(--paper-2);
+  border-radius: var(--radius-sm);
+  padding: 0.8rem 0.9rem;
+}
+
+.chat-message-markdown pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 1em;
+}
+
+.chat-message-markdown blockquote {
+  margin: 0.75em 0;
+  padding: 0.15em 0 0.15em 0.85em;
+  border-left: 3px solid var(--line);
+  color: var(--ink-2);
+}
+
+.chat-message-markdown a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.chat-message-markdown a:hover {
+  text-decoration: underline;
+}
+
+.chat-message-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .chat-message-role {
   margin: 0 0 0.35rem;
   color: var(--muted);

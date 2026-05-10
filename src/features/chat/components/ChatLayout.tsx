@@ -23,6 +23,7 @@ import {
 
 import type {
   ChatContextNode,
+  ChatMessageRole,
   ChatSession,
   ChatSessionDetail,
   ChatModel,
@@ -30,6 +31,7 @@ import type {
   ChatTurnStreamPayload,
 } from "../../../lib/contracts/chat";
 import { unwrapEnvelope } from "../../../lib/contracts/search";
+import { MarkdownRenderer } from "../../explorer/components/MarkdownRenderer";
 import { SearchPalette, type SearchPaletteSelection } from "../../search/components/SearchPalette";
 import type { SearchClient } from "../../search/types/search";
 import type { ChatClient } from "../api/chatClient";
@@ -452,17 +454,17 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
           {transcript.map((message) => (
             <article key={message.id} className={`chat-message is-${message.role}`}>
               {message.role === "system" ? <p className="chat-message-role">{message.role}</p> : null}
-              <p className="chat-message-body">{message.body}</p>
+              <ChatMessageBody role={message.role} body={message.body} />
             </article>
           ))}
           {optimisticTranscript.map((message) => (
             <article key={message.id} className="chat-message is-user">
-              <p className="chat-message-body">{message.body}</p>
+              <ChatMessageBody role="user" body={message.body} />
             </article>
           ))}
           {showTransientAnswer ? (
             <article className="chat-message is-assistant">
-              <p className="chat-message-body">{turn?.answer}</p>
+              <ChatMessageBody role="assistant" body={turn?.answer ?? ""} />
             </article>
           ) : null}
           <div ref={transcriptEndRef} className="chat-transcript-end" aria-hidden="true" />
@@ -595,6 +597,24 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
         </div>
       ) : null}
     </section>
+  );
+}
+
+function ChatMessageBody({
+  role,
+  body,
+}: {
+  role: ChatMessageRole;
+  body: string;
+}) {
+  if (role !== "assistant") {
+    return <p className="chat-message-body">{body}</p>;
+  }
+
+  return (
+    <div className="chat-message-body chat-message-markdown markdown-body">
+      <MarkdownRenderer allowHtml={false}>{body}</MarkdownRenderer>
+    </div>
   );
 }
 
