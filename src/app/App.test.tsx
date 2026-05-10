@@ -124,6 +124,11 @@ function clickTreeRow(name: string) {
   fireEvent.click(target);
 }
 
+async function openExplorer() {
+  fireEvent.click(screen.getByRole("button", { name: /^Explorer$/i }));
+  await screen.findByText(/select an item to preview/i);
+}
+
 describe("App", () => {
   beforeEach(() => {
     getExplorerSnapshot.mockReset();
@@ -158,30 +163,31 @@ describe("App", () => {
     cleanup();
   });
 
-  it("renders the welcome state with empty backend snapshot", async () => {
+  it("starts on the Home dashboard", async () => {
     getExplorerSnapshot.mockResolvedValue({ roots: [] });
 
     render(<App />);
+
+    expect(screen.getByRole("button", { name: /^Home$/i })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+    expect(await screen.findByText("Indexed items")).toBeInTheDocument();
+    expect(screen.getByText("Recent indexing")).toBeInTheDocument();
+  });
+
+  it("renders the Explorer welcome state from the Explorer navigation item", async () => {
+    getExplorerSnapshot.mockResolvedValue({ roots: [] });
+
+    render(<App />);
+
+    await openExplorer();
 
     expect(screen.getByRole("button", { name: /Explorer/i })).toHaveAttribute(
       "aria-current",
       "page"
     );
-    expect(await screen.findByText(/select an item to preview/i)).toBeInTheDocument();
-    // Inspector empty placeholder
     expect(screen.getByText("No selection")).toBeInTheDocument();
-  });
-
-  it("renders Home statistics from the Home navigation item", async () => {
-    getExplorerSnapshot.mockResolvedValue({ roots: [] });
-
-    render(<App />);
-
-    fireEvent.click(screen.getByRole("button", { name: /^Home$/i }));
-
-    expect(await screen.findByText("Indexed items")).toBeInTheDocument();
-    expect(screen.getByText("Recent indexing")).toBeInTheDocument();
-    expect(screen.queryByText(/stubbed in milestone/i)).not.toBeInTheDocument();
   });
 
   it("submits a new folder via the tree toolbar and renders it in the tree", async () => {
@@ -204,7 +210,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByText(/select an item to preview/i);
+    await openExplorer();
     fireEvent.click(screen.getByRole("menuitem", { name: /New Folder/i }));
 
     await waitFor(() => {
@@ -250,7 +256,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByText(/select an item to preview/i);
+    await openExplorer();
     fireEvent.click(screen.getByRole("menuitem", { name: /Mount Folder/i }));
 
     fireEvent.change(screen.getByPlaceholderText(/~\/projects\/example/i), {
@@ -288,7 +294,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByText(/select an item to preview/i);
+    await openExplorer();
     fireEvent.click(screen.getByRole("menuitem", { name: /Add URL/i }));
 
     fireEvent.change(screen.getByPlaceholderText(/https:\/\/example.com/i), {
@@ -338,6 +344,7 @@ describe("App", () => {
 
     render(<App />);
 
+    fireEvent.click(screen.getByRole("button", { name: /^Explorer$/i }));
     // Mount auto-expands; file row is visible immediately
     await screen.findByText("README.md");
     clickTreeRow("README.md");
@@ -371,6 +378,7 @@ describe("App", () => {
 
     render(<App />);
 
+    fireEvent.click(screen.getByRole("button", { name: /^Explorer$/i }));
     const urlText = await screen.findByText("https://example.com");
     clickTreeRow("https://example.com");
 
@@ -418,6 +426,7 @@ describe("App", () => {
 
     render(<App />);
 
+    fireEvent.click(screen.getByRole("button", { name: /^Explorer$/i }));
     await screen.findByText("data.bin");
     clickTreeRow("data.bin");
 
@@ -469,6 +478,7 @@ describe("App", () => {
 
     render(<App />);
 
+    fireEvent.click(screen.getByRole("button", { name: /^Explorer$/i }));
     await screen.findByText("docs");
     // child is hidden until folder is expanded
     expect(screen.queryByText("guide.md")).toBeNull();
@@ -497,6 +507,7 @@ describe("App", () => {
 
     render(<App />);
 
+    fireEvent.click(screen.getByRole("button", { name: /^Explorer$/i }));
     expect(await screen.findByText("Inbox")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Home$/i }));
     expect(await screen.findByText("Recent indexing")).toBeInTheDocument();

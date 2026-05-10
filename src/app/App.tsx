@@ -32,7 +32,7 @@ export function App() {
  * global keyboard binding can read store state without prop drilling.
  */
 function AppShell() {
-  const [activeSection, setActiveSection] = useState<AppSection>("explorer");
+  const [activeSection, setActiveSection] = useState<AppSection>("home");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const sectionLabel = SECTION_LABELS[activeSection];
 
