@@ -80,6 +80,7 @@ export interface LatencyTrendPoint {
   bucket: string;
   sampleCount: number;
   failureCount: number;
+  p50Ms?: number | null;
   p90Ms?: number | null;
   p99Ms?: number | null;
 }
@@ -109,7 +110,7 @@ export interface SearchObservability {
 }
 
 export interface SearchObservabilityInput {
-  recentDays: 7 | 30;
+  recentDays: 7 | 30 | 90;
 }
 
 export type NodeIndexState =

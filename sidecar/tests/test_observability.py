@@ -79,6 +79,9 @@ def test_observability_summary_supports_recent_day_windows(tmp_path: Path):
             thirty = client.get(
                 "/observability/summary?recent_days=30", headers=_auth()
             )
+            ninety = client.get(
+                "/observability/summary?recent_days=90", headers=_auth()
+            )
             invalid = client.get(
                 "/observability/summary?recent_days=14", headers=_auth()
             )
@@ -88,6 +91,8 @@ def test_observability_summary_supports_recent_day_windows(tmp_path: Path):
         assert seven.json()["recent_indexed_nodes"][-1]["count"] >= 1
         assert thirty.status_code == 200
         assert len(thirty.json()["recent_indexed_nodes"]) == 30
+        assert ninety.status_code == 200
+        assert len(ninety.json()["recent_indexed_nodes"]) == 90
         assert invalid.status_code == 422
     finally:
         queue.close()
@@ -112,6 +117,7 @@ def test_observability_store_persists_latency_samples(tmp_path: Path):
     assert summary["latency"]["search"]["p90_ms"] == 28
     assert len(summary["latency_trends"]["search"]) == 7
     assert summary["latency_trends"]["search"][-1]["sample_count"] == 2
+    assert summary["latency_trends"]["search"][-1]["p50_ms"] == 20
     assert summary["latency_trends"]["search"][-1]["p99_ms"] == 30
 
 

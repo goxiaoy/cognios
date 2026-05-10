@@ -6883,13 +6883,13 @@ button.chat-context-toggle:not(:disabled):hover {
 
 .home-heatmap {
   display: grid;
-  grid-template-columns: repeat(14, minmax(0.8rem, 1fr));
+  grid-template-columns: repeat(18, minmax(0.55rem, 1fr));
   gap: 0.28rem;
 }
 
 .home-heat-cell {
   aspect-ratio: 1;
-  min-width: 0.8rem;
+  min-width: 0.55rem;
   border: 1px solid var(--line);
   background: var(--paper-2);
   border-radius: 3px;
@@ -6911,106 +6911,48 @@ button.chat-context-toggle:not(:disabled):hover {
   background: #16794f;
 }
 
-.home-latency-list,
-.home-token-list,
-.home-download-list {
+.home-chart,
+.home-latency-panel,
+.home-download-panel {
   display: grid;
   gap: 0.55rem;
-}
-
-.home-latency-row,
-.home-token-row,
-.home-download-row {
   min-width: 0;
-  border: 1px solid var(--line);
-  background: var(--paper-2);
-  border-radius: var(--radius-sm);
 }
 
-.home-latency-row {
-  display: grid;
-  grid-template-columns:
-    minmax(6rem, 1fr)
-    repeat(3, minmax(4.1rem, auto))
-    minmax(4rem, 5rem)
-    minmax(4.1rem, auto);
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.58rem 0.65rem;
-  color: var(--muted);
-  font-size: 0.76rem;
+.home-chart {
+  height: min-content;
 }
 
-.home-row-label {
+.home-chart .recharts-surface {
+  overflow: visible;
+}
+
+.home-latency-legend,
+.home-download-meta {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.4rem;
-  min-width: 0;
-  color: var(--ink);
-  font-weight: 650;
-}
-
-.home-token-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.65rem;
-}
-
-.home-token-model {
-  color: var(--ink);
-  font-weight: 650;
-}
-
-.home-token-provider {
-  margin-top: 0.1rem;
+  color: var(--muted);
   font-size: 0.75rem;
 }
 
-.home-token-total {
-  display: grid;
-  justify-items: end;
-  color: var(--ink);
-  font-weight: 700;
+.home-latency-legend span,
+.home-download-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.22rem 0.4rem;
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
 }
 
-.home-token-total span {
-  color: var(--muted);
-  font-size: 0.7rem;
-  font-weight: 500;
-}
-
-.home-download-row {
-  display: grid;
-  gap: 0.45rem;
-  padding: 0.65rem;
-}
-
-.home-download-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-  color: var(--muted);
-  font-size: 0.76rem;
-}
-
-.home-download-meta span:first-child {
-  color: var(--ink);
-  font-weight: 650;
-}
-
-.home-progress {
-  height: 0.42rem;
-  overflow: hidden;
-  background: var(--line);
+.home-latency-legend i {
+  width: 0.45rem;
+  height: 0.45rem;
   border-radius: 999px;
-}
-
-.home-progress i {
-  display: block;
-  height: 100%;
-  background: var(--accent);
 }
 
 .home-empty {
@@ -7020,40 +6962,10 @@ button.chat-context-toggle:not(:disabled):hover {
   font-size: 0.78rem;
 }
 
-.home-latency-trend {
-  width: 4.5rem;
-  height: 1.25rem;
-  overflow: visible;
-}
-
-.home-latency-trend polyline {
-  fill: none;
-  stroke: var(--muted);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.35;
-  vector-effect: non-scaling-stroke;
-}
-
-.home-latency-trend polyline:first-child {
-  stroke: color-mix(in srgb, var(--accent) 42%, var(--muted));
-}
-
-.home-latency-trend-empty {
-  display: inline-grid;
-  place-items: center;
-  width: 4.5rem;
-  color: var(--muted);
-}
-
 @media (max-width: 980px) {
   .home-kpi-grid,
   .home-main-grid {
     grid-template-columns: 1fr;
-  }
-
-  .home-latency-row {
-    grid-template-columns: 1fr 1fr;
   }
 
   .chat-layout {

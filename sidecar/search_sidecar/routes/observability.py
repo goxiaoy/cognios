@@ -8,7 +8,7 @@ from ..index.queue import IndexingQueue
 from ..observability import ObservabilityStore
 
 router = APIRouter(prefix="/observability", tags=["observability"])
-RECENT_INDEX_DAYS = {7, 30}
+RECENT_INDEX_DAYS = {7, 30, 90}
 
 
 def _get_observability(request: Request) -> ObservabilityStore:
@@ -28,7 +28,7 @@ def _get_queue(request: Request) -> IndexingQueue | None:
 @router.get("/summary")
 def get_observability_summary(request: Request, recent_days: int = 30) -> dict:
     if recent_days not in RECENT_INDEX_DAYS:
-        raise HTTPException(status_code=422, detail="recent_days must be 7 or 30")
+        raise HTTPException(status_code=422, detail="recent_days must be 7, 30, or 90")
     queue = _get_queue(request)
     recent_indexed_nodes = (
         queue.recent_indexed_counts(days=recent_days) if queue is not None else []

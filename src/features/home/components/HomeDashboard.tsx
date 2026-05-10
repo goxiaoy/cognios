@@ -3,14 +3,21 @@ import {
   Activity,
   Boxes,
   Database,
-  Download,
-  Gauge,
-  Search,
 } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import type {
   IndexStatus,
-  LatencySummary,
   LatencyTrendPoint,
   ModelDownloadEvent,
   ModelsStatus,
@@ -22,8 +29,23 @@ import { useModelDownloadProgress } from "../../settings/hooks/useModelDownloadP
 import { useSearchSubsystemStatus } from "../../settings/hooks/useSearchSubsystemStatus";
 
 const POLL_INTERVAL_MS = 5_000;
-const RECENT_INDEX_WINDOWS = [7, 30] as const;
+const RECENT_INDEX_WINDOWS = [7, 30, 90] as const;
 type RecentIndexWindow = (typeof RECENT_INDEX_WINDOWS)[number];
+const LATENCY_METRICS = [
+  { key: "p99Ms", label: "P99" },
+  { key: "p90Ms", label: "P90" },
+  { key: "p50Ms", label: "P50" },
+] as const;
+type LatencyMetricKey = (typeof LATENCY_METRICS)[number]["key"];
+const CHART_ACCENT = "var(--accent)";
+const CHART_MUTED = "var(--muted)";
+const CHART_LINE = "var(--line)";
+const SERIES_COLORS = {
+  search: "#16794f",
+  indexing: "#3867b7",
+  enhancement: "#9a5a00",
+  modelDownload: "#7c3aed",
+};
 
 export function HomeDashboard({ client }: { client: SearchClient }) {
   const { models, indexing } = useSearchSubsystemStatus(client);
@@ -32,6 +54,9 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
     useState<SidecarEnvelope<SearchObservability> | null>(null);
   const [recentIndexDays, setRecentIndexDays] =
     useState<RecentIndexWindow>(30);
+  const [latencyMetric, setLatencyMetric] =
+    useState<LatencyMetricKey>("p99Ms");
+  const [downloadHistory, setDownloadHistory] = useState<DownloadHistoryPoint[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +95,16 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
       ),
     [progress]
   );
+
+  useEffect(() => {
+    if (activeDownloads.length === 0) {
+      setDownloadHistory([]);
+      return;
+    }
+    setDownloadHistory((history) =>
+      [...history, downloadSnapshot(activeDownloads)].slice(-24)
+    );
+  }, [activeDownloads]);
 
   return (
     <section className="home-dashboard" aria-label="Home statistics">
@@ -120,15 +155,37 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
               ))}
             </div>
           </header>
-          <ActivityHeatmap days={observabilityData?.recentIndexedNodes ?? []} />
+          <ActivityChart
+            days={observabilityData?.recentIndexedNodes ?? []}
+            windowDays={recentIndexDays}
+          />
         </section>
 
         <section className="home-section">
-          <header className="home-section-head">
-            <h2>Latency</h2>
-            <span>{observabilityData ? "recent samples" : statusCopy(observability)}</span>
+          <header className="home-section-head home-section-head--with-control">
+            <div>
+              <h2>Latency</h2>
+              <span>{observabilityData ? "recent samples" : statusCopy(observability)}</span>
+            </div>
+            <div
+              className="home-window-toggle"
+              role="group"
+              aria-label="Latency percentile"
+            >
+              {LATENCY_METRICS.map((metric) => (
+                <button
+                  key={metric.key}
+                  type="button"
+                  className="home-window-toggle-button"
+                  aria-pressed={latencyMetric === metric.key}
+                  onClick={() => setLatencyMetric(metric.key)}
+                >
+                  {metric.label}
+                </button>
+              ))}
+            </div>
           </header>
-          <LatencyRows observability={observabilityData} />
+          <LatencyChart observability={observabilityData} metric={latencyMetric} />
         </section>
 
         <section className="home-section">
@@ -144,7 +201,7 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
             <h2>Downloads</h2>
             <span>{activeDownloads.length} active</span>
           </header>
-          <DownloadRows downloads={activeDownloads} />
+          <DownloadChart downloads={activeDownloads} history={downloadHistory} />
         </section>
       </div>
     </section>
@@ -176,10 +233,57 @@ function StatTile({
   );
 }
 
-function ActivityHeatmap({ days }: { days: SearchObservability["recentIndexedNodes"] }) {
+function ActivityChart({
+  days,
+  windowDays,
+}: {
+  days: SearchObservability["recentIndexedNodes"];
+  windowDays: RecentIndexWindow;
+}) {
   if (days.length === 0) {
     return <p className="home-empty">No recent indexed nodes.</p>;
   }
+  if (windowDays === 90) {
+    return <ActivityHeatmap days={days} />;
+  }
+  const data = days.map((day) => ({
+    date: day.date,
+    label: compactDate(day.date),
+    count: day.count,
+  }));
+  return (
+    <div className="home-chart" role="img" aria-label="Recent indexed nodes bar chart">
+      <ResponsiveContainer width="100%" height={150}>
+        <BarChart data={data} margin={{ top: 6, right: 4, bottom: 0, left: -18 }}>
+          <CartesianGrid stroke={CHART_LINE} strokeDasharray="3 3" vertical={false} />
+          <XAxis
+            dataKey="label"
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: CHART_MUTED, fontSize: 10 }}
+            interval={windowDays === 7 ? 0 : 4}
+          />
+          <YAxis
+            allowDecimals={false}
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: CHART_MUTED, fontSize: 10 }}
+            width={34}
+          />
+          <Tooltip
+            cursor={{ fill: "rgba(22, 121, 79, 0.08)" }}
+            contentStyle={tooltipStyle()}
+            labelFormatter={(_label, payload) => payload?.[0]?.payload?.date ?? ""}
+            formatter={(value) => [`${Number(value).toLocaleString()} nodes`, "Indexed"]}
+          />
+          <Bar dataKey="count" fill={CHART_ACCENT} radius={[3, 3, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function ActivityHeatmap({ days }: { days: SearchObservability["recentIndexedNodes"] }) {
   const max = Math.max(...days.map((day) => day.count), 1);
   return (
     <div className="home-heatmap" aria-label="Recent indexed nodes by day">
@@ -195,88 +299,64 @@ function ActivityHeatmap({ days }: { days: SearchObservability["recentIndexedNod
   );
 }
 
-function LatencyRows({
+function LatencyChart({
   observability,
+  metric,
 }: {
   observability: SearchObservability | null;
+  metric: LatencyMetricKey;
 }) {
-  const rows: Array<[string, LatencySummary, ReactNode, LatencyTrendPoint[]]> | null =
-    observability
-      ? [
-          [
-            "Search",
-            observability.latency.search,
-            <Search size={14} aria-hidden="true" />,
-            observability.latencyTrends?.search ?? [],
-          ],
-          [
-            "Index",
-            observability.latency.indexing,
-            <Gauge size={14} aria-hidden="true" />,
-            observability.latencyTrends?.indexing ?? [],
-          ],
-          [
-            "OCR",
-            observability.latency.enhancement,
-            <Activity size={14} aria-hidden="true" />,
-            observability.latencyTrends?.enhancement ?? [],
-          ],
-          [
-            "Model download",
-            observability.latency.modelDownload,
-            <Download size={14} aria-hidden="true" />,
-            observability.latencyTrends?.modelDownload ?? [],
-          ],
-        ]
-      : null;
-  if (!rows) return <p className="home-empty">Latency unavailable.</p>;
+  if (!observability) return <p className="home-empty">Latency unavailable.</p>;
+  const data = latencyChartData(observability, metric);
+  const hasTrend = data.some((point) =>
+    ["search", "indexing", "enhancement", "modelDownload"].some(
+      (key) => typeof point[key] === "number"
+    )
+  );
   return (
-    <div className="home-latency-list">
-      {rows.map(([label, summary, icon, trend]) => (
-        <div className="home-latency-row" key={label}>
-          <span className="home-row-label">
-            {icon}
-            {label}
-          </span>
-          <span>P50 {formatMs(summary.p50Ms)}</span>
-          <span>P90 {formatMs(summary.p90Ms)}</span>
-          <span>P99 {formatMs(summary.p99Ms)}</span>
-          <LatencySparkline label={label} points={trend} />
-          <span>{summary.sampleCount} samples</span>
+    <div className="home-latency-panel">
+      {hasTrend ? (
+        <div className="home-chart" role="img" aria-label={`${metricLabel(metric)} latency line chart`}>
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+              <CartesianGrid stroke={CHART_LINE} strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="label"
+                axisLine={false}
+                tickLine={false}
+                tick={{ fill: CHART_MUTED, fontSize: 10 }}
+                minTickGap={18}
+              />
+              <YAxis
+                axisLine={false}
+                tickLine={false}
+                tick={{ fill: CHART_MUTED, fontSize: 10 }}
+                tickFormatter={(value) => formatMs(Number(value))}
+                width={42}
+              />
+              <Tooltip
+                contentStyle={tooltipStyle()}
+                formatter={(value, name) => [formatMs(Number(value)), latencySeriesLabel(String(name))]}
+              />
+              <Line type="monotone" dataKey="search" stroke={SERIES_COLORS.search} strokeWidth={2} dot={false} connectNulls />
+              <Line type="monotone" dataKey="indexing" stroke={SERIES_COLORS.indexing} strokeWidth={2} dot={false} connectNulls />
+              <Line type="monotone" dataKey="enhancement" stroke={SERIES_COLORS.enhancement} strokeWidth={2} dot={false} connectNulls />
+              <Line type="monotone" dataKey="modelDownload" stroke={SERIES_COLORS.modelDownload} strokeWidth={2} dot={false} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
-      ))}
+      ) : (
+        <p className="home-empty">No latency trend samples.</p>
+      )}
+      <div className="home-latency-legend" aria-label={`${metricLabel(metric)} latency values`}>
+        {latencySummaries(observability, metric).map((row) => (
+          <span key={row.key}>
+            <i style={{ background: row.color }} />
+            {row.label} {formatMs(row.value)}
+          </span>
+        ))}
+      </div>
     </div>
-  );
-}
-
-function LatencySparkline({
-  label,
-  points,
-}: {
-  label: string;
-  points: LatencyTrendPoint[];
-}) {
-  const active = points.filter(
-    (point) => point.p90Ms != null || point.p99Ms != null
-  );
-  if (active.length < 2) {
-    return <span className="home-latency-trend-empty">—</span>;
-  }
-  const values = active.flatMap((point) =>
-    [point.p90Ms, point.p99Ms].filter((value): value is number => value != null)
-  );
-  const max = Math.max(...values, 1);
-  return (
-    <svg
-      className="home-latency-trend"
-      viewBox="0 0 64 20"
-      role="img"
-      aria-label={`${label} latency trend`}
-      preserveAspectRatio="none"
-    >
-      <polyline points={sparklinePoints(active, "p99Ms", max)} />
-      <polyline points={sparklinePoints(active, "p90Ms", max)} />
-    </svg>
   );
 }
 
@@ -289,53 +369,233 @@ function TokenUsage({
   if (usage.length === 0) {
     return <p className="home-empty">No token usage reported.</p>;
   }
+  const rows = usage.slice(0, 6).map((row) => ({
+    name: row.model,
+    provider: row.providerId,
+    totalTokens: row.totalTokens,
+    label: `${row.model} · ${row.providerId}`,
+  }));
+  const height = Math.max(150, rows.length * 34 + 32);
   return (
-    <div className="home-token-list">
-      {usage.slice(0, 5).map((row) => (
-        <div className="home-token-row" key={`${row.providerId}:${row.model}`}>
-          <div>
-            <p className="home-token-model">{row.model}</p>
-            <p className="home-token-provider">{row.providerId}</p>
-          </div>
-          <div className="home-token-total">
-            {row.totalTokens.toLocaleString()}
-            <span>tokens</span>
-          </div>
-        </div>
-      ))}
+    <div className="home-chart" role="img" aria-label="Token usage bar chart">
+      <ResponsiveContainer width="100%" height={height}>
+        <BarChart
+          data={rows}
+          layout="vertical"
+          margin={{ top: 4, right: 18, bottom: 0, left: 8 }}
+        >
+          <CartesianGrid stroke={CHART_LINE} strokeDasharray="3 3" horizontal={false} />
+          <XAxis
+            type="number"
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: CHART_MUTED, fontSize: 10 }}
+            tickFormatter={(value) => compactNumber(Number(value))}
+          />
+          <YAxis
+            type="category"
+            dataKey="name"
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: CHART_MUTED, fontSize: 10 }}
+            width={82}
+          />
+          <Tooltip
+            contentStyle={tooltipStyle()}
+            labelFormatter={(_label, payload) => payload?.[0]?.payload?.label ?? ""}
+            formatter={(value) => [`${Number(value).toLocaleString()} tokens`, "Usage"]}
+          />
+          <Bar dataKey="totalTokens" fill={CHART_ACCENT} radius={[0, 3, 3, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }
 
-function DownloadRows({
+function DownloadChart({
   downloads,
+  history,
 }: {
   downloads: ModelDownloadEvent[];
+  history: DownloadHistoryPoint[];
 }) {
   if (downloads.length === 0) {
     return <p className="home-empty">No active downloads.</p>;
   }
+  const data = history.length > 0 ? history : [downloadSnapshot(downloads)];
+  const roles = downloads.map((event) => event.role);
   return (
-    <div className="home-download-list">
-      {downloads.map((event) => {
-        const percent =
-          event.bytesTotal && event.bytesTotal > 0
-            ? Math.round((event.bytesDownloaded / event.bytesTotal) * 100)
-            : 0;
-        return (
-          <div className="home-download-row" key={event.role}>
-            <div className="home-download-meta">
-              <span>{event.role}</span>
-              <span>{String(event.state)}</span>
-            </div>
-            <div className="home-progress">
-              <i style={{ width: `${Math.max(0, Math.min(percent, 100))}%` }} />
-            </div>
-          </div>
-        );
-      })}
+    <div className="home-download-panel">
+      <div className="home-chart" role="img" aria-label="Download progress line chart">
+        <ResponsiveContainer width="100%" height={150}>
+          <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+            <CartesianGrid stroke={CHART_LINE} strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: CHART_MUTED, fontSize: 10 }} />
+            <YAxis
+              domain={[0, 100]}
+              axisLine={false}
+              tickLine={false}
+              tick={{ fill: CHART_MUTED, fontSize: 10 }}
+              tickFormatter={(value) => `${value}%`}
+              width={38}
+            />
+            <Tooltip
+              contentStyle={tooltipStyle()}
+              formatter={(value, name) => [`${Math.round(Number(value))}%`, String(name)]}
+            />
+            {roles.map((role, index) => (
+              <Line
+                key={role}
+                type="monotone"
+                dataKey={role}
+                stroke={downloadColor(index)}
+                strokeWidth={2}
+                dot={false}
+                connectNulls
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="home-download-meta">
+        {downloads.map((event) => (
+          <span key={event.role}>
+            {event.role} {Math.round(downloadPercent(event))}%
+          </span>
+        ))}
+      </div>
     </div>
   );
+}
+
+type DownloadHistoryPoint = {
+  label: string;
+  [role: string]: string | number;
+};
+
+function latencyChartData(
+  observability: SearchObservability,
+  metric: LatencyMetricKey
+) {
+  const buckets = new Map<string, Record<string, string | number | null>>();
+  const add = (
+    series: LatencyTrendPoint[],
+    key: "search" | "indexing" | "enhancement" | "modelDownload"
+  ) => {
+    for (const point of series) {
+      const current =
+        buckets.get(point.bucket) ?? {
+          bucket: point.bucket,
+          label: compactDate(point.bucket),
+        };
+      current[key] = point[metric] ?? null;
+      buckets.set(point.bucket, current);
+    }
+  };
+  add(observability.latencyTrends?.search ?? [], "search");
+  add(observability.latencyTrends?.indexing ?? [], "indexing");
+  add(observability.latencyTrends?.enhancement ?? [], "enhancement");
+  add(observability.latencyTrends?.modelDownload ?? [], "modelDownload");
+  return Array.from(buckets.values()).sort((a, b) =>
+    String(a.bucket).localeCompare(String(b.bucket))
+  );
+}
+
+function latencySummaries(
+  observability: SearchObservability,
+  metric: LatencyMetricKey
+) {
+  return [
+    {
+      key: "search",
+      label: "Search",
+      value: observability.latency.search[metric],
+      color: SERIES_COLORS.search,
+    },
+    {
+      key: "indexing",
+      label: "Index",
+      value: observability.latency.indexing[metric],
+      color: SERIES_COLORS.indexing,
+    },
+    {
+      key: "enhancement",
+      label: "OCR",
+      value: observability.latency.enhancement[metric],
+      color: SERIES_COLORS.enhancement,
+    },
+    {
+      key: "modelDownload",
+      label: "Downloads",
+      value: observability.latency.modelDownload[metric],
+      color: SERIES_COLORS.modelDownload,
+    },
+  ];
+}
+
+function latencySeriesLabel(key: string): string {
+  if (key === "modelDownload") return "Downloads";
+  if (key === "indexing") return "Index";
+  if (key === "enhancement") return "OCR";
+  return "Search";
+}
+
+function metricLabel(metric: LatencyMetricKey): string {
+  return LATENCY_METRICS.find((item) => item.key === metric)?.label ?? "Latency";
+}
+
+function downloadSnapshot(downloads: ModelDownloadEvent[]): DownloadHistoryPoint {
+  const label = new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  return downloads.reduce<DownloadHistoryPoint>(
+    (point, event) => {
+      point[event.role] = Math.round(downloadPercent(event));
+      return point;
+    },
+    { label }
+  );
+}
+
+function downloadPercent(event: ModelDownloadEvent): number {
+  if (!event.bytesTotal || event.bytesTotal <= 0) return 0;
+  return Math.max(
+    0,
+    Math.min(100, (event.bytesDownloaded / event.bytesTotal) * 100)
+  );
+}
+
+function downloadColor(index: number): string {
+  const colors = [
+    SERIES_COLORS.search,
+    SERIES_COLORS.indexing,
+    SERIES_COLORS.enhancement,
+    SERIES_COLORS.modelDownload,
+  ];
+  return colors[index % colors.length];
+}
+
+function compactDate(value: string): string {
+  const [, month, day] = value.split("-");
+  return month && day ? `${Number(month)}/${Number(day)}` : value;
+}
+
+function compactNumber(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
+  return String(value);
+}
+
+function tooltipStyle() {
+  return {
+    border: "1px solid var(--line)",
+    borderRadius: "var(--radius-sm)",
+    background: "var(--paper)",
+    color: "var(--ink)",
+    fontSize: "0.75rem",
+  };
 }
 
 function readyData<T>(env: SidecarEnvelope<T> | null): T | null {
@@ -393,22 +653,6 @@ function formatMs(value: number | null | undefined): string {
   if (value == null) return "—";
   if (value < 1000) return `${value} ms`;
   return `${(value / 1000).toFixed(1)} s`;
-}
-
-function sparklinePoints(
-  points: LatencyTrendPoint[],
-  field: "p90Ms" | "p99Ms",
-  max: number
-): string {
-  const lastIndex = Math.max(points.length - 1, 1);
-  return points
-    .map((point, index) => {
-      const value = point[field] ?? 0;
-      const x = (index / lastIndex) * 64;
-      const y = 18 - (value / max) * 16;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
 }
 
 function sumIndexed(observability: SearchObservability | null): number {

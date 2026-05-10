@@ -48,8 +48,8 @@ function makeClient(): SearchClient {
         },
         latencyTrends: {
           search: [
-            { bucket: "2026-05-09", sampleCount: 1, failureCount: 0, p90Ms: 12, p99Ms: 12 },
-            { bucket: "2026-05-10", sampleCount: 1, failureCount: 0, p90Ms: 18, p99Ms: 20 },
+            { bucket: "2026-05-09", sampleCount: 1, failureCount: 0, p50Ms: 10, p90Ms: 12, p99Ms: 12 },
+            { bucket: "2026-05-10", sampleCount: 1, failureCount: 0, p50Ms: 14, p90Ms: 18, p99Ms: 20 },
           ],
           indexing: [],
           enhancement: [],
@@ -117,10 +117,9 @@ describe("HomeDashboard", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Recent indexing")).toBeInTheDocument();
-      expect(screen.getByText("P90 18 ms")).toBeInTheDocument();
-      expect(screen.getByLabelText("Search latency trend")).toBeInTheDocument();
-      expect(screen.getByText("llama3")).toBeInTheDocument();
-      expect(screen.getByText("20")).toBeInTheDocument();
+      expect(screen.getByLabelText("Recent indexed nodes bar chart")).toBeInTheDocument();
+      expect(screen.getByLabelText("P99 latency line chart")).toBeInTheDocument();
+      expect(screen.getByLabelText("Token usage bar chart")).toBeInTheDocument();
     });
     expect(client.observability).toHaveBeenCalledWith({ recentDays: 30 });
     expect(client.settings).not.toHaveBeenCalled();
@@ -143,5 +142,30 @@ describe("HomeDashboard", () => {
       "aria-pressed",
       "true"
     );
+
+    fireEvent.click(screen.getByRole("button", { name: "90d" }));
+
+    await waitFor(() => {
+      expect(client.observability).toHaveBeenCalledWith({ recentDays: 90 });
+    });
+    expect(screen.getByRole("button", { name: "90d" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+  });
+
+  it("switches the latency chart percentile", async () => {
+    const client = makeClient();
+    render(<HomeDashboard client={client} />);
+
+    expect(await screen.findByLabelText("P99 latency line chart")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "P50" }));
+
+    expect(screen.getByRole("button", { name: "P50" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getByLabelText("P50 latency line chart")).toBeInTheDocument();
   });
 });

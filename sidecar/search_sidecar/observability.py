@@ -456,6 +456,7 @@ def _trend_point(bucket: str, samples: list[tuple[int, bool]]) -> dict:
         "bucket": bucket,
         "sample_count": summary["sample_count"],
         "failure_count": summary["failure_count"],
+        "p50_ms": summary["p50_ms"],
         "p90_ms": summary["p90_ms"],
         "p99_ms": summary["p99_ms"],
     }

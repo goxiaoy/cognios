@@ -238,6 +238,8 @@ pub struct LatencyTrendPointDto {
     pub sample_count: u64,
     pub failure_count: u64,
     #[serde(default)]
+    pub p50_ms: Option<u64>,
+    #[serde(default)]
     pub p90_ms: Option<u64>,
     #[serde(default)]
     pub p99_ms: Option<u64>,
@@ -1270,7 +1272,7 @@ mod tests {
                 "model_download": {"sample_count": 0, "failure_count": 0, "latest_ms": null, "p50_ms": null, "p90_ms": null, "p99_ms": null}
             },
             "latency_trends": {
-                "search": [{"bucket": "2026-05-10", "sample_count": 3, "failure_count": 0, "p90_ms": 20, "p99_ms": 30}],
+                "search": [{"bucket": "2026-05-10", "sample_count": 3, "failure_count": 0, "p50_ms": 10, "p90_ms": 20, "p99_ms": 30}],
                 "indexing": [],
                 "enhancement": [],
                 "model_download": []
@@ -1292,6 +1294,7 @@ mod tests {
         let to_ts = serde_json::to_value(&parsed).unwrap();
         assert_eq!(to_ts["recentIndexedNodes"][0]["count"], 4);
         assert_eq!(to_ts["latency"]["modelDownload"]["sampleCount"], 0);
+        assert_eq!(to_ts["latencyTrends"]["search"][0]["p50Ms"], 10);
         assert_eq!(to_ts["latencyTrends"]["search"][0]["bucket"], "2026-05-10");
         assert_eq!(to_ts["tokenUsage"][0]["providerId"], "local-ollama");
         assert!(to_ts.get("recent_indexed_nodes").is_none());
