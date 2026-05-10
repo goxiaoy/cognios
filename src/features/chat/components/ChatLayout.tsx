@@ -79,6 +79,7 @@ export function ChatLayout({ client }: { client: ChatClient }) {
   }
 
   async function createNewSession() {
+    if (isCurrentChatEmpty(active, turn)) return;
     setActive(null);
     setTurn(null);
     setAccepted(new Set());
@@ -177,6 +178,7 @@ export function ChatLayout({ client }: { client: ChatClient }) {
 
   const clusters = turn?.clusters ?? [];
   const transcript = active?.messages ?? [];
+  const currentChatIsEmpty = isCurrentChatEmpty(active, turn);
   const showTransientAnswer = Boolean(
     turn?.answer &&
       !transcript.some((message) => message.role === "assistant" && message.body === turn.answer),
@@ -188,7 +190,13 @@ export function ChatLayout({ client }: { client: ChatClient }) {
       <aside className="chat-session-list" aria-label="Chat sessions">
         <div className="chat-section-head chat-sidebar-head">
           <h2>Chats</h2>
-          <button type="button" className="icon-button" onClick={createNewSession} aria-label="New chat">
+          <button
+            type="button"
+            className="icon-button"
+            onClick={createNewSession}
+            aria-label="Start new chat"
+            disabled={busy || currentChatIsEmpty}
+          >
             <Plus size={16} aria-hidden="true" />
           </button>
         </div>
@@ -428,6 +436,10 @@ function SourceClusterPanel({
 function shouldRetitleSession(detail: ChatSessionDetail): boolean {
   const title = detail.session.title.trim().toLowerCase();
   return detail.messages.length === 0 && (title === "new chat" || title === "research chat");
+}
+
+function isCurrentChatEmpty(detail: ChatSessionDetail | null, turn: ChatTurnResponse | null): boolean {
+  return !turn && (!detail || detail.messages.length === 0);
 }
 
 function sessionTitleFromQuery(query: string): string {

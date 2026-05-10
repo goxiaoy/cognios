@@ -140,6 +140,43 @@ describe("ChatLayout", () => {
     expect(client.createSession).not.toHaveBeenCalled();
   });
 
+  it("does not leave an empty active session to create another chat", async () => {
+    const client = makeClient();
+    const session = {
+      id: "s1",
+      title: "New chat",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    vi.mocked(client.listSessions).mockResolvedValue([session]);
+    vi.mocked(client.getSession).mockResolvedValue({
+      session,
+      messages: [],
+      clusters: [],
+    });
+
+    render(<ChatLayout client={client} />);
+
+    await waitFor(() => {
+      expect(client.getSession).toHaveBeenCalledWith({ sessionId: "s1" });
+    });
+    expect(screen.getByRole("button", { name: "Start new chat" })).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+      target: { value: "整理事故时间线" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Search$/i }));
+
+    await waitFor(() => {
+      expect(client.updateSessionTitle).toHaveBeenCalledWith({
+        sessionId: "s1",
+        title: "整理事故时间线",
+      });
+    });
+    expect(client.createSession).not.toHaveBeenCalled();
+  });
+
   it("uses the model selected in chat for the next turn", async () => {
     const client = makeClient();
     render(<ChatLayout client={client} />);
