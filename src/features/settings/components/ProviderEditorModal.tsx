@@ -68,6 +68,7 @@ export function ProviderEditorModal({
     .map((c) => CAPABILITY_LABEL[c] ?? c)
     .join(", ");
   const monogram = avatarText(preset);
+  const displayName = providerDisplayName(preset);
 
   return (
     <div
@@ -90,7 +91,7 @@ export function ProviderEditorModal({
           </div>
           <div className="provider-modal-head-text">
             <h2 id="provider-modal-title" className="provider-modal-title">
-              {preset.displayName}
+              {displayName}
             </h2>
             <p className="provider-modal-sub">
               <span className="provider-modal-runtime">
@@ -145,8 +146,12 @@ export function ProviderEditorModal({
 }
 
 function avatarText(preset: ProviderPreset): string {
-  const stripped = preset.displayName.replace(/^Local\s+/, "");
+  const stripped = providerDisplayName(preset);
   const parts = stripped.split(/\s+/);
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function providerDisplayName(preset: ProviderPreset): string {
+  return preset.displayName.replace(/^Local\s+/, "");
 }

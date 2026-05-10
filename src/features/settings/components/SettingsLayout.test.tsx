@@ -182,9 +182,11 @@ describe("SettingsLayout", () => {
     const openaiName = await screen.findByText("OpenAI");
     const openaiRow = openaiName.closest("li");
     expect(openaiRow).not.toBeNull();
-    expect(
-      within(openaiRow as HTMLElement).getByRole("button", { name: /Details/i })
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        within(openaiRow as HTMLElement).getByRole("button", { name: /Details/i })
+      ).toBeInTheDocument();
+    });
     expect(
       within(openaiRow as HTMLElement).queryByRole("button", { name: /Edit/i })
     ).toBeNull();
@@ -203,8 +205,30 @@ describe("SettingsLayout", () => {
       within(ollamaRow as HTMLElement).getByRole("button", { name: /Details/i })
     );
 
+    const dialog = await screen.findByRole("dialog", { name: "Ollama" });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Local Ollama" })).toBeNull();
     expect(await screen.findByLabelText(/base url/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/chat model/i)).toBeInTheDocument();
+  });
+
+  it("removes the Local prefix from local model stage details", async () => {
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(readySettings()),
+    });
+    render(<SettingsLayout client={client} />);
+
+    const gteNames = await screen.findAllByText("GTE");
+    const gteRow = gteNames
+      .map((node) => node.closest("li.provider-row"))
+      .find((node): node is HTMLElement => node !== null);
+    if (!gteRow) throw new Error("GTE provider row not found");
+    fireEvent.click(
+      within(gteRow).getByRole("button", { name: /Details/i })
+    );
+
+    expect(await screen.findByRole("dialog", { name: "GTE" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Local GTE" })).toBeNull();
   });
 
   it("renders OCR enhancement diagnostics when advanced OCR is ready", async () => {
