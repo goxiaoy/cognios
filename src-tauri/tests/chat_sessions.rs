@@ -100,6 +100,7 @@ fn persists_chat_session_messages_clusters_and_bound_note() {
     assert_eq!(detail.clusters.len(), 1);
     assert_eq!(detail.clusters[0].source_kind, "workspace");
     assert_eq!(detail.clusters[0].status, "candidate");
+    assert!(detail.memory.is_none());
 }
 
 #[test]
@@ -200,5 +201,14 @@ fn chat_migration_preserves_existing_workspace_rows() {
 
     assert_eq!(name, "Existing");
     assert_eq!(url, "https://example.test");
-    assert_eq!(user_version, 5);
+    let memory_table_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'chat_session_memories'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("memory table");
+
+    assert_eq!(memory_table_count, 1);
+    assert_eq!(user_version, 6);
 }

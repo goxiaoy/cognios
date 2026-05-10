@@ -52,6 +52,49 @@ describe("chatClient", () => {
     });
   });
 
+  it("loads a Session Memory body through the Tauri command", async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      available: true,
+      body: "## Timeline",
+      revision: 2,
+    });
+
+    await chatClient.getSessionMemory({ sessionId: "s1" });
+
+    expect(mockedInvoke).toHaveBeenCalledWith("get_chat_session_memory", {
+      input: { sessionId: "s1" },
+    });
+  });
+
+  it("exports Session Memory through the Tauri command", async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      noteId: "n1",
+      snapshot: { roots: [] },
+    });
+
+    await chatClient.exportSessionMemory({ sessionId: "s1" });
+
+    expect(mockedInvoke).toHaveBeenCalledWith("export_chat_session_memory", {
+      input: { sessionId: "s1" },
+    });
+  });
+
+  it("triggers a Session Memory refresh opportunity through the Tauri command", async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined);
+
+    await chatClient.triggerMemoryOpportunity({
+      sessionId: "s1",
+      reason: "session_switch",
+    });
+
+    expect(mockedInvoke).toHaveBeenCalledWith("trigger_chat_session_memory_opportunity", {
+      input: {
+        sessionId: "s1",
+        reason: "session_switch",
+      },
+    });
+  });
+
   it("updates a chat session title through the Tauri command", async () => {
     mockedInvoke.mockResolvedValueOnce({
       id: "s1",

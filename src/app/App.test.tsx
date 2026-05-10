@@ -70,6 +70,12 @@ vi.mock("../lib/tauri/ipc", () => ({
     clusters: [],
   }),
   deleteChatSession: vi.fn().mockResolvedValue({ deleted: true }),
+  getChatSessionMemory: vi.fn().mockResolvedValue({ available: false }),
+  exportChatSessionMemory: vi.fn().mockResolvedValue({
+    noteId: "note-1",
+    snapshot: { roots: [] },
+  }),
+  triggerChatSessionMemoryOpportunity: vi.fn().mockResolvedValue(undefined),
   updateChatSessionTitle: vi.fn().mockImplementation(async (input: { sessionId: string; title: string }) => ({
     id: input.sessionId,
     title: input.title,

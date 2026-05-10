@@ -1,7 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ChatSessionDetail, ChatTurnStreamPayload } from "../../../lib/contracts/chat";
+import type {
+  ChatSessionDetail,
+  ChatSessionMemoryEventPayload,
+  ChatTurnStreamPayload,
+} from "../../../lib/contracts/chat";
 import { ExplorerStoreProvider } from "../../explorer/store/ExplorerStoreContext";
 import type { ExplorerClient } from "../../explorer/types/explorer";
 import type { SearchClient } from "../../search/types/search";
@@ -9,16 +13,19 @@ import type { ChatClient } from "../api/chatClient";
 import { ChatLayout } from "./ChatLayout";
 
 type ChatTurnListener = (event: { payload: ChatTurnStreamPayload }) => void;
+type ChatMemoryListener = (event: { payload: ChatSessionMemoryEventPayload }) => void;
 
 const eventMock = vi.hoisted(() => ({
   chatTurnListener: null as ChatTurnListener | null,
+  chatMemoryListener: null as ChatMemoryListener | null,
   unlisten: vi.fn(),
 }));
 const scrollIntoViewMock = vi.fn();
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (name: string, cb: ChatTurnListener) => {
-    if (name === "chat/turn") eventMock.chatTurnListener = cb;
+  listen: vi.fn(async (name: string, cb: ChatTurnListener | ChatMemoryListener) => {
+    if (name === "chat/turn") eventMock.chatTurnListener = cb as ChatTurnListener;
+    if (name === "chat/session-memory") eventMock.chatMemoryListener = cb as ChatMemoryListener;
     return eventMock.unlisten;
   }),
 }));
@@ -59,6 +66,12 @@ function makeClient(): ChatClient {
         updatedAt: "now",
       };
     }),
+    getSessionMemory: vi.fn().mockResolvedValue({ available: false }),
+    exportSessionMemory: vi.fn().mockResolvedValue({
+      noteId: "note-1",
+      snapshot: { roots: [] },
+    }),
+    triggerMemoryOpportunity: vi.fn().mockResolvedValue(undefined),
     appendMessage: vi.fn(),
     recordCluster: vi.fn(),
     bindNote: vi.fn(),
@@ -339,6 +352,53 @@ describe("ChatLayout", () => {
     expect(screen.getByText("**这个不应该加粗**")).toBeInTheDocument();
     expect(document.querySelector(".chat-message.is-user strong")).toBeNull();
     expect(document.querySelector(".chat-message.is-assistant script")).toBeNull();
+  });
+
+  it("opens read-only Session Memory and exports a Note snapshot", async () => {
+    const client = makeClient();
+    const session = {
+      id: "s1",
+      title: "事故复盘",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    vi.mocked(client.listSessions).mockResolvedValue([session]);
+    vi.mocked(client.getSession).mockResolvedValue({
+      session,
+      messages: [],
+      clusters: [],
+      memory: {
+        available: true,
+        status: "ready",
+        revision: 2,
+        lastSuccessfulRevision: 2,
+        lastIncludedMessageOrdinal: 5,
+        providerId: "local-ollama",
+        modelId: "qwen2.5:7b",
+        updatedAt: "now",
+      },
+    });
+    vi.mocked(client.getSessionMemory).mockResolvedValue({
+      available: true,
+      body: "## Timeline\n\n<script>alert('x')</script>\n\n- 3 月 1 日：事故发生",
+      revision: 2,
+    });
+
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open Session Memory" }));
+
+    expect(await screen.findByRole("heading", { name: "Session Memory" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Timeline", level: 2 })).toBeInTheDocument();
+    expect(document.querySelector(".chat-memory-panel script")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save as Note" }));
+
+    await waitFor(() => {
+      expect(client.exportSessionMemory).toHaveBeenCalledWith({ sessionId: "s1" });
+    });
+    expect(await screen.findByText("Saved as editable Note snapshot.")).toBeInTheDocument();
   });
 
   it("scrolls to the latest chat content while a turn streams", async () => {

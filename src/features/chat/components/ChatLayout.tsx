@@ -7,6 +7,7 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
+  BookOpen,
   CircleAlert,
   File,
   FileText,
@@ -27,6 +28,7 @@ import type {
   ChatSession,
   ChatSessionDetail,
   ChatModel,
+  ChatSessionMemoryEventPayload,
   ChatTurnResponse,
   ChatTurnStreamPayload,
 } from "../../../lib/contracts/chat";
@@ -38,6 +40,7 @@ import type { ChatClient } from "../api/chatClient";
 
 const CONTEXT_CONTENT_LIMIT = 8_000;
 const CHAT_TURN_EVENT = "chat/turn";
+const CHAT_MEMORY_EVENT = "chat/session-memory";
 
 interface OptimisticUserMessage {
   id: string;
@@ -55,6 +58,13 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
   const [contextOpen, setContextOpen] = useState(false);
   const [contextNodes, setContextNodes] = useState<ChatContextNode[]>([]);
   const [contextError, setContextError] = useState<string | null>(null);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryBody, setMemoryBody] = useState("");
+  const [memoryRevision, setMemoryRevision] = useState<number | null>(null);
+  const [memoryLoading, setMemoryLoading] = useState(false);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
+  const [memoryExporting, setMemoryExporting] = useState(false);
+  const [memoryExportedNoteId, setMemoryExportedNoteId] = useState<string | null>(null);
   const [models, setModels] = useState<ChatModel[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [busy, setBusy] = useState(false);
@@ -63,6 +73,10 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
   const [sessionMenu, setSessionMenu] = useState<{ session: ChatSession; x: number; y: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const activeTurnEventIdRef = useRef<string | null>(null);
+  const activeSessionIdRef = useRef<string | null>(null);
+  const memoryOpenRef = useRef(false);
+  const memoryButtonRef = useRef<HTMLButtonElement | null>(null);
+  const memoryPanelRef = useRef<HTMLElement | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -114,6 +128,41 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
       void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
     };
   }, []);
+
+  useEffect(() => {
+    activeSessionIdRef.current = active?.session.id ?? null;
+  }, [active?.session.id]);
+
+  useEffect(() => {
+    memoryOpenRef.current = memoryOpen;
+  }, [memoryOpen]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const unlistenPromise = listen<ChatSessionMemoryEventPayload>(CHAT_MEMORY_EVENT, (event) => {
+      if (cancelled) return;
+      const payload = event.payload;
+      if (payload.sessionId !== activeSessionIdRef.current) return;
+      void refreshSessions(payload.sessionId);
+      if (memoryOpenRef.current) {
+        void loadMemoryBody(payload.sessionId);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!memoryOpen) return;
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") closeMemoryPanel();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [memoryOpen]);
 
   useEffect(() => {
     if (!sessionMenu) return;
@@ -187,8 +236,12 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
 
   async function createNewSession() {
     if (isCurrentChatEmpty(active, turn, optimisticTranscript.length)) return;
+    if (active?.session.id) {
+      await triggerMemoryOpportunity(active.session.id);
+    }
     setActive(null);
     setTurn(null);
+    resetMemoryBody();
     clearContextDraft();
     setQuery("");
     setError(null);
@@ -268,6 +321,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
       if (active?.session.id === session.id) {
         const fallback = next[0];
         setTurn(null);
+        resetMemoryBody();
         clearContextDraft();
         setQuery("");
         if (fallback) {
@@ -319,6 +373,81 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
     setContextError(null);
   }
 
+  async function selectSession(sessionId: string) {
+    if (active?.session.id && active.session.id !== sessionId) {
+      await triggerMemoryOpportunity(active.session.id);
+    }
+    setTurn(null);
+    resetMemoryBody();
+    await refreshSessions(sessionId);
+  }
+
+  async function triggerMemoryOpportunity(sessionId: string) {
+    try {
+      await client.triggerMemoryOpportunity({ sessionId, reason: "session_switch" });
+    } catch {
+      // Memory refresh is opportunistic and must not block navigation.
+    }
+  }
+
+  async function openMemoryPanel() {
+    const sessionId = active?.session.id;
+    if (!sessionId) return;
+    setMemoryOpen(true);
+    setMemoryExportedNoteId(null);
+    await loadMemoryBody(sessionId);
+    window.requestAnimationFrame(() => memoryPanelRef.current?.focus());
+  }
+
+  function closeMemoryPanel() {
+    setMemoryOpen(false);
+    window.requestAnimationFrame(() => memoryButtonRef.current?.focus());
+  }
+
+  async function loadMemoryBody(sessionId: string) {
+    setMemoryLoading(true);
+    setMemoryError(null);
+    try {
+      const result = await client.getSessionMemory({ sessionId });
+      if (!result.available || !result.body) {
+        setMemoryBody("");
+        setMemoryRevision(null);
+        return;
+      }
+      setMemoryBody(result.body);
+      setMemoryRevision(result.revision ?? null);
+    } catch (err) {
+      setMemoryError(err instanceof Error ? err.message : String(err));
+      setMemoryBody("");
+      setMemoryRevision(null);
+    } finally {
+      setMemoryLoading(false);
+    }
+  }
+
+  async function exportMemory() {
+    const sessionId = active?.session.id;
+    if (!sessionId || !memoryBody || memoryExporting) return;
+    setMemoryExporting(true);
+    setMemoryError(null);
+    setMemoryExportedNoteId(null);
+    try {
+      const result = await client.exportSessionMemory({ sessionId });
+      setMemoryExportedNoteId(result.noteId);
+    } catch (err) {
+      setMemoryError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMemoryExporting(false);
+    }
+  }
+
+  function resetMemoryBody() {
+    setMemoryBody("");
+    setMemoryRevision(null);
+    setMemoryError(null);
+    setMemoryExportedNoteId(null);
+  }
+
   function reconcileOptimisticMessages(detail: ChatSessionDetail) {
     setOptimisticUserMessages((messages) => {
       const unrelatedMessages = messages.filter((message) => message.sessionId !== detail.session.id);
@@ -342,13 +471,14 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
   );
   const showAssistantLoading = Boolean(busy && optimisticTranscript.length > 0 && !turn?.answer && !error);
   const title = active?.session.title ?? "New chat";
+  const memoryAvailable = Boolean(active?.memory?.available);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ block: "end", inline: "nearest" });
   }, [active?.session.id, transcript.length, optimisticTranscript.length, showAssistantLoading, turn?.answer]);
 
   return (
-    <section className="chat-layout" aria-label="Chat">
+    <section className={`chat-layout${memoryOpen ? " has-memory-panel" : ""}`} aria-label="Chat">
       <aside className="chat-session-list" aria-label="Chat sessions">
         <div className="chat-section-head chat-sidebar-head">
           <h2>Chats</h2>
@@ -379,7 +509,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
                 <button
                   type="button"
                   className="chat-session-item"
-                  onClick={() => refreshSessions(session.id)}
+                  onClick={() => void selectSession(session.id)}
                   onKeyDown={(event) => {
                     if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
                     event.preventDefault();
@@ -392,12 +522,6 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
                   }}
                 >
                   <span className="chat-session-title">{session.title}</span>
-                  {session.boundNoteId ? (
-                    <span className="chat-session-meta">
-                      <FileText size={13} aria-hidden="true" />
-                      Note
-                    </span>
-                  ) : null}
                 </button>
               </div>
             );
@@ -419,12 +543,18 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
               <Globe size={14} aria-hidden="true" />
               Web
             </span>
-            {active?.session.boundNoteId ? (
-              <span className="chat-runtime-pill">
-                <FileText size={14} aria-hidden="true" />
-                Note
-              </span>
-            ) : null}
+            <button
+              ref={memoryButtonRef}
+              className="chat-runtime-pill chat-memory-trigger"
+              type="button"
+              disabled={!memoryAvailable}
+              aria-label="Open Session Memory"
+              aria-expanded={memoryOpen}
+              onClick={() => void openMemoryPanel()}
+            >
+              <BookOpen size={14} aria-hidden="true" />
+              Memory
+            </button>
             {models.length > 0 ? (
               <label className="chat-model-picker">
                 Model
@@ -530,6 +660,75 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
           </div>
         </form>
       </main>
+
+      {memoryOpen ? (
+        <aside
+          ref={memoryPanelRef}
+          className="chat-memory-panel"
+          aria-labelledby="chat-memory-title"
+          aria-describedby="chat-memory-description"
+          tabIndex={-1}
+        >
+          <header className="chat-memory-header">
+            <div>
+              <p className="chat-memory-eyebrow">Read-only</p>
+              <h2 id="chat-memory-title">Session Memory</h2>
+            </div>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Close Session Memory"
+              onClick={closeMemoryPanel}
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </header>
+          <p id="chat-memory-description" className="chat-memory-copy">
+            Generated from this chat. Recent turns that have not been compacted remain in the transcript.
+          </p>
+          <p className="chat-memory-status">
+            Memory snapshot{memoryRevision ? ` · revision ${memoryRevision}` : ""}
+          </p>
+
+          <div className="chat-memory-body" aria-live="polite">
+            {memoryLoading ? <p className="chat-memory-placeholder">Loading memory...</p> : null}
+            {!memoryLoading && memoryError ? (
+              <div className="chat-memory-error" role="alert">
+                <p>{memoryError}</p>
+                {active?.session.id ? (
+                  <button type="button" onClick={() => void loadMemoryBody(active.session.id)}>
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {!memoryLoading && !memoryError && memoryBody ? (
+              <div className="chat-message-markdown markdown-body">
+                <MarkdownRenderer allowHtml={false}>{memoryBody}</MarkdownRenderer>
+              </div>
+            ) : null}
+            {!memoryLoading && !memoryError && !memoryBody ? (
+              <p className="chat-memory-placeholder">Session Memory is not available yet.</p>
+            ) : null}
+          </div>
+
+          <footer className="chat-memory-footer">
+            {memoryExportedNoteId ? (
+              <p className="chat-memory-saved" role="status">
+                Saved as editable Note snapshot.
+              </p>
+            ) : null}
+            <button
+              type="button"
+              className="chat-memory-export"
+              disabled={!memoryBody || memoryLoading || memoryExporting}
+              onClick={() => void exportMemory()}
+            >
+              {memoryExporting ? "Saving..." : "Save as Note"}
+            </button>
+          </footer>
+        </aside>
+      ) : null}
 
       {sessionMenu ? (
         <div

@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::domain::chat::{
-    ChatMessageDto, ChatSessionDetailDto, ChatSessionDto, ChatSourceClusterDto,
+    ChatMessageDto, ChatSessionDetailDto, ChatSessionDto, ChatSessionMemoryDto,
+    ChatSourceClusterDto,
 };
 
 #[derive(Debug, Deserialize)]
@@ -123,8 +124,9 @@ pub fn get_session_detail(
 
     Ok(Some(ChatSessionDetailDto {
         session,
-        messages: list_messages(conn, session_id)?,
+        messages: list_session_messages(conn, session_id)?,
         clusters: list_clusters(conn, session_id)?,
+        memory: get_session_memory(conn, session_id)?,
     }))
 }
 
@@ -265,7 +267,10 @@ pub fn update_session_title(
         .ok_or_else(|| rusqlite::Error::InvalidParameterName("updated chat session missing".into()))
 }
 
-fn list_messages(conn: &Connection, session_id: &str) -> rusqlite::Result<Vec<ChatMessageDto>> {
+pub fn list_session_messages(
+    conn: &Connection,
+    session_id: &str,
+) -> rusqlite::Result<Vec<ChatMessageDto>> {
     let mut stmt = conn.prepare(
         "
         SELECT id, session_id, role, body, ordinal, metadata_json, created_at
@@ -278,6 +283,47 @@ fn list_messages(conn: &Connection, session_id: &str) -> rusqlite::Result<Vec<Ch
         .query_map([session_id], map_message)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(messages)
+}
+
+pub fn get_session_memory(
+    conn: &Connection,
+    session_id: &str,
+) -> rusqlite::Result<Option<ChatSessionMemoryDto>> {
+    conn.query_row(
+        "
+        SELECT status, memory_revision, last_successful_revision,
+               last_included_message_ordinal, provider_id, model_id, updated_at,
+               file_key, body_checksum, body_byte_len
+        FROM chat_session_memories
+        WHERE session_id = ?1 AND deleted_at IS NULL
+        ",
+        [session_id],
+        |row| {
+            let status: String = row.get(0)?;
+            let revision: i64 = row.get(1)?;
+            let last_successful_revision: i64 = row.get(2)?;
+            let file_key: Option<String> = row.get(7)?;
+            let body_checksum: Option<String> = row.get(8)?;
+            let body_byte_len: Option<i64> = row.get(9)?;
+            Ok(ChatSessionMemoryDto {
+                available: status != "deleted"
+                    && last_successful_revision > 0
+                    && file_key.as_deref().is_some_and(|value| !value.is_empty())
+                    && body_checksum
+                        .as_deref()
+                        .is_some_and(|value| !value.is_empty())
+                    && body_byte_len.unwrap_or(0) >= 0,
+                status,
+                revision,
+                last_successful_revision,
+                last_included_message_ordinal: row.get(3)?,
+                provider_id: row.get(4)?,
+                model_id: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        },
+    )
+    .optional()
 }
 
 fn list_clusters(

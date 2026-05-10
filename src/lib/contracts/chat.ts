@@ -14,6 +14,17 @@ export interface ChatSession {
   updatedAt: string;
 }
 
+export interface ChatSessionMemory {
+  available: boolean;
+  status: string;
+  revision: number;
+  lastSuccessfulRevision: number;
+  lastIncludedMessageOrdinal: number;
+  providerId?: string | null;
+  modelId?: string | null;
+  updatedAt: string;
+}
+
 export interface ChatMessage {
   id: string;
   sessionId: string;
@@ -41,6 +52,7 @@ export interface ChatSessionDetail {
   session: ChatSession;
   messages: ChatMessage[];
   clusters: ChatSourceCluster[];
+  memory?: ChatSessionMemory | null;
 }
 
 export interface CreateChatSessionInput {
@@ -81,6 +93,27 @@ export interface BindChatNoteInput {
 
 export interface DeleteChatSessionResult {
   deleted: boolean;
+}
+
+export interface GetChatSessionMemoryResult {
+  available: boolean;
+  body?: string | null;
+  revision?: number | null;
+}
+
+export interface ExportChatSessionMemoryResult {
+  noteId: string;
+  snapshot: import("./vfs").ExplorerSnapshot;
+}
+
+export interface TriggerChatSessionMemoryOpportunityInput {
+  sessionId: string;
+  reason: "session_switch" | "idle" | string;
+}
+
+export interface ChatSessionMemoryEventPayload {
+  sessionId: string;
+  revision: number;
 }
 
 export interface ChatTurnSource {

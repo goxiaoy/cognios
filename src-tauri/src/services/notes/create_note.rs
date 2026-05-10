@@ -27,28 +27,39 @@ pub fn create_note(
     notes_dir: &Path,
     emitter: &dyn Fn(VfsChangeEvent),
 ) -> Result<CreatedNote, String> {
-    let node_id = Uuid::new_v4().to_string();
+    create_note_with_body(conn, input, notes_dir, "", emitter)
+}
 
-    // Insert the node record first.
+pub fn create_note_with_body(
+    conn: &mut Connection,
+    input: &CreateNoteInput,
+    notes_dir: &Path,
+    body: &str,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<CreatedNote, String> {
+    let node_id = Uuid::new_v4().to_string();
+    let size_bytes = body.len() as i64;
+
     conn.execute(
         "
         INSERT INTO nodes (id, parent_id, kind, name, state, size_bytes)
-        VALUES (?1, ?2, ?3, ?4, ?5, 0)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
         ",
         params![
             node_id,
             input.parent_id,
             NodeKind::Note.as_str(),
             "Untitled",
-            NodeState::Ready.as_str()
+            NodeState::Ready.as_str(),
+            size_bytes
         ],
     )
     .map_err(|error| error.to_string())?;
 
-    // Create the empty .md file on disk. If this fails, roll back the DB insert.
+    // Create the .md file before emitting VFS/index-visible events. If this
+    // fails, roll back the DB insert so callers never see a partial Note.
     let note_path = notes_dir.join(format!("{node_id}.md"));
-    if let Err(file_error) = fs::write(&note_path, b"") {
-        // Compensating rollback — remove the orphaned DB record.
+    if let Err(file_error) = fs::write(&note_path, body.as_bytes()) {
         let _ = conn.execute("DELETE FROM nodes WHERE id = ?1", [&node_id]);
         return Err(format!("failed to create note file: {file_error}"));
     }

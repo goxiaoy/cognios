@@ -8,7 +8,14 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..chat.orchestrator import ChatContextNode, ChatOrchestrator, ChatTurnRequest
+from ..chat.orchestrator import (
+    ChatContextNode,
+    ChatMemoryContext,
+    ChatMemoryRefreshMessage,
+    ChatMemoryRefreshRequest,
+    ChatOrchestrator,
+    ChatTurnRequest,
+)
 from ..chat.ollama import OllamaChatProvider
 from ..chat.types import ChatMessage, ChatProviderError
 
@@ -29,13 +36,33 @@ class ChatContextNodePayload(BaseModel):
     content: str | None = None
 
 
+class ChatMemoryContextPayload(BaseModel):
+    body: str
+    revision: int
+    last_included_message_ordinal: int
+
+
 class ChatTurnPayload(BaseModel):
     query: str = ""
     messages: list[ChatMessagePayload] = Field(default_factory=list)
+    session_memory: ChatMemoryContextPayload | None = None
     accepted_cluster_ids: list[str] = Field(default_factory=list)
     include_web: bool = True
     model: str | None = None
     context_nodes: list[ChatContextNodePayload] = Field(default_factory=list)
+
+
+class ChatMemoryRefreshMessagePayload(BaseModel):
+    role: str
+    content: str
+    ordinal: int
+
+
+class ChatMemoryRefreshPayload(BaseModel):
+    previous_memory: str | None = None
+    messages: list[ChatMemoryRefreshMessagePayload] = Field(default_factory=list)
+    provider_id: str | None = None
+    model: str | None = None
 
 
 class ChatProviderTestPayload(BaseModel):
@@ -137,6 +164,26 @@ def post_chat_turn_stream(body: ChatTurnPayload, request: Request):
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+@router.post("/memory/refresh")
+def post_chat_memory_refresh(body: ChatMemoryRefreshPayload, request: Request) -> dict:
+    return _get_orchestrator(request).refresh_memory(
+        ChatMemoryRefreshRequest(
+            previous_memory=body.previous_memory,
+            messages=[
+                ChatMemoryRefreshMessage(
+                    role=_role(message.role),
+                    content=message.content,
+                    ordinal=message.ordinal,
+                )
+                for message in body.messages
+                if message.content.strip()
+            ],
+            provider_id=body.provider_id,
+            model=body.model,
+        )
+    ).to_dict()
+
+
 def _turn_request(body: ChatTurnPayload) -> ChatTurnRequest:
     messages = [
         ChatMessage(role=_role(message.role), content=message.content)
@@ -146,6 +193,15 @@ def _turn_request(body: ChatTurnPayload) -> ChatTurnRequest:
     return ChatTurnRequest(
         query=body.query,
         messages=messages,
+        session_memory=(
+            ChatMemoryContext(
+                body=body.session_memory.body,
+                revision=body.session_memory.revision,
+                last_included_message_ordinal=body.session_memory.last_included_message_ordinal,
+            )
+            if body.session_memory is not None
+            else None
+        ),
         accepted_cluster_ids=body.accepted_cluster_ids,
         include_web=body.include_web,
         model=body.model,

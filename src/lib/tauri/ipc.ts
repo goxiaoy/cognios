@@ -9,11 +9,14 @@ import type {
   ChatSourceCluster,
   CreateChatSessionInput,
   DeleteChatSessionResult,
+  ExportChatSessionMemoryResult,
+  GetChatSessionMemoryResult,
   GetChatModelsResult,
   RecordChatClusterInput,
   StartChatTurnInput,
   StartChatTurnResult,
   TestChatProviderInput,
+  TriggerChatSessionMemoryOpportunityInput,
   TestChatProviderResult,
   UpdateChatSessionTitleInput,
 } from "../contracts/chat";
@@ -153,6 +156,18 @@ export async function getChatSession(
   return invoke<ChatSessionDetail>("get_chat_session", { input });
 }
 
+export async function getChatSessionMemory(
+  input: ChatSessionInput
+): Promise<GetChatSessionMemoryResult> {
+  return invoke<GetChatSessionMemoryResult>("get_chat_session_memory", { input });
+}
+
+export async function exportChatSessionMemory(
+  input: ChatSessionInput
+): Promise<ExportChatSessionMemoryResult> {
+  return invoke<ExportChatSessionMemoryResult>("export_chat_session_memory", { input });
+}
+
 export async function deleteChatSession(
   input: ChatSessionInput
 ): Promise<DeleteChatSessionResult> {
@@ -185,6 +200,12 @@ export async function startChatTurn(
   input: StartChatTurnInput
 ): Promise<StartChatTurnResult> {
   return invoke<StartChatTurnResult>("start_chat_turn", { input });
+}
+
+export async function triggerChatSessionMemoryOpportunity(
+  input: TriggerChatSessionMemoryOpportunityInput
+): Promise<void> {
+  return invoke<void>("trigger_chat_session_memory_opportunity", { input });
 }
 
 export async function getChatModels(): Promise<GetChatModelsResult> {

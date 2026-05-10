@@ -404,6 +404,8 @@ pub struct ChatTurnRequestDto {
     pub query: String,
     #[serde(default)]
     pub messages: Vec<ChatTurnMessageDto>,
+    #[serde(default, alias = "sessionMemory")]
+    pub session_memory: Option<ChatMemoryContextDto>,
     #[serde(default, alias = "acceptedClusterIds")]
     pub accepted_cluster_ids: Vec<String>,
     #[serde(default = "default_true", alias = "includeWeb")]
@@ -437,6 +439,49 @@ pub struct ChatTurnStreamEventDto {
 pub struct ChatTurnMessageDto {
     pub role: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
+pub struct ChatMemoryContextDto {
+    pub body: String,
+    pub revision: i64,
+    pub last_included_message_ordinal: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
+pub struct ChatMemoryRefreshMessageDto {
+    pub role: String,
+    pub content: String,
+    pub ordinal: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
+pub struct ChatMemoryRefreshRequestDto {
+    #[serde(default)]
+    pub previous_memory: Option<String>,
+    #[serde(default)]
+    pub messages: Vec<ChatMemoryRefreshMessageDto>,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct ChatMemoryRefreshResponseDto {
+    pub state: String,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub last_included_message_ordinal: Option<i64>,
+    #[serde(default)]
+    pub provider: Option<serde_json::Value>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -758,6 +803,13 @@ impl SearchSidecarClient {
         body: &ChatTurnRequestDto,
     ) -> SidecarEnvelope<ChatTurnResponseDto> {
         self.post_envelope("/chat/turns", body).await
+    }
+
+    pub async fn chat_memory_refresh(
+        &self,
+        body: &ChatMemoryRefreshRequestDto,
+    ) -> SidecarEnvelope<ChatMemoryRefreshResponseDto> {
+        self.post_envelope("/chat/memory/refresh", body).await
     }
 
     pub async fn chat_turn_stream<F>(
@@ -1391,6 +1443,11 @@ data: {"event":"final","turn":{"state":"ready","clusters":[],"answer":"hello","c
                 role: "user".into(),
                 content: "整理事故时间线".into(),
             }],
+            session_memory: Some(ChatMemoryContextDto {
+                body: "## Timeline".into(),
+                revision: 2,
+                last_included_message_ordinal: 4,
+            }),
             accepted_cluster_ids: vec![],
             include_web: true,
             model: Some("llama3.2".into()),
@@ -1405,6 +1462,8 @@ data: {"event":"final","turn":{"state":"ready","clusters":[],"answer":"hello","c
         };
         let json = serde_json::to_value(&request).unwrap();
         assert_eq!(json["include_web"], true);
+        assert_eq!(json["session_memory"]["revision"], 2);
+        assert_eq!(json["session_memory"]["last_included_message_ordinal"], 4);
         assert_eq!(json["context_nodes"][0]["node_id"], "n1");
         assert_eq!(json["context_nodes"][0]["title"], "事故报告");
         assert!(json.get("includeWeb").is_none());

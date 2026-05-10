@@ -12,6 +12,19 @@ pub struct ChatSessionDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChatSessionMemoryDto {
+    pub available: bool,
+    pub status: String,
+    pub revision: i64,
+    pub last_successful_revision: i64,
+    pub last_included_message_ordinal: i64,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatMessageDto {
     pub id: String,
     pub session_id: String,
@@ -43,4 +56,5 @@ pub struct ChatSessionDetailDto {
     pub session: ChatSessionDto,
     pub messages: Vec<ChatMessageDto>,
     pub clusters: Vec<ChatSourceClusterDto>,
+    pub memory: Option<ChatSessionMemoryDto>,
 }
