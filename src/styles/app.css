@@ -6109,7 +6109,7 @@ button.chat-context-toggle:not(:disabled):hover {
   background: transparent;
   color: var(--ink);
   padding: 0.1rem 0.15rem;
-  font: 500 0.94rem/1.45 var(--font-body);
+  font: 400 0.94rem/1.45 var(--font-body);
 }
 
 .chat-composer textarea:focus {
