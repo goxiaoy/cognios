@@ -6731,7 +6731,270 @@ button.chat-context-toggle:not(:disabled):hover {
   color: var(--muted);
 }
 
+.home-page-panel,
+.home-dashboard {
+  min-height: 0;
+}
+
+.home-dashboard {
+  display: grid;
+  gap: 1rem;
+  height: 100%;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.home-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.home-stat,
+.home-section {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: var(--radius-sm);
+}
+
+.home-stat {
+  display: flex;
+  gap: 0.7rem;
+  min-width: 0;
+  padding: 0.8rem;
+}
+
+.home-stat.is-ok {
+  border-color: color-mix(in srgb, #16794f 28%, var(--line));
+}
+
+.home-stat.is-warn {
+  border-color: color-mix(in srgb, #9a5a00 32%, var(--line));
+}
+
+.home-stat-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 2rem;
+  width: 2rem;
+  height: 2rem;
+  color: var(--accent);
+  background: var(--paper-2);
+  border-radius: var(--radius-sm);
+}
+
+.home-stat-label,
+.home-stat-value,
+.home-stat-sub,
+.home-section-head h2,
+.home-section-head span,
+.home-empty,
+.home-token-model,
+.home-token-provider {
+  margin: 0;
+}
+
+.home-stat-label,
+.home-section-head span,
+.home-token-provider,
+.home-empty {
+  color: var(--muted);
+}
+
+.home-stat-label {
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.home-stat-value {
+  margin-top: 0.15rem;
+  color: var(--ink);
+  font: 700 1.35rem var(--font-heading);
+}
+
+.home-stat-sub {
+  margin-top: 0.1rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.home-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.home-section {
+  display: grid;
+  gap: 0.8rem;
+  min-width: 0;
+  padding: 0.9rem;
+}
+
+.home-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.home-section-head h2 {
+  color: var(--ink);
+  font: 650 0.95rem var(--font-heading);
+}
+
+.home-section-head span {
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.home-heatmap {
+  display: grid;
+  grid-template-columns: repeat(14, minmax(0.8rem, 1fr));
+  gap: 0.28rem;
+}
+
+.home-heat-cell {
+  aspect-ratio: 1;
+  min-width: 0.8rem;
+  border: 1px solid var(--line);
+  background: var(--paper-2);
+  border-radius: 3px;
+}
+
+.home-heat-cell.is-level-1 {
+  background: #d9ede3;
+}
+
+.home-heat-cell.is-level-2 {
+  background: #94d0ae;
+}
+
+.home-heat-cell.is-level-3 {
+  background: #45a871;
+}
+
+.home-heat-cell.is-level-4 {
+  background: #16794f;
+}
+
+.home-latency-list,
+.home-token-list,
+.home-download-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.home-latency-row,
+.home-token-row,
+.home-download-row {
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: var(--paper-2);
+  border-radius: var(--radius-sm);
+}
+
+.home-latency-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1fr) repeat(4, minmax(4.1rem, auto));
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.58rem 0.65rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.home-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.home-token-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem;
+}
+
+.home-token-model {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.home-token-provider {
+  margin-top: 0.1rem;
+  font-size: 0.75rem;
+}
+
+.home-token-total {
+  display: grid;
+  justify-items: end;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.home-token-total span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.home-download-row {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.65rem;
+}
+
+.home-download-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.home-download-meta span:first-child {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.home-progress {
+  height: 0.42rem;
+  overflow: hidden;
+  background: var(--line);
+  border-radius: 999px;
+}
+
+.home-progress i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.home-empty {
+  padding: 0.65rem;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+}
+
 @media (max-width: 980px) {
+  .home-kpi-grid,
+  .home-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .home-latency-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .chat-layout {
     grid-template-columns: 1fr;
   }

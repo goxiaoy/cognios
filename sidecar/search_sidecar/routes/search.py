@@ -15,6 +15,8 @@ returned in ``next_cursor`` from a previous page; v1 form is
 
 from __future__ import annotations
 
+import time
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -47,12 +49,24 @@ def _get_orchestrator(request: Request) -> SearchOrchestrator:
 def post_search(body: SearchPayload, request: Request) -> dict:
     orch = _get_orchestrator(request)
     sort = body.sort if body.sort in ALLOWED_SORTS else "relevance"
-    response = orch.search(
-        SearchRequest(
-            query=body.query,
-            limit=body.limit,
-            sort=sort,
-            cursor=body.cursor,
+    started_at = time.perf_counter()
+    ok = False
+    try:
+        response = orch.search(
+            SearchRequest(
+                query=body.query,
+                limit=body.limit,
+                sort=sort,
+                cursor=body.cursor,
+            )
         )
-    )
-    return response.to_dict()
+        ok = True
+        return response.to_dict()
+    finally:
+        store = getattr(request.app.state, "observability_store", None)
+        if store is not None:
+            store.record_duration(
+                "search",
+                int((time.perf_counter() - started_at) * 1000),
+                ok=ok,
+            )

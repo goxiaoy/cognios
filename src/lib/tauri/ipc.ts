@@ -26,6 +26,7 @@ import type {
   NodeContent,
   NodeIndexStatus,
   ProviderSecretLookupInput,
+  SearchObservability,
   SearchQueryInput,
   SearchResponse,
   SearchSettings,
@@ -228,6 +229,12 @@ export async function searchQuery(
 
 export async function getIndexingStatus(): Promise<SidecarEnvelope<IndexStatus>> {
   return invoke<SidecarEnvelope<IndexStatus>>("get_indexing_status");
+}
+
+export async function getSearchObservability(): Promise<
+  SidecarEnvelope<SearchObservability>
+> {
+  return invoke<SidecarEnvelope<SearchObservability>>("get_search_observability");
 }
 
 export async function getNodeIndexingStatus(

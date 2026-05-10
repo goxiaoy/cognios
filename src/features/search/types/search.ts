@@ -10,6 +10,7 @@ import type {
   NodeContentChunk,
   NodeIndexStatus,
   ProviderSecretLookupInput,
+  SearchObservability,
   SearchQueryInput,
   SearchResponse,
   SearchResult,
@@ -28,6 +29,7 @@ export type {
   NodeContentChunk,
   NodeIndexStatus,
   ProviderSecretLookupInput,
+  SearchObservability,
   SearchQueryInput,
   SearchResponse,
   SearchResult,
@@ -46,6 +48,7 @@ export type {
 export interface SearchClient {
   search(input: SearchQueryInput): Promise<SidecarEnvelope<SearchResponse>>;
   indexStatus(): Promise<SidecarEnvelope<IndexStatus>>;
+  observability(): Promise<SidecarEnvelope<SearchObservability>>;
   nodeIndexStatus(nodeId: string): Promise<SidecarEnvelope<NodeIndexStatus>>;
   nodeContent(nodeId: string): Promise<SidecarEnvelope<NodeContent>>;
   modelsStatus(): Promise<SidecarEnvelope<ModelsStatus>>;

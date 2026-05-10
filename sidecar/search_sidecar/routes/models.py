@@ -8,6 +8,7 @@ progress streaming.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Request
@@ -53,11 +54,19 @@ async def download(role: str, body: DownloadRequest, request: Request):
         raise HTTPException(status_code=404, detail=f"unknown role: {role!r}")
 
     async def stream():
+        started_at = time.perf_counter()
+        ok = False
         try:
             async for event in manager.download(role):
+                if event.state == "ready":
+                    ok = True
+                    _record_download_duration(request, started_at, ok=True)
+                elif event.state == "error":
+                    _record_download_duration(request, started_at, ok=False)
                 yield _sse_event(event)
         except RuntimeError as err:
             # e.g. "already downloading"
+            _record_download_duration(request, started_at, ok=False)
             yield _sse_event(
                 ProgressEvent(role=role, state="error", error=str(err))
             )
@@ -69,3 +78,13 @@ def _sse_event(event: ProgressEvent) -> str:
     """Format one SSE ``data:`` frame from a ProgressEvent."""
     payload = json.dumps(asdict(event), separators=(",", ":"))
     return f"data: {payload}\n\n"
+
+
+def _record_download_duration(request: Request, started_at: float, *, ok: bool) -> None:
+    store = getattr(request.app.state, "observability_store", None)
+    if store is not None:
+        store.record_duration(
+            "model_download",
+            int((time.perf_counter() - started_at) * 1000),
+            ok=ok,
+        )

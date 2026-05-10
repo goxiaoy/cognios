@@ -10,6 +10,7 @@ import { unwrapEnvelope } from "../../../lib/contracts/search";
 import type {
   IndexStatus,
   ModelsStatus,
+  SearchObservability,
   SearchResponse,
   SidecarEnvelope,
 } from "../types/search";
@@ -75,6 +76,29 @@ describe("searchClient.indexStatus", () => {
     const result = await searchClient.indexStatus();
     expect(mockedInvoke).toHaveBeenCalledWith("get_indexing_status");
     expect(result.data?.queueDepth).toBe(3);
+  });
+});
+
+describe("searchClient.observability", () => {
+  it("calls get_search_observability and returns the envelope", async () => {
+    const env: SidecarEnvelope<SearchObservability> = {
+      state: "ready",
+      data: {
+        recentIndexedNodes: [{ date: "2026-05-10", count: 3 }],
+        latency: {
+          search: { sampleCount: 1, failureCount: 0, latestMs: 12, p50Ms: 12, p90Ms: 12, p99Ms: 12 },
+          indexing: { sampleCount: 0, failureCount: 0, latestMs: null, p50Ms: null, p90Ms: null, p99Ms: null },
+          enhancement: { sampleCount: 0, failureCount: 0, latestMs: null, p50Ms: null, p90Ms: null, p99Ms: null },
+          modelDownload: { sampleCount: 0, failureCount: 0, latestMs: null, p50Ms: null, p90Ms: null, p99Ms: null },
+        },
+        tokenUsage: [],
+      },
+    };
+    mockedInvoke.mockResolvedValueOnce(env);
+
+    const result = await searchClient.observability();
+    expect(mockedInvoke).toHaveBeenCalledWith("get_search_observability");
+    expect(result.data?.recentIndexedNodes[0].count).toBe(3);
   });
 });
 

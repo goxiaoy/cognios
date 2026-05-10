@@ -32,6 +32,7 @@ function makeSearchClient(overrides: Partial<SearchClient> = {}): SearchClient {
   return {
     search: vi.fn().mockResolvedValue({ state: "initialising" }),
     indexStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
+    observability: vi.fn().mockResolvedValue({ state: "initialising" }),
     nodeIndexStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
     modelsStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
     startModelDownload: vi.fn().mockResolvedValue(undefined),

@@ -369,6 +369,7 @@ pub fn run() {
             commands::chat::test_chat_provider,
             commands::search::search_query,
             commands::search::get_indexing_status,
+            commands::search::get_search_observability,
             commands::search::get_node_indexing_status,
             commands::search::get_node_content,
             commands::search::get_models_status,

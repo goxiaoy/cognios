@@ -71,6 +71,10 @@ def test_post_search_returns_envelope(client: TestClient):
     assert isinstance(body["results"], list)
     assert any(r["node_id"] == UUID_A for r in body["results"])
 
+    metrics = client.get("/observability/summary", headers=_auth()).json()
+    assert metrics["latency"]["search"]["sample_count"] == 1
+    assert metrics["latency"]["search"]["latest_ms"] is not None
+
 
 def test_post_search_empty_query(client: TestClient):
     resp = client.post("/search", json={"query": ""}, headers=_auth())

@@ -25,10 +25,11 @@ pub use client::{
     ChatMemoryRefreshRequestDto, ChatMemoryRefreshResponseDto, ChatModelsResponseDto,
     ChatProviderTestRequestDto, ChatTurnMessageDto, ChatTurnRequestDto, ChatTurnResponseDto,
     ChatTurnStreamEventDto, FeatureConfigDto, IndexSnapshotDto, IndexSnapshotEntry, IndexStatusDto,
-    ModelDownloadEvent, ModelRoleStatusDto, ModelsStatusDto, NodeContentChunkDto, NodeContentDto,
-    NodeEvent, NodeEventAck, NodeEventKind, NodeIndexStatusDto, ProviderConfigDto, SearchInput,
-    SearchResponseDto, SearchResultDto, SearchSettingsDto, SearchSidecarClient, SidecarEnvelope,
-    SidecarEnvelopeState,
+    LatencyOverviewDto, LatencySummaryDto, ModelDownloadEvent, ModelRoleStatusDto,
+    ModelsStatusDto, NodeContentChunkDto, NodeContentDto, NodeEvent, NodeEventAck, NodeEventKind,
+    NodeIndexStatusDto, ProviderConfigDto, RecentIndexedNodeCountDto, SearchInput,
+    SearchObservabilityDto, SearchResponseDto, SearchResultDto, SearchSettingsDto,
+    SearchSidecarClient, SidecarEnvelope, SidecarEnvelopeState, TokenUsageSummaryDto,
 };
 pub use runtime_file::{read_runtime_file, RuntimeFile, RuntimeFileError};
 pub use settings_fallback::read_settings_file_fallback;

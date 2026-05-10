@@ -62,6 +62,38 @@ export interface IndexStatus {
   enhancementTotalImages: number;
 }
 
+export interface RecentIndexedNodeCount {
+  date: string;
+  count: number;
+}
+
+export interface LatencySummary {
+  sampleCount: number;
+  failureCount: number;
+  latestMs?: number | null;
+  p50Ms?: number | null;
+  p90Ms?: number | null;
+  p99Ms?: number | null;
+}
+
+export interface SearchObservability {
+  recentIndexedNodes: RecentIndexedNodeCount[];
+  latency: {
+    search: LatencySummary;
+    indexing: LatencySummary;
+    enhancement: LatencySummary;
+    modelDownload: LatencySummary;
+  };
+  tokenUsage: Array<{
+    providerId: string;
+    model: string;
+    requests: number;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  }>;
+}
+
 export type NodeIndexState =
   | "pending"
   | "indexing"

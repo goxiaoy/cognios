@@ -149,7 +149,9 @@ def post_chat_provider_test(body: ChatProviderTestPayload) -> dict:
 @router.post("/turns")
 def post_chat_turn(body: ChatTurnPayload, request: Request) -> dict:
     response = _get_orchestrator(request).run_turn(_turn_request(body))
-    return response.to_dict()
+    result = response.to_dict()
+    _record_provider_usage(request, result.get("provider"))
+    return result
 
 
 @router.post("/turns/stream")
@@ -159,14 +161,17 @@ def post_chat_turn_stream(body: ChatTurnPayload, request: Request):
 
     def stream():
         for event in orchestrator.stream_turn(turn_request):
-            yield _sse_event(event.to_dict())
+            body = event.to_dict()
+            if event.event == "final" and event.turn is not None:
+                _record_provider_usage(request, body.get("turn", {}).get("provider"))
+            yield _sse_event(body)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 @router.post("/memory/refresh")
 def post_chat_memory_refresh(body: ChatMemoryRefreshPayload, request: Request) -> dict:
-    return _get_orchestrator(request).refresh_memory(
+    response = _get_orchestrator(request).refresh_memory(
         ChatMemoryRefreshRequest(
             previous_memory=body.previous_memory,
             messages=[
@@ -182,6 +187,21 @@ def post_chat_memory_refresh(body: ChatMemoryRefreshPayload, request: Request) -
             model=body.model,
         )
     ).to_dict()
+    _record_provider_usage(request, response.get("provider"))
+    return response
+
+
+def _record_provider_usage(request: Request, provider: dict | None) -> None:
+    if not provider:
+        return
+    store = getattr(request.app.state, "observability_store", None)
+    if store is None:
+        return
+    store.record_usage(
+        provider_id=provider.get("providerId") or provider.get("provider_id"),
+        model=provider.get("model"),
+        usage=provider.get("usage"),
+    )
 
 
 def _turn_request(body: ChatTurnPayload) -> ChatTurnRequest:

@@ -77,6 +77,21 @@ def test_mark_indexed_clears_in_flight(tmp_path: Path):
         queue.close()
 
 
+def test_recent_indexed_counts_returns_day_buckets(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        queue.enqueue(node_id="aaa", kind="note", name="A")
+        queue.claim_next()
+        queue.mark_indexed("aaa")
+
+        counts = queue.recent_indexed_counts(days=7)
+        assert len(counts) == 7
+        assert counts[-1]["count"] >= 1
+        assert "date" in counts[-1]
+    finally:
+        queue.close()
+
+
 def test_mark_error_truncates_long_messages(tmp_path: Path):
     queue = open_queue(tmp_path / "queue.db")
     try:

@@ -4,6 +4,7 @@ import { ChatLayout } from "../features/chat/components/ChatLayout";
 import { explorerClient } from "../features/explorer/api/explorerClient";
 import { ExplorerLayout } from "../features/explorer/components/ExplorerLayout";
 import { ExplorerStoreProvider } from "../features/explorer/store/ExplorerStoreContext";
+import { HomeDashboard } from "../features/home/components/HomeDashboard";
 import { searchClient } from "../features/search/api/searchClient";
 import { SearchPalette } from "../features/search/components/SearchPalette";
 import { SettingsLayout } from "../features/settings/components/SettingsLayout";
@@ -93,6 +94,12 @@ function AppShell() {
             </section>
           ) : null}
 
+          {activeSection === "home" ? (
+            <section className="home-page-panel">
+              <HomeDashboard client={searchClient} />
+            </section>
+          ) : null}
+
           <div className={`app-panel${activeSection === "chat" ? " is-active" : ""}`}>
             <section className="chat-page-panel" aria-hidden={activeSection !== "chat"}>
               <ChatLayout
@@ -104,7 +111,7 @@ function AppShell() {
             </section>
           </div>
 
-          {activeSection !== "explorer" && activeSection !== "settings" && activeSection !== "chat" ? (
+          {activeSection !== "explorer" && activeSection !== "settings" && activeSection !== "chat" && activeSection !== "home" ? (
             <section className="placeholder-panel">
               <p className="eyebrow">{sectionLabel}</p>
               <p className="muted-copy">

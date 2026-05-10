@@ -33,6 +33,7 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
         enhancementTotalImages: 0,
       },
     }),
+    observability: vi.fn().mockResolvedValue({ state: "initialising" }),
     nodeIndexStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
     modelsStatus: vi.fn().mockResolvedValue({
       state: "ready",
@@ -146,7 +147,7 @@ describe("SettingsLayout", () => {
     });
   });
 
-  it("renders the diagnostics summary and exposes model state inline (no toggle)", async () => {
+  it("keeps diagnostics out of Settings and exposes model state inline", async () => {
     const client = makeClient({
       settings: vi.fn().mockResolvedValue(readySettings()),
     });
@@ -154,12 +155,10 @@ describe("SettingsLayout", () => {
     await waitFor(() => {
       expect(screen.getByText("Features")).toBeInTheDocument();
     });
-    // The bottom strip is always-visible — no "Show Diagnostics"
-    // toggle exists anymore.
     expect(
       screen.queryByRole("button", { name: /show diagnostics/i })
     ).toBeNull();
-    expect(screen.getByText("Indexed items")).toBeInTheDocument();
+    expect(screen.queryByText("Indexed items")).toBeNull();
     // The local-gte provider's role is "ready" in the makeClient
     // mock, so its row's status pill reads "Ready".
     expect(screen.getAllByText("Ready").length).toBeGreaterThan(0);
@@ -292,7 +291,7 @@ describe("SettingsLayout", () => {
     expect(screen.queryByRole("dialog", { name: "Local GTE" })).toBeNull();
   });
 
-  it("renders OCR enhancement diagnostics when advanced OCR is ready", async () => {
+  it("does not render OCR enhancement diagnostics in Settings", async () => {
     const client = makeClient({
       settings: vi.fn().mockResolvedValue(readySettings()),
       indexStatus: vi.fn().mockResolvedValue({
@@ -323,11 +322,10 @@ describe("SettingsLayout", () => {
     });
     render(<SettingsLayout client={client} />);
     await waitFor(() => {
-      expect(screen.getByText("OCR enhancement")).toBeInTheDocument();
+      expect(screen.getByText("Features")).toBeInTheDocument();
     });
-    expect(screen.getByText("5 / 10")).toBeInTheDocument();
-    expect(screen.getByText("4 remaining")).toBeInTheDocument();
-    expect(screen.getByText("1 failed")).toBeInTheDocument();
+    expect(screen.queryByText("OCR enhancement")).toBeNull();
+    expect(screen.queryByText("5 / 10")).toBeNull();
   });
 });
 

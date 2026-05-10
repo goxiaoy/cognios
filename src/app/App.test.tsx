@@ -33,6 +33,19 @@ vi.mock("../lib/tauri/ipc", () => ({
   // Phase 2 / Unit 7 search-sidecar bridge — stubbed for the App test.
   searchQuery: vi.fn().mockResolvedValue({ state: "initialising" }),
   getIndexingStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
+  getSearchObservability: vi.fn().mockResolvedValue({
+    state: "ready",
+    data: {
+      recentIndexedNodes: [],
+      latency: {
+        search: { sampleCount: 0, failureCount: 0, latestMs: null, p50Ms: null, p90Ms: null, p99Ms: null },
+        indexing: { sampleCount: 0, failureCount: 0, latestMs: null, p50Ms: null, p90Ms: null, p99Ms: null },
+        enhancement: { sampleCount: 0, failureCount: 0, latestMs: null, p50Ms: null, p90Ms: null, p99Ms: null },
+        modelDownload: { sampleCount: 0, failureCount: 0, latestMs: null, p50Ms: null, p90Ms: null, p99Ms: null },
+      },
+      tokenUsage: [],
+    },
+  }),
   getNodeIndexingStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
   getModelsStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
   startModelDownload: vi.fn().mockResolvedValue(undefined),
@@ -157,6 +170,18 @@ describe("App", () => {
     expect(await screen.findByText(/select an item to preview/i)).toBeInTheDocument();
     // Inspector empty placeholder
     expect(screen.getByText("No selection")).toBeInTheDocument();
+  });
+
+  it("renders Home statistics from the Home navigation item", async () => {
+    getExplorerSnapshot.mockResolvedValue({ roots: [] });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Home$/i }));
+
+    expect(await screen.findByText("Indexed items")).toBeInTheDocument();
+    expect(screen.getByText("Recent indexing")).toBeInTheDocument();
+    expect(screen.queryByText(/stubbed in milestone/i)).not.toBeInTheDocument();
   });
 
   it("submits a new folder via the tree toolbar and renders it in the tree", async () => {
@@ -474,7 +499,7 @@ describe("App", () => {
 
     expect(await screen.findByText("Inbox")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Home$/i }));
-    expect(screen.getByText(/This section is stubbed in Milestone 2/i)).toBeInTheDocument();
+    expect(await screen.findByText("Recent indexing")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Explorer$/i }));
     expect(await screen.findByText("Inbox")).toBeInTheDocument();
     expect(getExplorerSnapshot).toHaveBeenCalledTimes(1);

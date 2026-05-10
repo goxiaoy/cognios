@@ -667,6 +667,47 @@ class IndexingQueue:
             ).fetchall()
         return [r["node_id"] for r in rows]
 
+    def recent_indexed_counts(self, *, days: int = 28) -> list[dict[str, int | str]]:
+        """Return day-level counts for recently indexed rows.
+
+        This is intentionally based on ``indexed_at`` rather than VFS
+        update timestamps so metadata-only changes do not inflate Home's
+        activity graph.
+        """
+        capped_days = max(1, min(int(days), 366))
+        local_tz = datetime.now().astimezone().tzinfo
+        today = datetime.now().astimezone().date()
+        start = today.toordinal() - capped_days + 1
+        counts = {
+            datetime.fromordinal(start + offset).date().isoformat(): 0
+            for offset in range(capped_days)
+        }
+        cutoff = (
+            datetime.fromordinal(start)
+            .replace(tzinfo=local_tz)
+            .astimezone(timezone.utc)
+            .isoformat()
+        )
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT indexed_at
+                FROM jobs
+                WHERE state = ?
+                  AND indexed_at IS NOT NULL
+                  AND indexed_at >= ?
+                """,
+                (JobState.INDEXED.value, cutoff),
+            ).fetchall()
+        for row in rows:
+            indexed_at = _parse(row["indexed_at"])
+            if indexed_at is None:
+                continue
+            day = indexed_at.astimezone(local_tz).date().isoformat()
+            if day in counts:
+                counts[day] += 1
+        return [{"date": day, "count": count} for day, count in counts.items()]
+
     def list_node_ids(self) -> set[str]:
         with self._lock:
             rows = self._conn.execute("SELECT node_id FROM jobs").fetchall()

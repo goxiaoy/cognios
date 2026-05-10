@@ -12,7 +12,7 @@ use tauri::{Emitter, State};
 
 use crate::services::search::{
     IndexStatusDto, ModelDownloadEvent, ModelsStatusDto, NodeContentDto, NodeIndexStatusDto,
-    SearchInput, SearchResponseDto, SidecarEnvelope,
+    SearchInput, SearchObservabilityDto, SearchResponseDto, SidecarEnvelope,
 };
 use crate::AppState;
 
@@ -68,6 +68,13 @@ pub async fn search_query(
 #[tauri::command]
 pub async fn get_indexing_status(state: State<'_, AppState>) -> EnvelopeResult<IndexStatusDto> {
     Ok(state.search_client.index_status().await)
+}
+
+#[tauri::command]
+pub async fn get_search_observability(
+    state: State<'_, AppState>,
+) -> EnvelopeResult<SearchObservabilityDto> {
+    Ok(state.search_client.observability_summary().await)
 }
 
 #[tauri::command]

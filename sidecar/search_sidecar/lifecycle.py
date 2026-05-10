@@ -45,6 +45,7 @@ from .index.processors.image import SUPPORTED_EXTENSIONS as IMAGE_EXTENSIONS
 from .index.processors.pdf import SUPPORTED_EXTENSIONS as PDF_EXTENSIONS
 from .index.queue import open_queue
 from .models import DEFAULTS, ModelManager
+from .observability import ObservabilityStore
 from .rerank import select_reranker
 from .retrieval import SearchOrchestrator
 from .runtime_file import (
@@ -152,6 +153,7 @@ def serve(storage_dir: Path) -> int:
         extract_dir=search_dir / "extract",
     )
     advanced_ocr_autorun = advanced_ocr_autorun_enabled()
+    observability_store = ObservabilityStore()
     _run_advanced_ocr_backfill_on_boot(
         indexing_queue,
         dispatcher,
@@ -161,6 +163,7 @@ def serve(storage_dir: Path) -> int:
         queue=indexing_queue,
         dispatcher=dispatcher,
         enable_enhancement=advanced_ocr_autorun,
+        observability_store=observability_store,
     )
     indexing_runner.start()
     reranker = select_reranker(model_manager=model_manager, settings=settings)
@@ -186,6 +189,7 @@ def serve(storage_dir: Path) -> int:
         lancedb_store=lancedb_store,
         search_orchestrator=search_orchestrator,
         chat_orchestrator=chat_orchestrator,
+        observability_store=observability_store,
         settings_path=settings_path,
         boot_settings_signature=boot_signature(settings),
         extract_dir=search_dir / "extract",

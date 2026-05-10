@@ -7,7 +7,6 @@ import { useSearchSubsystemStatus } from "../hooks/useSearchSubsystemStatus";
 import { FeaturesList } from "./FeaturesList";
 import { ProvidersSection } from "./ProvidersSection";
 import { RestartConfirmation } from "./RestartConfirmation";
-import { SettingsDiagnostics } from "./SettingsDiagnostics";
 
 /**
  * Primary Settings page. Renders the feature catalogue (with a
@@ -22,7 +21,7 @@ import { SettingsDiagnostics } from "./SettingsDiagnostics";
  * supervisor cycles, the new sidecar boots, and Settings re-fetches.
  */
 export function SettingsLayout({ client }: { client: SearchClient }) {
-  const { models, indexing } = useSearchSubsystemStatus(client);
+  const { models } = useSearchSubsystemStatus(client);
   const progress = useModelDownloadProgress();
   const [settings, setSettings] = useState<SearchSettings | null>(null);
   const [showRestart, setShowRestart] = useState(false);
@@ -124,11 +123,6 @@ export function SettingsLayout({ client }: { client: SearchClient }) {
               progress={progress}
             />
           </div>
-          <SettingsDiagnostics
-            settings={settings}
-            indexing={indexing}
-            models={models}
-          />
         </>
       ) : (
         <p className="muted-copy">Loading settings…</p>

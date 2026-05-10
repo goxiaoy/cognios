@@ -21,6 +21,7 @@ from typing import Optional
 from .dispatch import Dispatcher
 from .processors.enhancement import EnhancementTransientError
 from .queue import IndexingJob, IndexingQueue
+from ..observability import ObservabilityStore
 
 LOG = logging.getLogger("search_sidecar.index.runner")
 
@@ -41,10 +42,12 @@ class IndexingRunner:
         queue: IndexingQueue,
         dispatcher: Dispatcher,
         enable_enhancement: bool = True,
+        observability_store: ObservabilityStore | None = None,
     ) -> None:
         self._queue = queue
         self._dispatcher = dispatcher
         self._enable_enhancement = enable_enhancement
+        self._observability_store = observability_store
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         # When True, the runner stops claiming new jobs but keeps
@@ -174,29 +177,35 @@ class IndexingRunner:
         )
         try:
             processor.process_enhancement(job, claim_seq)
+            elapsed_ms = _elapsed_ms(started_at)
             LOG.info(
                 "advanced-OCR enhancement finished node_id=%s kind=%s elapsed_ms=%d",
                 job.node_id,
                 job.kind,
-                _elapsed_ms(started_at),
+                elapsed_ms,
             )
+            self._record_duration("enhancement", elapsed_ms)
         except EnhancementTransientError:
+            elapsed_ms = _elapsed_ms(started_at)
             LOG.info(
                 "advanced-OCR enhancement transient failure node_id=%s kind=%s "
                 "elapsed_ms=%d",
                 job.node_id,
                 job.kind,
-                _elapsed_ms(started_at),
+                elapsed_ms,
             )
+            self._record_duration("enhancement", elapsed_ms, ok=False)
         except Exception as err:
+            elapsed_ms = _elapsed_ms(started_at)
             LOG.warning(
                 "advanced-OCR enhancement failed node_id=%s kind=%s "
                 "elapsed_ms=%d: %s",
                 job.node_id,
                 job.kind,
-                _elapsed_ms(started_at),
+                elapsed_ms,
                 err,
             )
+            self._record_duration("enhancement", elapsed_ms, ok=False)
             self._queue.mark_enhancement_failed(job.node_id)
         finally:
             with self._enhancement_lock:
@@ -204,36 +213,42 @@ class IndexingRunner:
         return True
 
     def _handle(self, job: IndexingJob) -> None:
+        started_at = time.monotonic()
         proc = self._dispatcher.find(job)
         if proc is None:
             if job.kind in {"note", "file", "url", "folder", "mount"}:
                 try:
                     written = self._dispatcher.replace_metadata(job)
                 except Exception as err:
+                    elapsed_ms = _elapsed_ms(started_at)
                     LOG.warning(
-                        "metadata indexing failed node_id=%s kind=%s: %s",
+                        "metadata indexing failed node_id=%s kind=%s elapsed_ms=%d: %s",
                         job.node_id,
                         job.kind,
+                        elapsed_ms,
                         err,
                     )
+                    self._record_duration("indexing", elapsed_ms, ok=False)
                     self._queue.mark_error(
                         job.node_id, f"{type(err).__name__}: {err}"
                     )
                     return
                 self._queue.mark_indexed(job.node_id)
+                elapsed_ms = _elapsed_ms(started_at)
                 LOG.info(
-                    "metadata indexing finished node_id=%s kind=%s chunks=%d",
+                    "metadata indexing finished node_id=%s kind=%s chunks=%d elapsed_ms=%d",
                     job.node_id,
                     job.kind,
                     written,
+                    elapsed_ms,
                 )
+                self._record_duration("indexing", elapsed_ms)
                 return
             self._queue.mark_error(
                 job.node_id,
                 f"no processor for kind={job.kind!r} path={job.absolute_content_path!r}",
             )
             return
-        started_at = time.monotonic()
         LOG.info(
             "indexing started node_id=%s kind=%s name=%r content_version=%s path=%s",
             job.node_id,
@@ -246,23 +261,31 @@ class IndexingRunner:
             written = proc.process(job)
             metadata_written = self._dispatcher.replace_metadata(job)
         except Exception as err:
+            elapsed_ms = _elapsed_ms(started_at)
             LOG.warning(
                 "indexing failed node_id=%s kind=%s elapsed_ms=%d: %s",
                 job.node_id,
                 job.kind,
-                _elapsed_ms(started_at),
+                elapsed_ms,
                 err,
             )
+            self._record_duration("indexing", elapsed_ms, ok=False)
             self._queue.mark_error(job.node_id, f"{type(err).__name__}: {err}")
             return
         self._queue.mark_indexed(job.node_id)
+        elapsed_ms = _elapsed_ms(started_at)
         LOG.info(
             "indexing finished node_id=%s kind=%s chunks=%d elapsed_ms=%d",
             job.node_id,
             job.kind,
             written + metadata_written,
-            _elapsed_ms(started_at),
+            elapsed_ms,
         )
+        self._record_duration("indexing", elapsed_ms)
+
+    def _record_duration(self, kind: str, elapsed_ms: int, *, ok: bool = True) -> None:
+        if self._observability_store is not None:
+            self._observability_store.record_duration(kind, elapsed_ms, ok=ok)
 
 
 def _elapsed_ms(started_at: float) -> int:

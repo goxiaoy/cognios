@@ -201,6 +201,58 @@ pub struct IndexStatusDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct RecentIndexedNodeCountDto {
+    pub date: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct LatencySummaryDto {
+    pub sample_count: u64,
+    pub failure_count: u64,
+    #[serde(default)]
+    pub latest_ms: Option<u64>,
+    #[serde(default)]
+    pub p50_ms: Option<u64>,
+    #[serde(default)]
+    pub p90_ms: Option<u64>,
+    #[serde(default)]
+    pub p99_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct LatencyOverviewDto {
+    pub search: LatencySummaryDto,
+    pub indexing: LatencySummaryDto,
+    pub enhancement: LatencySummaryDto,
+    pub model_download: LatencySummaryDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct TokenUsageSummaryDto {
+    pub provider_id: String,
+    pub model: String,
+    pub requests: u64,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct SearchObservabilityDto {
+    #[serde(default)]
+    pub recent_indexed_nodes: Vec<RecentIndexedNodeCountDto>,
+    pub latency: LatencyOverviewDto,
+    #[serde(default)]
+    pub token_usage: Vec<TokenUsageSummaryDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackfillResultDto {
     pub flagged: u64,
 }
@@ -749,6 +801,10 @@ impl SearchSidecarClient {
         self.get_envelope("/index/status").await
     }
 
+    pub async fn observability_summary(&self) -> SidecarEnvelope<SearchObservabilityDto> {
+        self.get_envelope("/observability/summary").await
+    }
+
     pub async fn set_indexing_paused(&self, paused: bool) -> SidecarEnvelope<RunnerPauseResultDto> {
         self.post_envelope("/index/pause", &serde_json::json!({ "paused": paused }))
             .await
@@ -1170,6 +1226,38 @@ mod tests {
         assert_eq!(to_ts["indexedChunks"], 100);
         assert_eq!(to_ts["enhancementPending"], 4);
         assert_eq!(to_ts["enhancementTotalImages"], 10);
+    }
+
+    #[test]
+    fn observability_round_trips_snake_to_camel() {
+        let from_python = r#"{
+            "recent_indexed_nodes": [{"date": "2026-05-10", "count": 4}],
+            "latency": {
+                "search": {"sample_count": 3, "failure_count": 0, "latest_ms": 15, "p50_ms": 10, "p90_ms": 20, "p99_ms": 30},
+                "indexing": {"sample_count": 0, "failure_count": 0, "latest_ms": null, "p50_ms": null, "p90_ms": null, "p99_ms": null},
+                "enhancement": {"sample_count": 1, "failure_count": 1, "latest_ms": 200, "p50_ms": 200, "p90_ms": 200, "p99_ms": 200},
+                "model_download": {"sample_count": 0, "failure_count": 0, "latest_ms": null, "p50_ms": null, "p90_ms": null, "p99_ms": null}
+            },
+            "token_usage": [{
+                "provider_id": "local-ollama",
+                "model": "llama3",
+                "requests": 2,
+                "prompt_tokens": 10,
+                "completion_tokens": 8,
+                "total_tokens": 18
+            }]
+        }"#;
+        let parsed: SearchObservabilityDto =
+            serde_json::from_str(from_python).expect("decode");
+        assert_eq!(parsed.recent_indexed_nodes[0].count, 4);
+        assert_eq!(parsed.latency.search.p90_ms, Some(20));
+        assert_eq!(parsed.token_usage[0].provider_id, "local-ollama");
+
+        let to_ts = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(to_ts["recentIndexedNodes"][0]["count"], 4);
+        assert_eq!(to_ts["latency"]["modelDownload"]["sampleCount"], 0);
+        assert_eq!(to_ts["tokenUsage"][0]["providerId"], "local-ollama");
+        assert!(to_ts.get("recent_indexed_nodes").is_none());
     }
 
     #[test]

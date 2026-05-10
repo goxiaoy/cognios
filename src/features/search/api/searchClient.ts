@@ -1,5 +1,6 @@
 import {
   deleteProviderSecret,
+  getSearchObservability,
   getIndexingStatus,
   getModelsStatus,
   getNodeContent,
@@ -19,6 +20,7 @@ import type { SearchClient } from "../types/search";
 export const searchClient: SearchClient = {
   search: searchQuery,
   indexStatus: getIndexingStatus,
+  observability: getSearchObservability,
   nodeIndexStatus: getNodeIndexingStatus,
   nodeContent: getNodeContent,
   modelsStatus: getModelsStatus,

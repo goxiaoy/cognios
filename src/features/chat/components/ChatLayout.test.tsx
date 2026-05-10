@@ -163,6 +163,7 @@ function makeSearchClient(settings = makeSearchSettings()): SearchClient {
       },
     }),
     indexStatus: vi.fn(),
+    observability: vi.fn(),
     nodeIndexStatus: vi.fn(),
     nodeContent: vi.fn().mockResolvedValue({
       state: "ready",

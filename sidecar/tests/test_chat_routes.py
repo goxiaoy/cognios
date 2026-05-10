@@ -45,6 +45,7 @@ class _Provider:
             content="answer",
             provider_id=self.provider_id,
             model=self.model,
+            usage={"prompt_tokens": 3, "completion_tokens": 2},
         )
 
     def generate_stream(self, request: ChatGenerationRequest):
@@ -99,6 +100,11 @@ def test_chat_turn_route_generates_with_retrieved_sources_without_confirmation()
     assert body["citations"][0]["nodeId"] == "n1"
     assert "Citation: [W1]" in captured["context"][0]
     assert "Path: 事故/照片/a.jpg" in captured["context"][0]
+
+    with TestClient(app) as client:
+        metrics = client.get("/observability/summary", headers=_auth()).json()
+    assert metrics["token_usage"][0]["provider_id"] == "test-provider"
+    assert metrics["token_usage"][0]["total_tokens"] == 5
 
 
 def test_chat_turn_route_generates_after_cluster_acceptance():

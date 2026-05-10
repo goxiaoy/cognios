@@ -15,6 +15,7 @@ export function makeStubSearchClient(
   return {
     search: vi.fn().mockResolvedValue({ state: "initialising" }),
     indexStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
+    observability: vi.fn().mockResolvedValue({ state: "initialising" }),
     nodeIndexStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
     nodeContent: vi.fn().mockResolvedValue({ state: "initialising" }),
     modelsStatus: vi.fn().mockResolvedValue({ state: "initialising" }),

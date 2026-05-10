@@ -19,8 +19,10 @@ from .routes import events as events_routes
 from .routes import chat as chat_routes
 from .routes import index as index_routes
 from .routes import models as models_routes
+from .routes import observability as observability_routes
 from .routes import search as search_routes
 from .routes import settings as settings_routes
+from .observability import ObservabilityStore
 
 if TYPE_CHECKING:
     from .index.embedder import Embedder
@@ -42,6 +44,7 @@ def build_app(
     lancedb_store: "LanceDBStore | None" = None,
     search_orchestrator: "SearchOrchestrator | None" = None,
     chat_orchestrator: "ChatOrchestrator | None" = None,
+    observability_store: ObservabilityStore | None = None,
     settings_path: Path | None = None,
     boot_settings_signature: str | None = None,
     extract_dir: Path | None = None,
@@ -78,7 +81,10 @@ def build_app(
     app.include_router(index_routes.router)
     app.include_router(search_routes.router)
     app.include_router(chat_routes.router)
+    app.include_router(observability_routes.router)
     app.include_router(settings_routes.router)
+
+    app.state.observability_store = observability_store or ObservabilityStore()
 
     if model_manager is not None:
         app.state.model_manager = model_manager
