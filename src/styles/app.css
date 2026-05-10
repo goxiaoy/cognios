@@ -5667,12 +5667,33 @@ body.is-resizing-pane {
   font: 500 0.72rem var(--font-mono);
 }
 
+.chat-session-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 2rem;
+  align-items: stretch;
+  gap: 0.15rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.chat-session-row:hover {
+  background: var(--paper-2);
+  border-color: var(--line-2);
+}
+
+.chat-session-row.is-active {
+  border-color: var(--line);
+  background: var(--paper);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .chat-session-item {
   display: grid;
   gap: 0.3rem;
   width: 100%;
   min-height: 3rem;
   padding: 0.6rem;
+  border: 0;
   border-color: transparent;
   background: transparent;
   color: var(--ink);
@@ -5681,15 +5702,29 @@ body.is-resizing-pane {
 }
 
 button.chat-session-item:not(:disabled):hover {
-  background: var(--paper-2);
-  border-color: var(--line-2);
+  background: transparent;
+  border-color: transparent;
   box-shadow: none;
 }
 
-button.chat-session-item.is-active {
-  border-color: var(--line);
-  background: var(--paper);
-  box-shadow: inset 3px 0 0 var(--accent);
+.chat-session-delete {
+  display: inline-grid;
+  place-items: center;
+  align-self: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+
+button.chat-session-delete:not(:disabled):hover {
+  border-color: color-mix(in srgb, #8a1e10 24%, var(--line));
+  background: color-mix(in srgb, #8a1e10 8%, var(--paper));
+  color: #8a1e10;
+  box-shadow: none;
 }
 
 .chat-session-title {
@@ -6006,6 +6041,10 @@ button.chat-cluster-item.is-accepted:not(:disabled):hover {
   border-color: var(--line);
   background: var(--paper-2);
   color: var(--muted);
+}
+
+.chat-delete-modal {
+  max-width: 26rem;
 }
 
 @media (max-width: 980px) {

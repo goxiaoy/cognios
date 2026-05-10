@@ -26,7 +26,7 @@ function makeClient(): ChatClient {
       messages: [],
       clusters: [],
     }),
-    deleteSession: vi.fn(),
+    deleteSession: vi.fn().mockResolvedValue({ deleted: true }),
     appendMessage: vi.fn(),
     recordCluster: vi.fn(),
     bindNote: vi.fn(),
@@ -251,5 +251,71 @@ describe("ChatLayout", () => {
     await waitFor(() => {
       expect(screen.getAllByText("事故发生在 3 月 1 日。")).toHaveLength(1);
     });
+  });
+
+  it("deletes the active session and clears the chat when none remain", async () => {
+    const client = makeClient();
+    const session = {
+      id: "s1",
+      title: "Research chat",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    vi.mocked(client.listSessions)
+      .mockResolvedValueOnce([session])
+      .mockResolvedValueOnce([]);
+    vi.mocked(client.getSession).mockResolvedValue({
+      session,
+      messages: [],
+      clusters: [],
+    });
+
+    render(<ChatLayout client={client} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Delete chat Research chat/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Delete$/i }));
+
+    await waitFor(() => {
+      expect(client.deleteSession).toHaveBeenCalledWith({ sessionId: "s1" });
+    });
+    expect(await screen.findByText("No chats yet")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "New chat" })).toBeInTheDocument();
+  });
+
+  it("selects the next session after deleting the active session", async () => {
+    const client = makeClient();
+    const first = {
+      id: "s1",
+      title: "First chat",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    const second = {
+      id: "s2",
+      title: "Second chat",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    vi.mocked(client.listSessions)
+      .mockResolvedValueOnce([first, second])
+      .mockResolvedValueOnce([second]);
+    vi.mocked(client.getSession).mockImplementation(async ({ sessionId }) => ({
+      session: sessionId === "s2" ? second : first,
+      messages: [],
+      clusters: [],
+    }));
+
+    render(<ChatLayout client={client} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Delete chat First chat/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Delete$/i }));
+
+    await waitFor(() => {
+      expect(client.deleteSession).toHaveBeenCalledWith({ sessionId: "s1" });
+    });
+    expect(await screen.findByRole("heading", { name: "Second chat" })).toBeInTheDocument();
   });
 });

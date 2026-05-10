@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Check, CircleAlert, FileText, Globe, MessageSquare, Plus, Search, Sparkles } from "lucide-react";
+import { Check, CircleAlert, FileText, Globe, MessageSquare, Plus, Search, Sparkles, Trash2 } from "lucide-react";
 
 import type {
   ChatSession,
@@ -20,6 +20,8 @@ export function ChatLayout({ client }: { client: ChatClient }) {
   const [models, setModels] = useState<ChatModel[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ChatSession | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -42,10 +44,15 @@ export function ChatLayout({ client }: { client: ChatClient }) {
   async function refreshSessions(preferredId?: string) {
     const next = await client.listSessions();
     setSessions(next);
-    const target = preferredId ?? active?.session.id ?? next[0]?.id;
+    const current = active?.session.id && next.some((session) => session.id === active.session.id)
+      ? active.session.id
+      : null;
+    const target = preferredId ?? current ?? next[0]?.id;
     if (target) {
       const detail = await client.getSession({ sessionId: target });
       setActive(detail);
+    } else {
+      setActive(null);
     }
   }
 
@@ -119,6 +126,40 @@ export function ChatLayout({ client }: { client: ChatClient }) {
     }
   }
 
+  async function deleteSession(session: ChatSession) {
+    setDeletingId(session.id);
+    setError(null);
+    try {
+      const result = await client.deleteSession({ sessionId: session.id });
+      if (!result.deleted) {
+        setError("Chat session was not deleted.");
+        return;
+      }
+
+      const next = await client.listSessions();
+      setSessions(next);
+
+      if (active?.session.id === session.id) {
+        const fallback = next[0];
+        setTurn(null);
+        setAccepted(new Set());
+        setQuery("");
+        if (fallback) {
+          const detail = await client.getSession({ sessionId: fallback.id });
+          setActive(detail);
+        } else {
+          setActive(null);
+        }
+      }
+      setDeleteTarget(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setDeleteTarget(null);
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   const clusters = turn?.clusters ?? [];
   const transcript = active?.messages ?? [];
   const showTransientAnswer = Boolean(
@@ -142,20 +183,33 @@ export function ChatLayout({ client }: { client: ChatClient }) {
             const isActive = active?.session.id === session.id;
 
             return (
-              <button
+              <div
                 key={session.id}
-                type="button"
-                className={`chat-session-item${isActive ? " is-active" : ""}`}
-                onClick={() => refreshSessions(session.id)}
+                className={`chat-session-row${isActive ? " is-active" : ""}`}
               >
-                <span className="chat-session-title">{session.title}</span>
-                {session.boundNoteId ? (
-                  <span className="chat-session-meta">
-                    <FileText size={13} aria-hidden="true" />
-                    Note
-                  </span>
-                ) : null}
-              </button>
+                <button
+                  type="button"
+                  className="chat-session-item"
+                  onClick={() => refreshSessions(session.id)}
+                >
+                  <span className="chat-session-title">{session.title}</span>
+                  {session.boundNoteId ? (
+                    <span className="chat-session-meta">
+                      <FileText size={13} aria-hidden="true" />
+                      Note
+                    </span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  className="chat-session-delete"
+                  aria-label={`Delete chat ${session.title}`}
+                  disabled={busy || deletingId !== null}
+                  onClick={() => setDeleteTarget(session)}
+                >
+                  <Trash2 size={14} aria-hidden="true" />
+                </button>
+              </div>
             );
           })}
         </div>
@@ -264,6 +318,47 @@ export function ChatLayout({ client }: { client: ChatClient }) {
           });
         }}
       />
+
+      {deleteTarget ? (
+        <div className="modal-overlay" onClick={(event) => {
+          if (event.target === event.currentTarget && !deletingId) setDeleteTarget(null);
+        }}>
+          <div
+            className="modal chat-delete-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="chat-delete-title"
+          >
+            <header className="modal-header">
+              <div>
+                <p className="eyebrow">Delete chat</p>
+                <h2 className="modal-title" id="chat-delete-title">{deleteTarget.title}</h2>
+              </div>
+            </header>
+            <div className="modal-body">
+              <p className="muted-copy">This deletes the chat history for this session.</p>
+            </div>
+            <footer className="modal-footer">
+              <button
+                className="ghost-button"
+                type="button"
+                disabled={deletingId !== null}
+                onClick={() => setDeleteTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={deletingId !== null}
+                onClick={() => void deleteSession(deleteTarget)}
+              >
+                {deletingId === deleteTarget.id ? "Deleting..." : "Delete"}
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
