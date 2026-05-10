@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
@@ -274,6 +274,10 @@ describe("App", () => {
       expect(readFileContent).toHaveBeenCalledWith("md-file");
     });
     expect(await screen.findByText("Read-only preview")).toBeInTheDocument();
+    const breadcrumb = screen.getByRole("navigation", { name: /breadcrumb/i });
+    expect(within(breadcrumb).getByText("workspace")).toBeInTheDocument();
+    expect(within(breadcrumb).queryByText("README.md")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "README.md" })).toBeInTheDocument();
   });
 
   it("does not open the browser on a URL row click — open is via the right-click 'Open link' menu", async () => {

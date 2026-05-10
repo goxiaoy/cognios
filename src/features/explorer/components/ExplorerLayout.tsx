@@ -168,7 +168,8 @@ export function ExplorerLayout({
     cannotPreviewNode ??
     null;
 
-  // Compute breadcrumb path for the active file node from the snapshot.
+  // Compute breadcrumb path to the active file's parent from the snapshot.
+  // The preview title already renders the active file name.
   const breadcrumbNodes = useMemo(() => {
     if (!activeFileNode) return [];
     const path: ExplorerNode[] = [];
@@ -183,7 +184,7 @@ export function ExplorerLayout({
       path.unshift(cursor);
       cursor = cursor.parentId ? index.get(cursor.parentId) ?? null : null;
     }
-    return path;
+    return path.slice(0, -1);
   }, [activeFileNode, store.snapshot]);
 
   // Visible flat tree order (respects expansion). Used for shift-click range.
