@@ -1,5 +1,6 @@
 import type { ExplorerNode } from "../../explorer/types/explorer";
 import type { SearchSort } from "../../../lib/contracts/search";
+import { AppDatePicker, AppSelect } from "../../../components/FormControls";
 
 export type KindFilter =
   | "note"
@@ -171,23 +172,13 @@ function SelectControl({
   onChange(value: string): void;
 }) {
   return (
-    <span className="search-filter-select-wrap">
-      <select
-        className="search-filter-select"
-        aria-label={label}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
-      <span className="search-filter-select-caret" aria-hidden="true">
-        ▾
-      </span>
-    </span>
+    <AppSelect
+      label={label}
+      value={value}
+      onChange={onChange}
+      options={options}
+      className="search-filter-select-control"
+    />
   );
 }
 
@@ -201,12 +192,11 @@ function DateControl({
   onChange(value: string): void;
 }) {
   return (
-    <input
-      type="date"
-      className="search-filter-date"
-      aria-label={ariaLabel}
+    <AppDatePicker
+      label={ariaLabel}
+      placeholder={ariaLabel === "Modified after" ? "After" : "Before"}
       value={value}
-      onChange={(event) => onChange(event.target.value)}
+      onChange={onChange}
     />
   );
 }

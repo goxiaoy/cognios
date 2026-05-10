@@ -32,6 +32,7 @@ import type {
   ChatTurnResponse,
   ChatTurnStreamPayload,
 } from "../../../lib/contracts/chat";
+import { AppSelect } from "../../../components/FormControls";
 import { unwrapEnvelope } from "../../../lib/contracts/search";
 import { MarkdownRenderer } from "../../explorer/components/MarkdownRenderer";
 import { SearchPalette, type SearchPaletteSelection } from "../../search/components/SearchPalette";
@@ -628,16 +629,13 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
           <div className="chat-composer-footer">
             <div className="chat-composer-meta-group">
               {models.length > 0 ? (
-                <label className="chat-model-picker">
-                  Model
-                  <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
-                    {models.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <AppSelect
+                  label="Model"
+                  value={selectedModel}
+                  onChange={setSelectedModel}
+                  options={models.map((model) => ({ value: model.id, label: model.name }))}
+                  className="chat-model-picker"
+                />
               ) : null}
               <span className="chat-composer-meta">
                 <Globe size={14} aria-hidden="true" />

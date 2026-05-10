@@ -204,10 +204,12 @@ describe("ChatLayout", () => {
     fireEvent.change(composer, {
       target: { value: "整理事故时间线" },
     });
-    expect(await screen.findByLabelText(/model/i)).toHaveValue("llama3.2");
+    expect(await screen.findByRole("button", { name: /model: llama3\.2/i })).toBeInTheDocument();
     expect(
-      within(screen.getByRole("form", { name: /chat composer/i })).getByLabelText(/model/i)
-    ).toHaveValue("llama3.2");
+      within(screen.getByRole("form", { name: /chat composer/i })).getByRole("button", {
+        name: /model: llama3\.2/i,
+      })
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Synthesize/i })).not.toBeInTheDocument();
     fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
 
@@ -549,9 +551,8 @@ describe("ChatLayout", () => {
     const client = makeClient();
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
-    fireEvent.change(await screen.findByLabelText(/model/i), {
-      target: { value: "qwen2.5:7b" },
-    });
+    fireEvent.click(await screen.findByRole("button", { name: /model: llama3\.2/i }));
+    fireEvent.click(screen.getByRole("option", { name: "qwen2.5:7b" }));
     fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
       target: { value: "整理事故时间线" },
     });

@@ -3363,10 +3363,223 @@ body.is-resizing-pane {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
 }
 
-/* Selects + date inputs — soft form fields, matching the language
- * MountModal / UrlModal use for their text inputs. Native widgets
- * preserve keyboard + accessibility behaviour; we just dial down
- * platform chrome and apply consistent border/background/focus. */
+/* Select + calendar controls — custom popovers with native button semantics.
+ * Used by search filters and chat model selection so the app does not
+ * expose unstyled OS dropdown/date chrome. */
+.app-select,
+.app-date-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.app-select-button,
+.app-date-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  min-width: 8.5rem;
+  min-height: 2rem;
+  padding: 0.28rem 0.5rem 0.28rem 0.65rem;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--card), var(--paper));
+  color: var(--ink);
+  border-radius: var(--radius-sm);
+  font: 500 0.78rem var(--font-mono);
+  box-shadow: none;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.app-select-button:hover,
+.app-date-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  background: color-mix(in srgb, var(--accent) 4%, var(--card) 96%);
+  box-shadow: none;
+  transform: none;
+}
+
+.app-select-button:focus-visible,
+.app-date-button:focus-visible,
+.app-date-clear:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 82%, transparent);
+  outline-offset: 2px;
+}
+
+.app-select-label {
+  color: var(--muted);
+}
+
+.app-select-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-select-menu,
+.app-calendar {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  z-index: 320;
+  border: 1px solid var(--line-2);
+  background: var(--card);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 18px 44px rgba(33, 29, 22, 0.16);
+}
+
+.app-select-menu {
+  display: grid;
+  gap: 0.15rem;
+  min-width: max(100%, 11rem);
+  max-width: min(18rem, 80vw);
+  padding: 0.25rem;
+}
+
+.app-select-option {
+  display: block;
+  width: 100%;
+  min-height: 1.85rem;
+  padding: 0.35rem 0.55rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  border-radius: calc(var(--radius-sm) - 2px);
+  font: 500 0.78rem var(--font-mono);
+  text-align: left;
+  box-shadow: none;
+}
+
+.app-select-option:hover,
+.app-select-option.is-active {
+  background: var(--paper-2);
+  color: var(--ink);
+  box-shadow: none;
+  transform: none;
+}
+
+.app-select-option[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 12%, var(--paper));
+  color: var(--accent-ink);
+}
+
+.app-date-button {
+  justify-content: flex-start;
+  min-width: 7.7rem;
+  padding-right: 0.65rem;
+}
+
+.app-date-button:not(.has-value) {
+  color: var(--muted);
+}
+
+.app-date-clear {
+  display: inline-grid;
+  place-items: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  margin-left: -1.85rem;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+
+.app-date-clear:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+  box-shadow: none;
+  transform: none;
+}
+
+.app-calendar {
+  display: grid;
+  gap: 0.45rem;
+  width: 17rem;
+  padding: 0.6rem;
+}
+
+.app-calendar-header {
+  display: grid;
+  grid-template-columns: 1.8rem minmax(0, 1fr) 1.8rem;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.app-calendar-header span {
+  color: var(--ink);
+  font: 650 0.82rem var(--font-mono);
+  text-align: center;
+}
+
+.app-calendar-header button,
+.app-calendar-day {
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+
+.app-calendar-header button {
+  width: 1.8rem;
+  height: 1.8rem;
+}
+
+.app-calendar-header button:hover,
+.app-calendar-day:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+  box-shadow: none;
+  transform: none;
+}
+
+.app-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.18rem;
+}
+
+.app-calendar-weekday {
+  display: grid;
+  place-items: center;
+  height: 1.35rem;
+  color: var(--muted);
+  font: 600 0.65rem var(--font-mono);
+}
+
+.app-calendar-day {
+  height: 2rem;
+  font: 500 0.76rem var(--font-mono);
+}
+
+.app-calendar-day.is-outside {
+  color: var(--ink-4);
+}
+
+.app-calendar-day.is-selected {
+  background: var(--accent);
+  color: white;
+}
+
+.app-calendar-day.is-selected:hover {
+  background: color-mix(in srgb, var(--accent) 90%, black 10%);
+  color: white;
+}
+
+/* Legacy search-specific native-control rules retained only for stale
+ * markup during incremental refactors; active controls use .app-select /
+ * .app-date-picker above. */
 .search-filter-select-wrap {
   position: relative;
   display: inline-flex;
@@ -5872,25 +6085,21 @@ button.chat-runtime-pill:not(:disabled):hover {
 }
 
 .chat-model-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-height: 1.8rem;
-  padding: 0.2rem 0.35rem 0.2rem 0.55rem;
-  border: 1px solid var(--line);
-  background: var(--paper);
-  border-radius: var(--radius-sm);
-  color: var(--ink-2);
-  font: 500 0.72rem var(--font-mono);
-}
-
-.chat-model-picker select {
   min-width: 8rem;
   max-width: 13rem;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
+}
+
+.chat-model-picker .app-select-button {
+  width: 100%;
+  min-height: 1.9rem;
+  min-width: 8rem;
+  max-width: 13rem;
+  font-size: 0.72rem;
+}
+
+.chat-model-picker .app-select-menu {
+  top: auto;
+  bottom: calc(100% + 0.35rem);
 }
 
 .chat-error {
