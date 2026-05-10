@@ -45,7 +45,7 @@ from .index.processors.image import SUPPORTED_EXTENSIONS as IMAGE_EXTENSIONS
 from .index.processors.pdf import SUPPORTED_EXTENSIONS as PDF_EXTENSIONS
 from .index.queue import open_queue
 from .models import DEFAULTS, ModelManager
-from .observability import ObservabilityStore
+from .observability import open_observability_store
 from .rerank import select_reranker
 from .retrieval import SearchOrchestrator
 from .runtime_file import (
@@ -153,7 +153,7 @@ def serve(storage_dir: Path) -> int:
         extract_dir=search_dir / "extract",
     )
     advanced_ocr_autorun = advanced_ocr_autorun_enabled()
-    observability_store = ObservabilityStore()
+    observability_store = open_observability_store(search_dir / "observability.db")
     _run_advanced_ocr_backfill_on_boot(
         indexing_queue,
         dispatcher,

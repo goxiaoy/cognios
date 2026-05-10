@@ -34,5 +34,6 @@ def get_observability_summary(request: Request, recent_days: int = 30) -> dict:
         queue.recent_indexed_counts(days=recent_days) if queue is not None else []
     )
     return _get_observability(request).summary(
-        recent_indexed_nodes=recent_indexed_nodes
+        recent_indexed_nodes=recent_indexed_nodes,
+        recent_days=recent_days,
     )

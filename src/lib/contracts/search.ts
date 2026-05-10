@@ -76,6 +76,14 @@ export interface LatencySummary {
   p99Ms?: number | null;
 }
 
+export interface LatencyTrendPoint {
+  bucket: string;
+  sampleCount: number;
+  failureCount: number;
+  p90Ms?: number | null;
+  p99Ms?: number | null;
+}
+
 export interface SearchObservability {
   recentIndexedNodes: RecentIndexedNodeCount[];
   latency: {
@@ -83,6 +91,12 @@ export interface SearchObservability {
     indexing: LatencySummary;
     enhancement: LatencySummary;
     modelDownload: LatencySummary;
+  };
+  latencyTrends?: {
+    search: LatencyTrendPoint[];
+    indexing: LatencyTrendPoint[];
+    enhancement: LatencyTrendPoint[];
+    modelDownload: LatencyTrendPoint[];
   };
   tokenUsage: Array<{
     providerId: string;

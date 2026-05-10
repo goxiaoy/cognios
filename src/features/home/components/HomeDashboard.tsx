@@ -11,6 +11,7 @@ import {
 import type {
   IndexStatus,
   LatencySummary,
+  LatencyTrendPoint,
   ModelDownloadEvent,
   ModelsStatus,
   SearchObservability,
@@ -199,19 +200,39 @@ function LatencyRows({
 }: {
   observability: SearchObservability | null;
 }) {
-  const rows: Array<[string, LatencySummary, ReactNode]> | null =
+  const rows: Array<[string, LatencySummary, ReactNode, LatencyTrendPoint[]]> | null =
     observability
       ? [
-          ["Search", observability.latency.search, <Search size={14} aria-hidden="true" />],
-          ["Index", observability.latency.indexing, <Gauge size={14} aria-hidden="true" />],
-          ["OCR", observability.latency.enhancement, <Activity size={14} aria-hidden="true" />],
-          ["Model download", observability.latency.modelDownload, <Download size={14} aria-hidden="true" />],
+          [
+            "Search",
+            observability.latency.search,
+            <Search size={14} aria-hidden="true" />,
+            observability.latencyTrends?.search ?? [],
+          ],
+          [
+            "Index",
+            observability.latency.indexing,
+            <Gauge size={14} aria-hidden="true" />,
+            observability.latencyTrends?.indexing ?? [],
+          ],
+          [
+            "OCR",
+            observability.latency.enhancement,
+            <Activity size={14} aria-hidden="true" />,
+            observability.latencyTrends?.enhancement ?? [],
+          ],
+          [
+            "Model download",
+            observability.latency.modelDownload,
+            <Download size={14} aria-hidden="true" />,
+            observability.latencyTrends?.modelDownload ?? [],
+          ],
         ]
       : null;
   if (!rows) return <p className="home-empty">Latency unavailable.</p>;
   return (
     <div className="home-latency-list">
-      {rows.map(([label, summary, icon]) => (
+      {rows.map(([label, summary, icon, trend]) => (
         <div className="home-latency-row" key={label}>
           <span className="home-row-label">
             {icon}
@@ -220,10 +241,42 @@ function LatencyRows({
           <span>P50 {formatMs(summary.p50Ms)}</span>
           <span>P90 {formatMs(summary.p90Ms)}</span>
           <span>P99 {formatMs(summary.p99Ms)}</span>
+          <LatencySparkline label={label} points={trend} />
           <span>{summary.sampleCount} samples</span>
         </div>
       ))}
     </div>
+  );
+}
+
+function LatencySparkline({
+  label,
+  points,
+}: {
+  label: string;
+  points: LatencyTrendPoint[];
+}) {
+  const active = points.filter(
+    (point) => point.p90Ms != null || point.p99Ms != null
+  );
+  if (active.length < 2) {
+    return <span className="home-latency-trend-empty">—</span>;
+  }
+  const values = active.flatMap((point) =>
+    [point.p90Ms, point.p99Ms].filter((value): value is number => value != null)
+  );
+  const max = Math.max(...values, 1);
+  return (
+    <svg
+      className="home-latency-trend"
+      viewBox="0 0 64 20"
+      role="img"
+      aria-label={`${label} latency trend`}
+      preserveAspectRatio="none"
+    >
+      <polyline points={sparklinePoints(active, "p99Ms", max)} />
+      <polyline points={sparklinePoints(active, "p90Ms", max)} />
+    </svg>
   );
 }
 
@@ -340,6 +393,22 @@ function formatMs(value: number | null | undefined): string {
   if (value == null) return "—";
   if (value < 1000) return `${value} ms`;
   return `${(value / 1000).toFixed(1)} s`;
+}
+
+function sparklinePoints(
+  points: LatencyTrendPoint[],
+  field: "p90Ms" | "p99Ms",
+  max: number
+): string {
+  const lastIndex = Math.max(points.length - 1, 1);
+  return points
+    .map((point, index) => {
+      const value = point[field] ?? 0;
+      const x = (index / lastIndex) * 64;
+      const y = 18 - (value / max) * 16;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
 }
 
 function sumIndexed(observability: SearchObservability | null): number {

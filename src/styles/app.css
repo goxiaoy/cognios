@@ -6929,7 +6929,11 @@ button.chat-context-toggle:not(:disabled):hover {
 
 .home-latency-row {
   display: grid;
-  grid-template-columns: minmax(6rem, 1fr) repeat(4, minmax(4.1rem, auto));
+  grid-template-columns:
+    minmax(6rem, 1fr)
+    repeat(3, minmax(4.1rem, auto))
+    minmax(4rem, 5rem)
+    minmax(4.1rem, auto);
   align-items: center;
   gap: 0.55rem;
   padding: 0.58rem 0.65rem;
@@ -7014,6 +7018,32 @@ button.chat-context-toggle:not(:disabled):hover {
   border: 1px dashed var(--line);
   border-radius: var(--radius-sm);
   font-size: 0.78rem;
+}
+
+.home-latency-trend {
+  width: 4.5rem;
+  height: 1.25rem;
+  overflow: visible;
+}
+
+.home-latency-trend polyline {
+  fill: none;
+  stroke: var(--muted);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.35;
+  vector-effect: non-scaling-stroke;
+}
+
+.home-latency-trend polyline:first-child {
+  stroke: color-mix(in srgb, var(--accent) 42%, var(--muted));
+}
+
+.home-latency-trend-empty {
+  display: inline-grid;
+  place-items: center;
+  width: 4.5rem;
+  color: var(--muted);
 }
 
 @media (max-width: 980px) {

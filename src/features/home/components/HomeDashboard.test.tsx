@@ -46,6 +46,15 @@ function makeClient(): SearchClient {
           enhancement: { sampleCount: 0, failureCount: 0, latestMs: null, p50Ms: null, p90Ms: null, p99Ms: null },
           modelDownload: { sampleCount: 0, failureCount: 0, latestMs: null, p50Ms: null, p90Ms: null, p99Ms: null },
         },
+        latencyTrends: {
+          search: [
+            { bucket: "2026-05-09", sampleCount: 1, failureCount: 0, p90Ms: 12, p99Ms: 12 },
+            { bucket: "2026-05-10", sampleCount: 1, failureCount: 0, p90Ms: 18, p99Ms: 20 },
+          ],
+          indexing: [],
+          enhancement: [],
+          modelDownload: [],
+        },
         tokenUsage: [
           {
             providerId: "local-ollama",
@@ -109,6 +118,7 @@ describe("HomeDashboard", () => {
     await waitFor(() => {
       expect(screen.getByText("Recent indexing")).toBeInTheDocument();
       expect(screen.getByText("P90 18 ms")).toBeInTheDocument();
+      expect(screen.getByLabelText("Search latency trend")).toBeInTheDocument();
       expect(screen.getByText("llama3")).toBeInTheDocument();
       expect(screen.getByText("20")).toBeInTheDocument();
     });

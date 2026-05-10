@@ -233,6 +233,31 @@ pub struct LatencyOverviewDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct LatencyTrendPointDto {
+    pub bucket: String,
+    pub sample_count: u64,
+    pub failure_count: u64,
+    #[serde(default)]
+    pub p90_ms: Option<u64>,
+    #[serde(default)]
+    pub p99_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct LatencyTrendsDto {
+    #[serde(default)]
+    pub search: Vec<LatencyTrendPointDto>,
+    #[serde(default)]
+    pub indexing: Vec<LatencyTrendPointDto>,
+    #[serde(default)]
+    pub enhancement: Vec<LatencyTrendPointDto>,
+    #[serde(default)]
+    pub model_download: Vec<LatencyTrendPointDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct TokenUsageSummaryDto {
     pub provider_id: String,
     pub model: String,
@@ -248,6 +273,8 @@ pub struct SearchObservabilityDto {
     #[serde(default)]
     pub recent_indexed_nodes: Vec<RecentIndexedNodeCountDto>,
     pub latency: LatencyOverviewDto,
+    #[serde(default)]
+    pub latency_trends: LatencyTrendsDto,
     #[serde(default)]
     pub token_usage: Vec<TokenUsageSummaryDto>,
 }
@@ -1242,6 +1269,12 @@ mod tests {
                 "enhancement": {"sample_count": 1, "failure_count": 1, "latest_ms": 200, "p50_ms": 200, "p90_ms": 200, "p99_ms": 200},
                 "model_download": {"sample_count": 0, "failure_count": 0, "latest_ms": null, "p50_ms": null, "p90_ms": null, "p99_ms": null}
             },
+            "latency_trends": {
+                "search": [{"bucket": "2026-05-10", "sample_count": 3, "failure_count": 0, "p90_ms": 20, "p99_ms": 30}],
+                "indexing": [],
+                "enhancement": [],
+                "model_download": []
+            },
             "token_usage": [{
                 "provider_id": "local-ollama",
                 "model": "llama3",
@@ -1259,6 +1292,7 @@ mod tests {
         let to_ts = serde_json::to_value(&parsed).unwrap();
         assert_eq!(to_ts["recentIndexedNodes"][0]["count"], 4);
         assert_eq!(to_ts["latency"]["modelDownload"]["sampleCount"], 0);
+        assert_eq!(to_ts["latencyTrends"]["search"][0]["bucket"], "2026-05-10");
         assert_eq!(to_ts["tokenUsage"][0]["providerId"], "local-ollama");
         assert!(to_ts.get("recent_indexed_nodes").is_none());
     }
