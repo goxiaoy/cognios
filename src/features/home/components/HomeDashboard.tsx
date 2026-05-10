@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Activity,
   Boxes,
@@ -19,13 +19,11 @@ import {
 import type {
   IndexStatus,
   LatencyTrendPoint,
-  ModelDownloadEvent,
   ModelsStatus,
   SearchObservability,
   SidecarEnvelope,
 } from "../../../lib/contracts/search";
 import type { SearchClient } from "../../search/types/search";
-import { useModelDownloadProgress } from "../../settings/hooks/useModelDownloadProgress";
 import { useSearchSubsystemStatus } from "../../settings/hooks/useSearchSubsystemStatus";
 
 const POLL_INTERVAL_MS = 5_000;
@@ -44,19 +42,16 @@ const SERIES_COLORS = {
   search: "#16794f",
   indexing: "#3867b7",
   enhancement: "#9a5a00",
-  modelDownload: "#7c3aed",
 };
 
 export function HomeDashboard({ client }: { client: SearchClient }) {
   const { models, indexing } = useSearchSubsystemStatus(client);
-  const progress = useModelDownloadProgress();
   const [observability, setObservability] =
     useState<SidecarEnvelope<SearchObservability> | null>(null);
   const [recentIndexDays, setRecentIndexDays] =
     useState<RecentIndexWindow>(30);
   const [latencyMetric, setLatencyMetric] =
     useState<LatencyMetricKey>("p99Ms");
-  const [downloadHistory, setDownloadHistory] = useState<DownloadHistoryPoint[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,23 +83,6 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
   const modelData = readyData(models);
   const observabilityData = readyData(observability);
   const enhancement = enhancementDisplay(indexData, modelData);
-  const activeDownloads = useMemo(
-    () =>
-      Object.values(progress).filter((event) =>
-        ["queued", "downloading", "verifying"].includes(String(event.state))
-      ),
-    [progress]
-  );
-
-  useEffect(() => {
-    if (activeDownloads.length === 0) {
-      setDownloadHistory([]);
-      return;
-    }
-    setDownloadHistory((history) =>
-      [...history, downloadSnapshot(activeDownloads)].slice(-24)
-    );
-  }, [activeDownloads]);
 
   return (
     <section className="home-dashboard" aria-label="Home statistics">
@@ -194,14 +172,6 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
             <span>{tokenTotal(observabilityData).toLocaleString()} tokens</span>
           </header>
           <TokenUsage observability={observabilityData} />
-        </section>
-
-        <section className="home-section">
-          <header className="home-section-head">
-            <h2>Downloads</h2>
-            <span>{activeDownloads.length} active</span>
-          </header>
-          <DownloadChart downloads={activeDownloads} history={downloadHistory} />
         </section>
       </div>
     </section>
@@ -309,7 +279,7 @@ function LatencyChart({
   if (!observability) return <p className="home-empty">Latency unavailable.</p>;
   const data = latencyChartData(observability, metric);
   const hasTrend = data.some((point) =>
-    ["search", "indexing", "enhancement", "modelDownload"].some(
+    ["search", "indexing", "enhancement"].some(
       (key) => typeof point[key] === "number"
     )
   );
@@ -341,7 +311,6 @@ function LatencyChart({
               <Line type="monotone" dataKey="search" stroke={SERIES_COLORS.search} strokeWidth={2} dot={false} connectNulls />
               <Line type="monotone" dataKey="indexing" stroke={SERIES_COLORS.indexing} strokeWidth={2} dot={false} connectNulls />
               <Line type="monotone" dataKey="enhancement" stroke={SERIES_COLORS.enhancement} strokeWidth={2} dot={false} connectNulls />
-              <Line type="monotone" dataKey="modelDownload" stroke={SERIES_COLORS.modelDownload} strokeWidth={2} dot={false} connectNulls />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -412,67 +381,6 @@ function TokenUsage({
   );
 }
 
-function DownloadChart({
-  downloads,
-  history,
-}: {
-  downloads: ModelDownloadEvent[];
-  history: DownloadHistoryPoint[];
-}) {
-  if (downloads.length === 0) {
-    return <p className="home-empty">No active downloads.</p>;
-  }
-  const data = history.length > 0 ? history : [downloadSnapshot(downloads)];
-  const roles = downloads.map((event) => event.role);
-  return (
-    <div className="home-download-panel">
-      <div className="home-chart" role="img" aria-label="Download progress line chart">
-        <ResponsiveContainer width="100%" height={150}>
-          <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
-            <CartesianGrid stroke={CHART_LINE} strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: CHART_MUTED, fontSize: 10 }} />
-            <YAxis
-              domain={[0, 100]}
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: CHART_MUTED, fontSize: 10 }}
-              tickFormatter={(value) => `${value}%`}
-              width={38}
-            />
-            <Tooltip
-              contentStyle={tooltipStyle()}
-              formatter={(value, name) => [`${Math.round(Number(value))}%`, String(name)]}
-            />
-            {roles.map((role, index) => (
-              <Line
-                key={role}
-                type="monotone"
-                dataKey={role}
-                stroke={downloadColor(index)}
-                strokeWidth={2}
-                dot={false}
-                connectNulls
-              />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="home-download-meta">
-        {downloads.map((event) => (
-          <span key={event.role}>
-            {event.role} {Math.round(downloadPercent(event))}%
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-type DownloadHistoryPoint = {
-  label: string;
-  [role: string]: string | number;
-};
-
 function latencyChartData(
   observability: SearchObservability,
   metric: LatencyMetricKey
@@ -480,7 +388,7 @@ function latencyChartData(
   const buckets = new Map<string, Record<string, string | number | null>>();
   const add = (
     series: LatencyTrendPoint[],
-    key: "search" | "indexing" | "enhancement" | "modelDownload"
+    key: "search" | "indexing" | "enhancement"
   ) => {
     for (const point of series) {
       const current =
@@ -495,7 +403,6 @@ function latencyChartData(
   add(observability.latencyTrends?.search ?? [], "search");
   add(observability.latencyTrends?.indexing ?? [], "indexing");
   add(observability.latencyTrends?.enhancement ?? [], "enhancement");
-  add(observability.latencyTrends?.modelDownload ?? [], "modelDownload");
   return Array.from(buckets.values()).sort((a, b) =>
     String(a.bucket).localeCompare(String(b.bucket))
   );
@@ -524,17 +431,10 @@ function latencySummaries(
       value: observability.latency.enhancement[metric],
       color: SERIES_COLORS.enhancement,
     },
-    {
-      key: "modelDownload",
-      label: "Downloads",
-      value: observability.latency.modelDownload[metric],
-      color: SERIES_COLORS.modelDownload,
-    },
   ];
 }
 
 function latencySeriesLabel(key: string): string {
-  if (key === "modelDownload") return "Downloads";
   if (key === "indexing") return "Index";
   if (key === "enhancement") return "OCR";
   return "Search";
@@ -542,39 +442,6 @@ function latencySeriesLabel(key: string): string {
 
 function metricLabel(metric: LatencyMetricKey): string {
   return LATENCY_METRICS.find((item) => item.key === metric)?.label ?? "Latency";
-}
-
-function downloadSnapshot(downloads: ModelDownloadEvent[]): DownloadHistoryPoint {
-  const label = new Date().toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  return downloads.reduce<DownloadHistoryPoint>(
-    (point, event) => {
-      point[event.role] = Math.round(downloadPercent(event));
-      return point;
-    },
-    { label }
-  );
-}
-
-function downloadPercent(event: ModelDownloadEvent): number {
-  if (!event.bytesTotal || event.bytesTotal <= 0) return 0;
-  return Math.max(
-    0,
-    Math.min(100, (event.bytesDownloaded / event.bytesTotal) * 100)
-  );
-}
-
-function downloadColor(index: number): string {
-  const colors = [
-    SERIES_COLORS.search,
-    SERIES_COLORS.indexing,
-    SERIES_COLORS.enhancement,
-    SERIES_COLORS.modelDownload,
-  ];
-  return colors[index % colors.length];
 }
 
 function compactDate(value: string): string {

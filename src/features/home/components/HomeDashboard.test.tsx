@@ -121,6 +121,7 @@ describe("HomeDashboard", () => {
       expect(screen.getByLabelText("P99 latency line chart")).toBeInTheDocument();
       expect(screen.getByLabelText("Token usage bar chart")).toBeInTheDocument();
     });
+    expect(screen.queryByText("Downloads")).not.toBeInTheDocument();
     expect(client.observability).toHaveBeenCalledWith({ recentDays: 30 });
     expect(client.settings).not.toHaveBeenCalled();
   });

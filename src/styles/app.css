@@ -6912,8 +6912,7 @@ button.chat-context-toggle:not(:disabled):hover {
 }
 
 .home-chart,
-.home-latency-panel,
-.home-download-panel {
+.home-latency-panel {
   display: grid;
   gap: 0.55rem;
   min-width: 0;
@@ -6927,8 +6926,7 @@ button.chat-context-toggle:not(:disabled):hover {
   overflow: visible;
 }
 
-.home-latency-legend,
-.home-download-meta {
+.home-latency-legend {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
@@ -6937,8 +6935,7 @@ button.chat-context-toggle:not(:disabled):hover {
   font-size: 0.75rem;
 }
 
-.home-latency-legend span,
-.home-download-meta span {
+.home-latency-legend span {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
