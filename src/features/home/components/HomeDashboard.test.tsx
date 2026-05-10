@@ -51,7 +51,9 @@ function makeClient(): SearchClient {
             { bucket: "2026-05-09", sampleCount: 1, failureCount: 0, p50Ms: 10, p90Ms: 12, p99Ms: 12 },
             { bucket: "2026-05-10", sampleCount: 1, failureCount: 0, p50Ms: 14, p90Ms: 18, p99Ms: 20 },
           ],
-          indexing: [],
+          indexing: [
+            { bucket: "2026-05-10", sampleCount: 1, failureCount: 0, p50Ms: 44, p90Ms: 44, p99Ms: 44 },
+          ],
           enhancement: [],
           modelDownload: [],
         },
@@ -168,5 +170,27 @@ describe("HomeDashboard", () => {
       "true"
     );
     expect(screen.getByLabelText("P50 latency line chart")).toBeInTheDocument();
+  });
+
+  it("filters the latency chart by category from the legend", async () => {
+    const client = makeClient();
+    render(<HomeDashboard client={client} />);
+
+    expect(await screen.findByLabelText("P99 latency line chart")).toBeInTheDocument();
+    const searchFilter = screen.getByRole("button", { name: /Search 20 ms/ });
+    const indexFilter = screen.getByRole("button", { name: /Index 44 ms/ });
+
+    expect(searchFilter).toHaveAttribute("aria-pressed", "false");
+    expect(indexFilter).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(indexFilter);
+
+    expect(indexFilter).toHaveAttribute("aria-pressed", "true");
+    expect(searchFilter).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByLabelText("P99 latency line chart")).toBeInTheDocument();
+
+    fireEvent.click(indexFilter);
+
+    expect(indexFilter).toHaveAttribute("aria-pressed", "false");
   });
 });

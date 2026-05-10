@@ -35,14 +35,15 @@ const LATENCY_METRICS = [
   { key: "p50Ms", label: "P50" },
 ] as const;
 type LatencyMetricKey = (typeof LATENCY_METRICS)[number]["key"];
+const LATENCY_CATEGORIES = [
+  { key: "search", label: "Search", color: "#16794f" },
+  { key: "indexing", label: "Index", color: "#3867b7" },
+  { key: "enhancement", label: "OCR", color: "#9a5a00" },
+] as const;
+type LatencyCategoryKey = (typeof LATENCY_CATEGORIES)[number]["key"];
 const CHART_ACCENT = "var(--accent)";
 const CHART_MUTED = "var(--muted)";
 const CHART_LINE = "var(--line)";
-const SERIES_COLORS = {
-  search: "#16794f",
-  indexing: "#3867b7",
-  enhancement: "#9a5a00",
-};
 
 export function HomeDashboard({ client }: { client: SearchClient }) {
   const { models, indexing } = useSearchSubsystemStatus(client);
@@ -52,6 +53,8 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
     useState<RecentIndexWindow>(30);
   const [latencyMetric, setLatencyMetric] =
     useState<LatencyMetricKey>("p99Ms");
+  const [latencyCategory, setLatencyCategory] =
+    useState<LatencyCategoryKey | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -163,7 +166,14 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
               ))}
             </div>
           </header>
-          <LatencyChart observability={observabilityData} metric={latencyMetric} />
+          <LatencyChart
+            observability={observabilityData}
+            metric={latencyMetric}
+            category={latencyCategory}
+            onCategoryChange={(category) =>
+              setLatencyCategory((current) => (current === category ? null : category))
+            }
+          />
         </section>
 
         <section className="home-section">
@@ -272,16 +282,21 @@ function ActivityHeatmap({ days }: { days: SearchObservability["recentIndexedNod
 function LatencyChart({
   observability,
   metric,
+  category,
+  onCategoryChange,
 }: {
   observability: SearchObservability | null;
   metric: LatencyMetricKey;
+  category: LatencyCategoryKey | null;
+  onCategoryChange: (category: LatencyCategoryKey) => void;
 }) {
   if (!observability) return <p className="home-empty">Latency unavailable.</p>;
   const data = latencyChartData(observability, metric);
+  const visibleCategories = category
+    ? LATENCY_CATEGORIES.filter((item) => item.key === category)
+    : LATENCY_CATEGORIES;
   const hasTrend = data.some((point) =>
-    ["search", "indexing", "enhancement"].some(
-      (key) => typeof point[key] === "number"
-    )
+    visibleCategories.some((item) => typeof point[item.key] === "number")
   );
   return (
     <div className="home-latency-panel">
@@ -308,9 +323,17 @@ function LatencyChart({
                 contentStyle={tooltipStyle()}
                 formatter={(value, name) => [formatMs(Number(value)), latencySeriesLabel(String(name))]}
               />
-              <Line type="monotone" dataKey="search" stroke={SERIES_COLORS.search} strokeWidth={2} dot={false} connectNulls />
-              <Line type="monotone" dataKey="indexing" stroke={SERIES_COLORS.indexing} strokeWidth={2} dot={false} connectNulls />
-              <Line type="monotone" dataKey="enhancement" stroke={SERIES_COLORS.enhancement} strokeWidth={2} dot={false} connectNulls />
+              {visibleCategories.map((item) => (
+                <Line
+                  key={item.key}
+                  type="monotone"
+                  dataKey={item.key}
+                  stroke={item.color}
+                  strokeWidth={2}
+                  dot={false}
+                  connectNulls
+                />
+              ))}
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -319,10 +342,16 @@ function LatencyChart({
       )}
       <div className="home-latency-legend" aria-label={`${metricLabel(metric)} latency values`}>
         {latencySummaries(observability, metric).map((row) => (
-          <span key={row.key}>
+          <button
+            key={row.key}
+            type="button"
+            className="home-latency-legend-button"
+            aria-pressed={category === row.key}
+            onClick={() => onCategoryChange(row.key)}
+          >
             <i style={{ background: row.color }} />
             {row.label} {formatMs(row.value)}
-          </span>
+          </button>
         ))}
       </div>
     </div>
@@ -388,7 +417,7 @@ function latencyChartData(
   const buckets = new Map<string, Record<string, string | number | null>>();
   const add = (
     series: LatencyTrendPoint[],
-    key: "search" | "indexing" | "enhancement"
+    key: LatencyCategoryKey
   ) => {
     for (const point of series) {
       const current =
@@ -412,26 +441,10 @@ function latencySummaries(
   observability: SearchObservability,
   metric: LatencyMetricKey
 ) {
-  return [
-    {
-      key: "search",
-      label: "Search",
-      value: observability.latency.search[metric],
-      color: SERIES_COLORS.search,
-    },
-    {
-      key: "indexing",
-      label: "Index",
-      value: observability.latency.indexing[metric],
-      color: SERIES_COLORS.indexing,
-    },
-    {
-      key: "enhancement",
-      label: "OCR",
-      value: observability.latency.enhancement[metric],
-      color: SERIES_COLORS.enhancement,
-    },
-  ];
+  return LATENCY_CATEGORIES.map((category) => ({
+    ...category,
+    value: observability.latency[category.key][metric],
+  }));
 }
 
 function latencySeriesLabel(key: string): string {

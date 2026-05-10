@@ -6935,18 +6935,28 @@ button.chat-context-toggle:not(:disabled):hover {
   font-size: 0.75rem;
 }
 
-.home-latency-legend span {
+.home-latency-legend-button {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
   min-width: 0;
   padding: 0.22rem 0.4rem;
+  color: var(--muted);
   background: var(--paper-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
+  font: inherit;
+  cursor: pointer;
 }
 
-.home-latency-legend i {
+.home-latency-legend-button[aria-pressed="true"] {
+  color: var(--ink);
+  background: var(--paper);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.home-latency-legend-button i {
   width: 0.45rem;
   height: 0.45rem;
   border-radius: 999px;
