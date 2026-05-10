@@ -37,9 +37,9 @@ const FEATURE_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
 };
 
 /**
- * One feature row. Renders the enable toggle (or "Required" badge
- * for mandatory features) and a provider-pill picker filtered by
- * the feature's capability. Credentials editing happens from the
+ * One feature row. Renders the enable toggle for optional features
+ * and a provider-pill picker filtered by the feature's capability.
+ * Credentials editing happens from the
  * Providers column on the right — there is no inline editor here.
  *
  * Phase-2 features (image-captioning) render disabled with an
@@ -199,9 +199,6 @@ export function FeatureRow({
       <div className="feature-card-body">
         <div className="feature-card-name">
           <span className="feature-row-name">{meta.displayName}</span>
-          {meta.mandatory ? (
-            <span className="feature-badge feature-badge--required">Required</span>
-          ) : null}
           {meta.comingSoon ? (
             <span className="feature-badge feature-badge--soon">
               coming soon

@@ -56,7 +56,7 @@ function baseSettings(): SearchSettings {
 }
 
 describe("FeatureRow", () => {
-  it("renders a Required badge for mandatory features (no toggle)", () => {
+  it("hides the toggle for mandatory features without a Required label", () => {
     render(
       <FeatureRow
         meta={SEMANTIC}
@@ -66,7 +66,7 @@ describe("FeatureRow", () => {
         onSettingsChange={vi.fn()}
       />
     );
-    expect(screen.getByText("Required")).toBeInTheDocument();
+    expect(screen.queryByText("Required")).toBeNull();
     expect(screen.queryByRole("switch")).toBeNull();
   });
 
@@ -84,7 +84,7 @@ describe("FeatureRow", () => {
     expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 
-  it("renders a Required badge for the result-reranking feature", () => {
+  it("hides the toggle for the mandatory result-reranking feature", () => {
     expect(RERANKING.mandatory).toBe(true);
     render(
       <FeatureRow
@@ -95,7 +95,7 @@ describe("FeatureRow", () => {
         onSettingsChange={vi.fn()}
       />
     );
-    expect(screen.getByText("Required")).toBeInTheDocument();
+    expect(screen.queryByText("Required")).toBeNull();
     expect(screen.queryByRole("switch")).toBeNull();
   });
 
