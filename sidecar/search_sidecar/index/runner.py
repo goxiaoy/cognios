@@ -206,6 +206,28 @@ class IndexingRunner:
     def _handle(self, job: IndexingJob) -> None:
         proc = self._dispatcher.find(job)
         if proc is None:
+            if job.kind in {"note", "file", "url", "folder", "mount"}:
+                try:
+                    written = self._dispatcher.replace_metadata(job)
+                except Exception as err:
+                    LOG.warning(
+                        "metadata indexing failed node_id=%s kind=%s: %s",
+                        job.node_id,
+                        job.kind,
+                        err,
+                    )
+                    self._queue.mark_error(
+                        job.node_id, f"{type(err).__name__}: {err}"
+                    )
+                    return
+                self._queue.mark_indexed(job.node_id)
+                LOG.info(
+                    "metadata indexing finished node_id=%s kind=%s chunks=%d",
+                    job.node_id,
+                    job.kind,
+                    written,
+                )
+                return
             self._queue.mark_error(
                 job.node_id,
                 f"no processor for kind={job.kind!r} path={job.absolute_content_path!r}",
@@ -222,6 +244,7 @@ class IndexingRunner:
         )
         try:
             written = proc.process(job)
+            metadata_written = self._dispatcher.replace_metadata(job)
         except Exception as err:
             LOG.warning(
                 "indexing failed node_id=%s kind=%s elapsed_ms=%d: %s",
@@ -237,7 +260,7 @@ class IndexingRunner:
             "indexing finished node_id=%s kind=%s chunks=%d elapsed_ms=%d",
             job.node_id,
             job.kind,
-            written,
+            written + metadata_written,
             _elapsed_ms(started_at),
         )
 

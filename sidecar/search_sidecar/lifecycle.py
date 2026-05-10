@@ -171,6 +171,7 @@ def serve(storage_dir: Path) -> int:
         model_manager=model_manager,
         indexing_queue=indexing_queue,
         indexing_runner=indexing_runner,
+        embedder=embedder,
         lancedb_store=lancedb_store,
         search_orchestrator=search_orchestrator,
         settings_path=settings_path,

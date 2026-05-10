@@ -428,12 +428,22 @@ def test_upsert_round_trips_role(tmp_path: Path):
                 vector=[0.0] * EMBEDDING_DIMENSION,
                 role="summary",
             ),
+            NodeChunk(
+                id="node-a:metadata:0",
+                node_id="node-a",
+                kind="file",
+                name="img",
+                text="img\n/path/to/img.png",
+                vector=[0.0] * EMBEDDING_DIMENSION,
+                role="metadata",
+            ),
         ]
     )
     rows = store.scan("node-a")
     by_id = {row["id"]: row for row in rows}
     assert by_id["node-a:0"]["role"] == "body"
     assert by_id["node-a:summary:0"]["role"] == "summary"
+    assert by_id["node-a:metadata:0"]["role"] == "metadata"
 
 
 def test_node_chunk_rejects_unknown_role():
@@ -455,6 +465,7 @@ def test_role_or_default_handles_missing_and_null():
     assert role_or_default({"role": ""}) == "body"
     assert role_or_default({"role": "body"}) == "body"
     assert role_or_default({"role": "summary"}) == "summary"
+    assert role_or_default({"role": "metadata"}) == "metadata"
 
 
 def _legacy_schema() -> pa.Schema:

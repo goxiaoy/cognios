@@ -24,6 +24,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..index.queue import IndexingQueue
+from ..index.embedder import Embedder
+from ..index.metadata import replace_metadata_chunk
 from ..storage import LanceDBStore
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -38,10 +40,9 @@ class NodeEvent(BaseModel):
 
     Schema mirrors the IPC contract documented in the plan
     Architecture section. ``absolute_content_path`` is optional because
-    folders/mounts have no file body to index; for those, the runner
-    enqueues the row but the dispatcher returns "no processor" and
-    marks the job error — which is fine, container nodes don't need
-    chunks.
+    folders/mounts have no file body to index. When Rust can resolve a
+    folder/mount path it still sends it here so the sidecar can index a
+    metadata chunk for name/path search.
     """
 
     event: Literal["node_changed", "node_deleted"]
@@ -103,6 +104,10 @@ def _get_store(request: Request) -> LanceDBStore | None:
     return getattr(request.app.state, "lancedb_store", None)
 
 
+def _get_embedder(request: Request) -> Embedder | None:
+    return getattr(request.app.state, "embedder", None)
+
+
 @router.post("/node")
 def post_node_event(body: NodeEvent, request: Request) -> dict:
     _validate_node_id(body.node_id)
@@ -130,6 +135,17 @@ def post_node_event(body: NodeEvent, request: Request) -> dict:
             kind=body.kind,
             name=body.name,
             mount_id=body.mount_id,
+            modified_at=body.updated_at,
+        )
+        replace_metadata_chunk(
+            store,
+            _get_embedder(request),
+            node_id=body.node_id,
+            kind=body.kind,
+            name=body.name,
+            absolute_content_path=body.absolute_content_path,
+            mount_id=body.mount_id,
+            created_at=body.created_at,
             modified_at=body.updated_at,
         )
 

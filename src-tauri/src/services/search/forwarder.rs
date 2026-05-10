@@ -9,7 +9,8 @@
 //!     * ``note`` → `<storage>/notes/<id>.md`
 //!     * ``url``  → ``url_jobs.html_cache_path``
 //!     * ``file`` → ``mounts.absolute_path + nodes.relative_path``
-//!     * containers (folder / mount) → no path
+//!     * ``folder`` → ``mounts.absolute_path + nodes.relative_path`` (metadata search)
+//!     * ``mount`` → ``mounts.absolute_path`` (metadata search)
 //! - ``node-deleted`` — forward by id alone; the sidecar's
 //!   ``delete_by_node_id`` doesn't need kind/path.
 //! - ``url-indexed`` — fired by the URL job runner once the cache
@@ -193,7 +194,7 @@ fn resolve_path(conn: &rusqlite::Connection, row: &NodeRow, storage_dir: &Path) 
                 .into_owned(),
         ),
         "url" => load_url_cache_path(conn, &row.id),
-        "file" => row
+        "file" | "folder" => row
             .mount_id
             .as_deref()
             .zip(row.relative_path.as_deref())
@@ -205,7 +206,7 @@ fn resolve_path(conn: &rusqlite::Connection, row: &NodeRow, storage_dir: &Path) 
                         .into_owned()
                 })
             }),
-        // folder / mount — containers, no content to index.
+        "mount" => load_mount_root(conn, &row.id),
         _ => None,
     }
 }
@@ -506,6 +507,40 @@ mod tests {
         };
         let payload = build_payload(&event, &db, dir.path()).expect("payload");
         assert_eq!(payload.force, Some(false));
+    }
+
+    #[test]
+    fn build_payload_includes_mount_path_for_metadata_search() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("cognios.db");
+        let db = Database::new(db_path);
+        let conn = db.connect().expect("db init");
+        let mount_root = dir.path().join("20260301-accident");
+        std::fs::create_dir_all(&mount_root).expect("mount dir");
+        conn.execute(
+            "INSERT INTO nodes (id, kind, name, state, size_bytes)
+             VALUES ('11111111-1111-1111-1111-111111111111', 'mount', '20260301-accident', 'ready', 0)",
+            [],
+        )
+        .expect("insert mount node");
+        conn.execute(
+            "INSERT INTO mounts (node_id, absolute_path, ignore_config, is_available)
+             VALUES ('11111111-1111-1111-1111-111111111111', ?1, '', 1)",
+            [mount_root.to_string_lossy().as_ref()],
+        )
+        .expect("insert mount");
+        let event = VfsChangeEvent {
+            mount_id: "11111111-1111-1111-1111-111111111111".into(),
+            reason: "node-created".into(),
+            ..Default::default()
+        };
+
+        let payload = build_payload(&event, &db, dir.path()).expect("payload");
+
+        assert_eq!(
+            payload.absolute_content_path.as_deref(),
+            Some(mount_root.to_string_lossy().as_ref())
+        );
     }
 
     #[test]

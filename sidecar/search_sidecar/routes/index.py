@@ -121,9 +121,11 @@ def get_node_status(node_id: str, request: Request) -> dict:
 def get_node_content(node_id: str, request: Request) -> dict:
     """Indexed or cached extracted text for a single node.
 
-    Returns the raw chunk array (each entry tagged with its ``role``
-    — ``"body"`` for literal content, ``"summary"`` for generated
-    descriptions like image captions) plus a ``joined`` field.
+    Returns the raw user-visible chunk array (each entry tagged with
+    its ``role`` — ``"body"`` for literal content, ``"summary"`` for
+    generated descriptions like image captions) plus a ``joined``
+    field. Internal ``"metadata"`` rows power title/path search and
+    are intentionally hidden from this preview endpoint.
 
     Chunks are sorted via ``_chunk_index_key``: body rows first (by
     numeric chunk-index ascending), then summary rows (also by
@@ -169,14 +171,18 @@ def get_node_content(node_id: str, request: Request) -> dict:
         }
     rows = store.scan(node_id)
     rows_sorted = sorted(rows, key=_chunk_index_key)
-    chunks = [
-        {
-            "id": row.get("id"),
-            "role": role_or_default(row),
-            "text": row.get("text") or "",
-        }
-        for row in rows_sorted
-    ]
+    chunks = []
+    for row in rows_sorted:
+        role = role_or_default(row)
+        if role == "metadata":
+            continue
+        chunks.append(
+            {
+                "id": row.get("id"),
+                "role": role,
+                "text": row.get("text") or "",
+            }
+        )
     joined = "\n\n".join(c["text"] for c in chunks if c["text"].strip())
     kind = rows_sorted[0].get("kind") if rows_sorted else None
     return {
@@ -229,7 +235,8 @@ def _chunk_index_key(row: dict) -> tuple[int, int, str]:
         idx = int(suffix)
     except ValueError:
         idx = 0
-    rank = 1 if role_or_default(row) == "summary" else 0
+    role = role_or_default(row)
+    rank = 2 if role == "metadata" else 1 if role == "summary" else 0
     return (rank, idx, chunk_id)
 
 

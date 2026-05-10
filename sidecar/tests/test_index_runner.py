@@ -14,6 +14,7 @@ from search_sidecar.index.embedder import StubEmbedder
 from search_sidecar.index.processors.image import EnhancementTransientError
 from search_sidecar.index.queue import JobState, open_queue
 from search_sidecar.index.runner import IndexingRunner
+from search_sidecar.retrieval import SearchOrchestrator, SearchRequest
 from search_sidecar.storage import open_store
 
 UUID_A = "11111111-1111-1111-1111-111111111111"
@@ -101,7 +102,7 @@ def test_process_one_drains_a_text_job(tmp_path: Path):
         job = queue.get(UUID_A)
         assert job is not None
         assert job.state == JobState.INDEXED
-        assert store.count() == 2
+        assert store.count() == 3
     finally:
         queue.close()
 
@@ -123,7 +124,7 @@ def test_process_one_logs_index_lifecycle(
         with caplog.at_level(logging.INFO, logger="search_sidecar.index.runner"):
             assert runner.process_one() is True
 
-        assert store.count() == 1
+        assert store.count() == 2
         assert (
             "indexing started node_id=11111111-1111-1111-1111-111111111111"
             in caplog.text
@@ -132,7 +133,7 @@ def test_process_one_logs_index_lifecycle(
             "indexing finished node_id=11111111-1111-1111-1111-111111111111"
             in caplog.text
         )
-        assert "chunks=1" in caplog.text
+        assert "chunks=2" in caplog.text
     finally:
         queue.close()
 
@@ -158,17 +159,91 @@ def test_process_one_marks_error_on_processor_exception(tmp_path: Path):
         queue.close()
 
 
-def test_process_one_marks_error_when_no_processor_matches(tmp_path: Path):
-    """A folder-kind job has no matching processor; runner marks error
-    rather than silently dropping it."""
+def test_process_one_marks_error_when_kind_is_unknown(tmp_path: Path):
     _, queue, runner = _make_setup(tmp_path)
     try:
-        queue.enqueue(node_id=UUID_A, kind="folder", name="Inbox")
+        queue.enqueue(node_id=UUID_A, kind="unknown", name="Unknown")
         assert runner.process_one() is True
         job = queue.get(UUID_A)
         assert job is not None
         assert job.state == JobState.ERROR
         assert "no processor" in (job.last_error or "")
+    finally:
+        queue.close()
+
+
+def test_process_one_indexes_mount_metadata_for_search(tmp_path: Path):
+    store, queue, runner = _make_setup(tmp_path)
+    try:
+        queue.enqueue(
+            node_id=UUID_A,
+            kind="mount",
+            name="20260301 Accident Photos",
+        )
+
+        assert runner.process_one() is True
+
+        job = queue.get(UUID_A)
+        assert job is not None
+        assert job.state == JobState.INDEXED
+        rows = store.scan(UUID_A)
+        assert [row["role"] for row in rows] == ["metadata"]
+        assert "20260301 Accident Photos" in rows[0]["text"]
+
+        orch = SearchOrchestrator(store=store, embedder=StubEmbedder())
+        resp = orch.search(SearchRequest(query="20260301"))
+        assert [result.node_id for result in resp.results] == [UUID_A]
+        assert resp.results[0].kind == "mount"
+    finally:
+        queue.close()
+
+
+def test_process_one_indexes_file_name_metadata_for_search(tmp_path: Path):
+    store, queue, runner = _make_setup(tmp_path)
+    try:
+        note = tmp_path / "incident-20260301.md"
+        note.write_text("body without the searchable title token")
+        queue.enqueue(
+            node_id=UUID_A,
+            kind="note",
+            name="incident-20260301.md",
+            absolute_content_path=str(note),
+        )
+
+        assert runner.process_one() is True
+
+        orch = SearchOrchestrator(store=store, embedder=StubEmbedder())
+        resp = orch.search(SearchRequest(query="20260301"))
+        assert [result.node_id for result in resp.results] == [UUID_A]
+        assert resp.results[0].matched_in in {"name", "both"}
+    finally:
+        queue.close()
+
+
+def test_process_one_indexes_unsupported_file_name_for_search(tmp_path: Path):
+    store, queue, runner = _make_setup(tmp_path)
+    try:
+        file_path = tmp_path / "accident-photo-20260301.raw"
+        file_path.write_bytes(b"unsupported binary")
+        queue.enqueue(
+            node_id=UUID_A,
+            kind="file",
+            name="accident-photo-20260301.raw",
+            absolute_content_path=str(file_path),
+        )
+
+        assert runner.process_one() is True
+
+        job = queue.get(UUID_A)
+        assert job is not None
+        assert job.state == JobState.INDEXED
+        rows = store.scan(UUID_A)
+        assert [row["role"] for row in rows] == ["metadata"]
+
+        orch = SearchOrchestrator(store=store, embedder=StubEmbedder())
+        resp = orch.search(SearchRequest(query="20260301"))
+        assert [result.node_id for result in resp.results] == [UUID_A]
+        assert resp.results[0].kind == "file"
     finally:
         queue.close()
 
@@ -195,7 +270,7 @@ def test_runner_thread_drains_queue_in_background(tmp_path: Path):
         runner.stop()
 
         assert queue.queue_depth() == 0
-        assert store.count() == 2
+        assert store.count() == 4
         for uuid in (UUID_A, UUID_B):
             j = queue.get(uuid)
             assert j is not None
@@ -293,7 +368,7 @@ def test_one_bad_job_does_not_poison_the_queue(tmp_path: Path):
         good = queue.get(UUID_B)
         assert bad is not None and bad.state == JobState.ERROR
         assert good is not None and good.state == JobState.INDEXED
-        assert store.count() == 1
+        assert store.count() == 2
     finally:
         queue.close()
 

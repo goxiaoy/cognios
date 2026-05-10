@@ -11,7 +11,7 @@ Schema (single table named ``nodes``)::
     mount_id      string  nullable
     created_at    timestamp[ms]
     modified_at   timestamp[ms]
-    role          string  nullable      -- "body" | "summary"; legacy rows are NULL
+    role          string  nullable      -- "body" | "summary" | "metadata"; legacy rows are NULL
     content_version string nullable     -- sidecar queue content fingerprint
 
 Chunk-id formats:
@@ -22,6 +22,9 @@ Chunk-id formats:
   index convention as body). Today's image captions typically fit in
   a single row; the chunker may split longer future summaries (D6)
   into multiple rows without further schema work.
+- ``"<node_id>:metadata:0"`` for ``role=metadata`` chunks. These rows
+  contain node names and paths so metadata-only matches can surface
+  without mixing internal search text into preview content.
 
 Both share the same ``node_id`` column so a single
 ``DELETE WHERE node_id = ?`` predicate still removes every chunk for
@@ -61,7 +64,8 @@ TABLE_NAME = "nodes"
 # Allowed values for the ``role`` column. Adding a new role is a code
 # change — kept as a frozenset so processors can assert membership at
 # the boundary without duplicating the typing.Literal definition on NodeChunk.role.
-ROLE_VALUES: frozenset[str] = frozenset({"body", "summary"})
+Role = Literal["body", "summary", "metadata"]
+ROLE_VALUES: frozenset[str] = frozenset({"body", "summary", "metadata"})
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,8 @@ class NodeChunk:
       Summary text is chunked through the same ``chunk_text`` helper
       as body text, with ids ``"<node_id>:summary:<int>"``. Captions
       typically fit in a single row today.
+    - ``"metadata"`` — internal search text derived from node names
+      and paths. Preview endpoints hide these rows.
 
     Modality (image / audio / text) is intentionally *not* encoded
     here; if it is ever needed it goes in a separate column.
@@ -92,7 +98,7 @@ class NodeChunk:
     mount_id: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     modified_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    role: Literal["body", "summary"] = "body"
+    role: Role = "body"
     content_version: str | None = None
 
     def __post_init__(self) -> None:
@@ -139,7 +145,7 @@ def _schema() -> pa.Schema:
     )
 
 
-def role_or_default(row: dict) -> Literal["body", "summary"]:
+def role_or_default(row: dict) -> Role:
     """Return ``row['role']`` or ``"body"`` if the column is missing/null.
 
     Single source of truth for reading the ``role`` column. Pre-schema
@@ -200,7 +206,7 @@ class LanceDBStore:
         self._table.delete(f"node_id = '{_quote(node_id)}'")
 
     def delete_chunks_by_role(
-        self, node_id: str, role: Literal["body", "summary"]
+        self, node_id: str, role: Role
     ) -> None:
         """Remove only one role for a node.
 
@@ -240,7 +246,7 @@ class LanceDBStore:
     def replace_chunks_by_role(
         self,
         node_id: str,
-        role: Literal["body", "summary"],
+        role: Role,
         chunks: Iterable[NodeChunk],
     ) -> int:
         """Replace one role's chunks after new rows are ready."""
@@ -271,7 +277,7 @@ class LanceDBStore:
         node_id: str,
         rows: list[NodeChunk],
         *,
-        role: Literal["body", "summary"] | None = None,
+        role: Role | None = None,
     ) -> None:
         for row in rows:
             if row.node_id != node_id:
@@ -288,7 +294,7 @@ class LanceDBStore:
         node_id: str,
         keep_ids: list[str],
         *,
-        role: Literal["body", "summary"] | None = None,
+        role: Role | None = None,
     ) -> None:
         in_clause = ", ".join(f"'{_quote(i)}'" for i in keep_ids)
         predicate = f"node_id = '{_quote(node_id)}' AND id NOT IN ({in_clause})"

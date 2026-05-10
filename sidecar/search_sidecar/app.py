@@ -22,6 +22,7 @@ from .routes import search as search_routes
 from .routes import settings as settings_routes
 
 if TYPE_CHECKING:
+    from .index.embedder import Embedder
     from .index.queue import IndexingQueue
     from .index.runner import IndexingRunner
     from .models.manager import ModelManager
@@ -35,6 +36,7 @@ def build_app(
     model_manager: "ModelManager | None" = None,
     indexing_queue: "IndexingQueue | None" = None,
     indexing_runner: "IndexingRunner | None" = None,
+    embedder: "Embedder | None" = None,
     lancedb_store: "LanceDBStore | None" = None,
     search_orchestrator: "SearchOrchestrator | None" = None,
     settings_path: Path | None = None,
@@ -80,6 +82,8 @@ def build_app(
         app.state.indexing_queue = indexing_queue
     if indexing_runner is not None:
         app.state.indexing_runner = indexing_runner
+    if embedder is not None:
+        app.state.embedder = embedder
     if lancedb_store is not None:
         app.state.lancedb_store = lancedb_store
     if search_orchestrator is not None:

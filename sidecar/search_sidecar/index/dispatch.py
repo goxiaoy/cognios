@@ -13,6 +13,7 @@ from typing import Protocol
 
 from ..storage import LanceDBStore
 from .embedder import Embedder
+from .metadata import replace_metadata_chunk_for_job
 from .processors.enhancement import AdvancedOcrExtract
 from .processors.image import (
     CaptionExtract,
@@ -54,6 +55,8 @@ class Dispatcher:
         advanced_ocr_extract: AdvancedOcrExtract | None = None,
         extract_dir: Path | None = None,
     ) -> None:
+        self._store = store
+        self._embedder = embedder
         self._advanced_ocr_extract = advanced_ocr_extract
         self.image_processor = ImageProcessor(
             store,
@@ -91,6 +94,9 @@ class Dispatcher:
             if proc.can_handle(job):
                 return proc
         return None
+
+    def replace_metadata(self, job: IndexingJob) -> int:
+        return replace_metadata_chunk_for_job(self._store, self._embedder, job)
 
     def has_advanced_ocr(self) -> bool:
         return any(proc.has_advanced_ocr() for proc in self._enhancement_processors)

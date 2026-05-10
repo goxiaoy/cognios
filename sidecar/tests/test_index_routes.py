@@ -13,6 +13,7 @@ from search_sidecar.index.embedder import StubEmbedder
 from search_sidecar.index.extract_artifacts import write_extract_artifact
 from search_sidecar.index.queue import JobState, open_queue
 from search_sidecar.index.runner import IndexingRunner
+from search_sidecar.retrieval import SearchOrchestrator, SearchRequest
 from search_sidecar.storage import EMBEDDING_DIMENSION, NodeChunk, open_store
 
 TOKEN = "0123456789abcdef" * 4
@@ -33,12 +34,14 @@ def _auth() -> dict[str, str]:
 def stack(tmp_path: Path):
     store = open_store(tmp_path / "index.lance")
     queue = open_queue(tmp_path / "queue.db")
-    dispatcher = Dispatcher(store=store, embedder=StubEmbedder())
+    embedder = StubEmbedder()
+    dispatcher = Dispatcher(store=store, embedder=embedder)
     runner = IndexingRunner(queue=queue, dispatcher=dispatcher)
     app = build_app(
         token=TOKEN,
         indexing_queue=queue,
         indexing_runner=runner,
+        embedder=embedder,
         lancedb_store=store,
     )
     yield app, queue, store, runner, tmp_path
@@ -85,7 +88,7 @@ def test_post_node_event_deletion_drops_from_queue_and_store(stack):
         )
         # Synchronously drain so the chunk lands in the store
         runner.process_one()
-        assert store.count() == 1
+        assert store.count() == 2
 
         # The Rust forwarder sends ``kind: ""`` and ``name: ""`` for
         # deletes because the row is already gone from cognios.db —
@@ -192,7 +195,10 @@ def test_post_node_event_non_forced_duplicate_keeps_indexed_state(stack):
     assert resp.status_code == 200
     assert queue.get(UUID_A).state == JobState.INDEXED
     rows = store.scan(UUID_A)
-    assert rows[0]["name"] == "renamed.md"
+    assert {row["name"] for row in rows} == {"renamed.md"}
+    orch = SearchOrchestrator(store=store, embedder=StubEmbedder())
+    search = orch.search(SearchRequest(query="renamed"))
+    assert [result.node_id for result in search.results] == [UUID_A]
 
 
 def test_post_resync_adds_unknown_and_removes_orphaned(stack):
@@ -543,6 +549,17 @@ def test_get_node_content_orders_body_then_summary(stack):
             modified_at=now,
             role="body",
         ),
+        NodeChunk(
+            id=f"{UUID_A}:metadata:0",
+            node_id=UUID_A,
+            kind="file",
+            name="img.png",
+            text="img.png\n/private/tmp/img.png",
+            vector=vec,
+            created_at=now,
+            modified_at=now,
+            role="metadata",
+        ),
     ]
     store.upsert(rows)
     with TestClient(app) as client:
@@ -558,6 +575,7 @@ def test_get_node_content_orders_body_then_summary(stack):
     ]
     roles_in_order = [c["role"] for c in body["chunks"]]
     assert roles_in_order == ["body", "body", "body", "summary", "summary"]
+    assert f"{UUID_A}:metadata:0" not in ids_in_order
     # Joined keeps the same order; summary text appears after body.
     joined = body["joined"]
     body_end = joined.find("Body line 10.")
