@@ -8,6 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from search_sidecar.app import build_app
+from search_sidecar.chat.orchestrator import ChatOrchestrator
+from search_sidecar.chat.retrieval import ChatRetrieval
+from search_sidecar.chat.types import ChatModel, ChatModelList
 from search_sidecar.index.dispatch import Dispatcher
 from search_sidecar.index.embedder import StubEmbedder
 from search_sidecar.index.queue import open_queue
@@ -91,9 +94,28 @@ def test_boot_signature_unchanged_by_api_key_ref_change():
     assert boot_signature(s1) == boot_signature(s2)
 
 
-def test_boot_signature_changes_on_model_per_capability_override():
+def test_boot_signature_unchanged_by_chat_provider_save():
     s1 = default_settings()
     s2 = default_settings()
+    s2.providers["local-ollama"] = ProviderConfig(
+        provider_id="local-ollama", base_url="http://127.0.0.1:11434"
+    )
+    assert boot_signature(s1) == boot_signature(s2)
+
+
+def test_boot_signature_changes_on_bound_model_per_capability_override():
+    s1 = default_settings()
+    s1.features["semantic-search"] = FeatureConfig(
+        enabled=True, provider_id="openai"
+    )
+    s1.providers["openai"] = ProviderConfig(
+        provider_id="openai",
+        model_per_capability={"embedding": "text-embedding-3-small"},
+    )
+    s2 = default_settings()
+    s2.features["semantic-search"] = FeatureConfig(
+        enabled=True, provider_id="openai"
+    )
     s2.providers["openai"] = ProviderConfig(
         provider_id="openai",
         model_per_capability={"embedding": "text-embedding-3-large"},
@@ -101,9 +123,18 @@ def test_boot_signature_changes_on_model_per_capability_override():
     assert boot_signature(s1) != boot_signature(s2)
 
 
-def test_boot_signature_changes_on_base_url_override():
+def test_boot_signature_changes_on_bound_base_url_override():
     s1 = default_settings()
+    s1.features["semantic-search"] = FeatureConfig(
+        enabled=True, provider_id="openai"
+    )
+    s1.providers["openai"] = ProviderConfig(
+        provider_id="openai", base_url="https://api.openai.com/v1"
+    )
     s2 = default_settings()
+    s2.features["semantic-search"] = FeatureConfig(
+        enabled=True, provider_id="openai"
+    )
     s2.providers["openai"] = ProviderConfig(
         provider_id="openai", base_url="http://localhost:11434/v1"
     )
@@ -161,6 +192,50 @@ def test_put_settings_no_dispatcher_change_keeps_runner_unpaused(stack):
         resp = client.put("/settings", json=payload, headers=_auth())
     assert resp.json()["needs_restart"] is False
     assert runner.paused is False
+
+
+def test_put_settings_saved_ollama_config_refreshes_chat_without_restart(
+    stack, monkeypatch
+):
+    app, _, runner = stack
+    app.state.chat_orchestrator = ChatOrchestrator(
+        retrieval=ChatRetrieval(search_orchestrator=None),
+        chat_provider=None,
+    )
+
+    class _RuntimeChatProvider:
+        provider_id = "runtime-chat"
+        model = "runtime-model"
+
+        def list_models(self) -> ChatModelList:
+            return ChatModelList(
+                provider_id=self.provider_id,
+                models=[ChatModel(id=self.model, name=self.model)],
+                cached=False,
+                cache_expires_at=None,
+            )
+
+    monkeypatch.setattr(
+        "search_sidecar.routes.settings.select_chat_provider",
+        lambda settings: _RuntimeChatProvider(),
+    )
+
+    payload = default_settings().model_dump(mode="json")
+    payload["providers"]["local-ollama"] = {
+        "provider_id": "local-ollama",
+        "enabled": True,
+        "api_key_ref": None,
+        "base_url": "http://127.0.0.1:11434",
+        "model_per_capability": {},
+    }
+    with TestClient(app) as client:
+        put_resp = client.put("/settings", json=payload, headers=_auth())
+        models_resp = client.get("/chat/models", headers=_auth())
+
+    assert put_resp.json()["needs_restart"] is False
+    assert runner.paused is False
+    assert models_resp.json()["state"] == "ready"
+    assert models_resp.json()["provider_id"] == "runtime-chat"
 
 
 def test_runner_pause_state_resyncs_on_get(stack):

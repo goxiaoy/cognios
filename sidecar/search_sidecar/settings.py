@@ -254,6 +254,14 @@ _MANDATORY_FEATURE_IDS: tuple[str, ...] = (
     "image-ocr",
 )
 
+_DISPATCHER_FEATURE_CAPABILITIES: dict[str, str] = {
+    "semantic-search": "embedding",
+    "result-reranking": "reranking",
+    "image-ocr": "ocr",
+    "image-captioning": "vision",
+    "advanced-ocr": "advanced-ocr",
+}
+
 
 def migrate_mandatory_features(
     settings: SearchSettings,
@@ -339,17 +347,21 @@ def boot_signature(settings: SearchSettings) -> str:
 
     Affecting fields, kept narrow on purpose:
 
-    - Each feature's ``enabled`` flag and bound ``provider_id`` —
-      changing either reshapes which extractors / embedders the
-      dispatcher wires.
-    - Each provider's ``model_per_capability`` — changing the model
-      a provider serves changes what the cloud Embedder sends.
-    - Each provider's ``base_url`` — same reasoning (custom endpoint
-      changes traffic destination).
+    - Dispatcher-backed features' ``enabled`` flag and active
+      ``provider_id`` — changing either reshapes which extractors /
+      embedders the indexing dispatcher wires.
+    - Dispatcher-bound providers' relevant ``model_per_capability``
+      values — changing an embedding / OCR model changes what the
+      dispatcher sends.
+    - Dispatcher-bound providers' ``base_url`` — same reasoning
+      (custom endpoint changes traffic destination).
 
     Explicitly NOT affecting (so changing them doesn't surface a
     spurious restart prompt):
 
+    - ``chat`` and ``web-search`` feature/provider settings — those
+      are refreshed in-process by the settings route and don't touch
+      the indexing runner.
     - ``cloud_consent_acked`` — pure UI gate state.
     - ``first_run_skipped`` — pure UI banner state.
     - ``api_key_ref`` — the cloud Embedder reads keys lazily from
@@ -361,21 +373,35 @@ def boot_signature(settings: SearchSettings) -> str:
     cosmetic since the comparison is local-only and a single user
     will never see 2^32 distinct signatures in their lifetime.
     """
-    inputs: dict = {
-        "features": {
-            fid: {"enabled": cfg.enabled, "provider_id": cfg.provider_id}
-            for fid, cfg in sorted(settings.features.items())
-        },
-        "providers": {
-            pid: {
-                "model_per_capability": dict(
-                    sorted(cfg.model_per_capability.items())
-                ),
-                "base_url": cfg.base_url,
+    features: dict[str, dict[str, str | bool | None]] = {}
+    provider_capabilities: dict[str, set[str]] = {}
+    for fid, capability in sorted(_DISPATCHER_FEATURE_CAPABILITIES.items()):
+        cfg = settings.features.get(fid)
+        enabled = bool(cfg and cfg.enabled)
+        provider_id = cfg.provider_id if enabled and cfg else None
+        features[fid] = {"enabled": enabled, "provider_id": provider_id}
+        if provider_id is not None:
+            provider_capabilities.setdefault(provider_id, set()).add(capability)
+
+    providers: dict[str, dict[str, object]] = {}
+    for provider_id, capabilities in sorted(provider_capabilities.items()):
+        cfg = settings.providers.get(provider_id)
+        if cfg is None:
+            providers[provider_id] = {
+                "model_per_capability": {},
+                "base_url": None,
             }
-            for pid, cfg in sorted(settings.providers.items())
-        },
-    }
+            continue
+        providers[provider_id] = {
+            "model_per_capability": {
+                capability: cfg.model_per_capability[capability]
+                for capability in sorted(capabilities)
+                if capability in cfg.model_per_capability
+            },
+            "base_url": cfg.base_url,
+        }
+
+    inputs: dict = {"features": features, "providers": providers}
     blob = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 

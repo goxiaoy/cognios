@@ -9,6 +9,7 @@ from .provider import ChatProvider
 from .retrieval import ChatRetrieval
 from .sources import SourceCluster
 from .types import ChatGenerationRequest, ChatMessage, ChatModelList, ChatProviderError
+from ..web_search.brave import BraveWebSearchProvider
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,15 @@ class ChatOrchestrator:
     ) -> None:
         self._retrieval = retrieval
         self._chat_provider = chat_provider
+
+    def set_chat_provider(self, chat_provider: ChatProvider | None) -> None:
+        _close_if_supported(self._chat_provider)
+        self._chat_provider = chat_provider
+
+    def set_web_search_provider(
+        self, web_search_provider: BraveWebSearchProvider | None
+    ) -> None:
+        self._retrieval.set_web_search_provider(web_search_provider)
 
     def run_turn(self, request: ChatTurnRequest) -> ChatTurnResponse:
         sources, warnings = self._retrieval.retrieve(
@@ -121,3 +131,9 @@ def _cluster_context(cluster: SourceCluster) -> str:
     for source in cluster.sources:
         lines.append(f"- [{source.source_kind}] {source.title}: {source.snippet} ({source.citation})")
     return "\n".join(lines)
+
+
+def _close_if_supported(provider: object | None) -> None:
+    close = getattr(provider, "close", None)
+    if callable(close):
+        close()

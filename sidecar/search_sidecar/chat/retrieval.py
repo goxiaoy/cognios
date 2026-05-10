@@ -18,6 +18,12 @@ class ChatRetrieval:
         self._search_orchestrator = search_orchestrator
         self._web_search_provider = web_search_provider
 
+    def set_web_search_provider(
+        self, web_search_provider: BraveWebSearchProvider | None
+    ) -> None:
+        _close_if_supported(self._web_search_provider)
+        self._web_search_provider = web_search_provider
+
     def retrieve(self, query: str, *, limit: int = 8, include_web: bool = True) -> tuple[list[ChatSource], list[str]]:
         sources: list[ChatSource] = []
         warnings: list[str] = []
@@ -55,3 +61,9 @@ class ChatRetrieval:
             except (WebSearchError, RuntimeError) as err:
                 warnings.append(str(err))
         return sources, warnings
+
+
+def _close_if_supported(provider: object | None) -> None:
+    close = getattr(provider, "close", None)
+    if callable(close):
+        close()
