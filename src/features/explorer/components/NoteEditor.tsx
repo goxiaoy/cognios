@@ -7,6 +7,7 @@ import {
 } from "react";
 import type { ExplorerClient } from "../types/explorer";
 import { MarkdownView } from "./MarkdownView";
+import { VisualMarkdownEditor } from "./VisualMarkdownEditor";
 
 export interface NoteEditorHandle {
   flush(): Promise<void>;
@@ -27,6 +28,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
   ) {
     const [title, setTitle] = useState(initialTitle);
     const [body, setBody] = useState("");
+    const [mode, setMode] = useState<"visual" | "raw">("visual");
     const [isLoadingBody, setIsLoadingBody] = useState(true);
 
     // Pending body that hasn't been saved yet.
@@ -35,6 +37,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
 
     useEffect(() => {
       let cancelled = false;
+      setIsLoadingBody(true);
       void (async () => {
         try {
           const content = await client.getNoteContent(nodeId);
@@ -45,6 +48,10 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
       })();
       return () => { cancelled = true; };
     }, [client, nodeId]);
+
+    useEffect(() => {
+      setTitle(initialTitle);
+    }, [initialTitle, nodeId]);
 
     useEffect(() => {
       return () => {
@@ -111,16 +118,50 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
             type="text"
             value={title}
           />
-          <p className="note-editor-storage-hint">Stored locally on your device</p>
+          <div className="note-editor-meta-row">
+            <p className="note-editor-storage-hint">Stored locally on your device</p>
+            <div
+              className="markdown-preview-mode-toggle note-editor-mode-toggle"
+              role="tablist"
+              aria-label="Editor mode"
+            >
+              <button
+                aria-pressed={mode === "visual"}
+                className={`markdown-preview-mode-button${mode === "visual" ? " is-active" : ""}`}
+                onClick={() => setMode("visual")}
+                role="tab"
+                type="button"
+              >
+                Visual
+              </button>
+              <button
+                aria-pressed={mode === "raw"}
+                className={`markdown-preview-mode-button${mode === "raw" ? " is-active" : ""}`}
+                onClick={() => setMode("raw")}
+                role="tab"
+                type="button"
+              >
+                Raw
+              </button>
+            </div>
+          </div>
 
           {!isLoadingBody ? (
-            <MarkdownView
-              className="note-editor-codemirror"
-              onChange={handleBodyChange}
-              placeholder="Start writing…"
-              readOnly={false}
-              value={body}
-            />
+            mode === "visual" ? (
+              <VisualMarkdownEditor
+                onChange={handleBodyChange}
+                placeholder="Start writing..."
+                value={body}
+              />
+            ) : (
+              <MarkdownView
+                className="note-editor-codemirror"
+                onChange={handleBodyChange}
+                placeholder="Start writing..."
+                readOnly={false}
+                value={body}
+              />
+            )
           ) : null}
         </div>
       </div>

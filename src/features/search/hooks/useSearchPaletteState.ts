@@ -12,7 +12,7 @@ import type {
 } from "../types/search";
 
 const DEBOUNCE_MS = 150;
-// Page size when paging into deeper results via "Load more". The
+// Page size when paging into deeper results via infinite scroll. The
 // palette is now the only search surface (the dedicated view was
 // removed in favour of folding filters + cursor pagination here),
 // so the page size matches what the dedicated view used.
@@ -52,6 +52,7 @@ export function useSearchPaletteState(client: SearchClient) {
   const [state, setState] = useState<PaletteState>(INITIAL);
   const requestIdRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadingMoreRef = useRef(false);
 
   const setQuery = useCallback((next: string) => {
     setState((prev) => ({ ...prev, query: next }));
@@ -76,6 +77,12 @@ export function useSearchPaletteState(client: SearchClient) {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (state.envelopeState !== "loadingMore") {
+      loadingMoreRef.current = false;
+    }
+  }, [state.envelopeState]);
 
   // Debounced first-page search. Each new (query, filters, sort)
   // bumps `requestIdRef` so a stale response from a slower in-flight
@@ -148,7 +155,7 @@ export function useSearchPaletteState(client: SearchClient) {
     }, DEBOUNCE_MS);
   }, [client, composedQuery, state.sort]);
 
-  // Load more — appends the next page using the opaque cursor the
+  // Pagination — appends the next page using the opaque cursor the
   // last response handed back. Concurrent first-page requests bump
   // ``requestIdRef``, so a load-more triggered against a stale
   // result set is naturally cancelled.
@@ -156,9 +163,11 @@ export function useSearchPaletteState(client: SearchClient) {
     const cursor = state.nextCursor;
     if (!cursor) return;
     if (state.envelopeState === "loadingMore") return;
+    if (loadingMoreRef.current) return;
     const trimmed = composedQuery.trim();
     if (!trimmed) return;
 
+    loadingMoreRef.current = true;
     const myRequestId = ++requestIdRef.current;
     setState((prev) => ({ ...prev, envelopeState: "loadingMore" }));
     let envelope: SidecarEnvelope<SearchResponse>;
@@ -170,7 +179,10 @@ export function useSearchPaletteState(client: SearchClient) {
         cursor,
       });
     } catch (err) {
-      if (myRequestId !== requestIdRef.current) return;
+      if (myRequestId !== requestIdRef.current) {
+        loadingMoreRef.current = false;
+        return;
+      }
       setState((prev) => ({
         ...prev,
         envelopeState: "unavailable",
@@ -178,7 +190,10 @@ export function useSearchPaletteState(client: SearchClient) {
       }));
       return;
     }
-    if (myRequestId !== requestIdRef.current) return;
+    if (myRequestId !== requestIdRef.current) {
+      loadingMoreRef.current = false;
+      return;
+    }
     if (envelope.state === "ready" && envelope.data) {
       setState((prev) => ({
         ...prev,

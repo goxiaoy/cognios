@@ -2,8 +2,10 @@ import { useState } from "react";
 import {
   ChevronDown,
   FileSearch,
+  Globe,
   Image as ImageIcon,
   Layers,
+  MessageCircle,
   Plus,
   Search,
   Sparkles,
@@ -30,12 +32,14 @@ const FEATURE_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
   "image-ocr": ImageIcon,
   "image-captioning": Sparkles,
   "advanced-ocr": FileSearch,
+  chat: MessageCircle,
+  "web-search": Globe,
 };
 
 /**
- * One feature row. Renders the enable toggle (or "Required" badge
- * for mandatory features) and a provider-pill picker filtered by
- * the feature's capability. Credentials editing happens from the
+ * One feature row. Renders the enable toggle for optional features
+ * and a provider-pill picker filtered by the feature's capability.
+ * Credentials editing happens from the
  * Providers column on the right — there is no inline editor here.
  *
  * Phase-2 features (image-captioning) render disabled with an
@@ -57,9 +61,10 @@ export function FeatureRow({
   onSettingsChange: (next: SearchSettings) => void;
 }) {
   const [pendingConsentFor, setPendingConsentFor] = useState<
-    ProviderPreset | null
+    { preset: ProviderPreset; enableOnCommit: boolean } | null
   >(null);
   const [chooserOpen, setChooserOpen] = useState(false);
+  const [enableOnProviderPick, setEnableOnProviderPick] = useState(false);
   const compatible = presetsWithCapability(meta.capability);
   const enabled = config?.enabled ?? meta.mandatory;
   const boundProviderId = config?.providerId ?? null;
@@ -72,6 +77,11 @@ export function FeatureRow({
   async function handleToggle() {
     if (meta.mandatory) return;
     const wasEnabled = enabled;
+    if (!wasEnabled && !boundProviderId) {
+      setEnableOnProviderPick(true);
+      setChooserOpen(true);
+      return;
+    }
     // Keep the provider binding sticky across enable/disable —
     // clearing it on disable made the card height jump (the
     // "via <provider>" meta row collapsed) and lost the user's
@@ -99,7 +109,7 @@ export function FeatureRow({
     }
   }
 
-  async function handleProviderChange(nextId: string) {
+  async function handleProviderChange(nextId: string, enableOnCommit = false) {
     const next = nextId === "" ? null : nextId;
     // Cloud-egress consent gate: first time the user binds *any*
     // feature to a cloud provider, intercept and prompt before the
@@ -110,21 +120,22 @@ export function FeatureRow({
         preset?.providerType === "cloud" &&
         !settings.cloudConsentAcked.includes(next)
       ) {
-        setPendingConsentFor(preset);
+        setPendingConsentFor({ preset, enableOnCommit });
         return;
       }
     }
-    await commitProviderChange(next, settings.cloudConsentAcked);
+    await commitProviderChange(next, settings.cloudConsentAcked, enableOnCommit);
   }
 
   async function commitProviderChange(
     next: string | null,
-    cloudConsentAcked: string[]
+    cloudConsentAcked: string[],
+    enableOnCommit = false
   ) {
     const nextFeatures: SearchSettings["features"] = {
       ...settings.features,
       [meta.featureId]: {
-        enabled: enabled,
+        enabled: enableOnCommit ? true : enabled,
         providerId: next,
       },
     };
@@ -188,9 +199,6 @@ export function FeatureRow({
       <div className="feature-card-body">
         <div className="feature-card-name">
           <span className="feature-row-name">{meta.displayName}</span>
-          {meta.mandatory ? (
-            <span className="feature-badge feature-badge--required">Required</span>
-          ) : null}
           {meta.comingSoon ? (
             <span className="feature-badge feature-badge--soon">
               coming soon
@@ -264,23 +272,32 @@ export function FeatureRow({
           providers={compatible}
           currentProviderId={boundProviderId}
           client={client}
-          onClose={() => setChooserOpen(false)}
+          onClose={() => {
+            setChooserOpen(false);
+            setEnableOnProviderPick(false);
+          }}
           onChoose={(providerId) => {
             setChooserOpen(false);
-            void handleProviderChange(providerId);
+            const shouldEnable = enableOnProviderPick;
+            setEnableOnProviderPick(false);
+            void handleProviderChange(providerId, shouldEnable);
           }}
         />
       ) : null}
 
       {pendingConsentFor ? (
         <CloudEgressConsentDialog
-          preset={pendingConsentFor}
+          preset={pendingConsentFor.preset}
           onAccept={() => {
-            const acked = pendingConsentFor.providerId;
+            const acked = pendingConsentFor.preset.providerId;
             const nextAcked = settings.cloudConsentAcked.includes(acked)
               ? settings.cloudConsentAcked
               : [...settings.cloudConsentAcked, acked];
-            void commitProviderChange(acked, nextAcked);
+            void commitProviderChange(
+              acked,
+              nextAcked,
+              pendingConsentFor.enableOnCommit
+            );
             setPendingConsentFor(null);
           }}
           onCancel={() => setPendingConsentFor(null)}

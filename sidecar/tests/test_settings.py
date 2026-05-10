@@ -55,6 +55,15 @@ def test_default_settings_seeds_local_gte_and_semantic_search():
     # and cloud incurs per-image API cost. Off + unbound by default.
     assert s.features["advanced-ocr"].enabled is False
     assert s.features["advanced-ocr"].provider_id is None
+    # Chat is pre-bound to local Ollama, but the provider is not
+    # considered ready until the user opens Add and saves the default
+    # endpoint. This keeps first launch from claiming Ollama is ready
+    # before the user has acknowledged the runtime configuration.
+    assert "local-ollama" not in s.providers
+    assert s.features["chat"].enabled is True
+    assert s.features["chat"].provider_id == "local-ollama"
+    assert s.features["web-search"].enabled is False
+    assert s.features["web-search"].provider_id is None
     # No cloud providers consented to on first install.
     assert s.cloud_consent_acked == []
     assert s.first_run_skipped is False

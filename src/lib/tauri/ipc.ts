@@ -1,5 +1,26 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AppendChatMessageInput,
+  BindChatNoteInput,
+  ChatMessage,
+  ChatSession,
+  ChatSessionDetail,
+  ChatSessionInput,
+  ChatSourceCluster,
+  CreateChatSessionInput,
+  DeleteChatSessionResult,
+  ExportChatSessionMemoryResult,
+  GetChatSessionMemoryResult,
+  GetChatModelsResult,
+  RecordChatClusterInput,
+  StartChatTurnInput,
+  StartChatTurnResult,
+  TestChatProviderInput,
+  TriggerChatSessionMemoryOpportunityInput,
+  TestChatProviderResult,
+  UpdateChatSessionTitleInput,
+} from "../contracts/chat";
+import type {
   IndexStatus,
   ModelsStatus,
   NodeContent,
@@ -115,6 +136,86 @@ export async function showNodeInFileManager(nodeId: string): Promise<void> {
 
 export async function showNodeExtractArtifacts(nodeId: string): Promise<void> {
   return invoke<void>("show_node_extract_artifacts", { input: { nodeId } });
+}
+
+// ---- chat sessions -------------------------------------------------------
+
+export async function createChatSession(
+  input: CreateChatSessionInput = {}
+): Promise<ChatSession> {
+  return invoke<ChatSession>("create_chat_session", { input });
+}
+
+export async function listChatSessions(): Promise<ChatSession[]> {
+  return invoke<ChatSession[]>("list_chat_sessions");
+}
+
+export async function getChatSession(
+  input: ChatSessionInput
+): Promise<ChatSessionDetail> {
+  return invoke<ChatSessionDetail>("get_chat_session", { input });
+}
+
+export async function getChatSessionMemory(
+  input: ChatSessionInput
+): Promise<GetChatSessionMemoryResult> {
+  return invoke<GetChatSessionMemoryResult>("get_chat_session_memory", { input });
+}
+
+export async function exportChatSessionMemory(
+  input: ChatSessionInput
+): Promise<ExportChatSessionMemoryResult> {
+  return invoke<ExportChatSessionMemoryResult>("export_chat_session_memory", { input });
+}
+
+export async function deleteChatSession(
+  input: ChatSessionInput
+): Promise<DeleteChatSessionResult> {
+  return invoke<DeleteChatSessionResult>("delete_chat_session", { input });
+}
+
+export async function updateChatSessionTitle(
+  input: UpdateChatSessionTitleInput
+): Promise<ChatSession> {
+  return invoke<ChatSession>("update_chat_session_title", { input });
+}
+
+export async function appendChatMessage(
+  input: AppendChatMessageInput
+): Promise<ChatMessage> {
+  return invoke<ChatMessage>("append_chat_message", { input });
+}
+
+export async function recordChatCluster(
+  input: RecordChatClusterInput
+): Promise<ChatSourceCluster> {
+  return invoke<ChatSourceCluster>("record_chat_cluster", { input });
+}
+
+export async function bindChatNote(input: BindChatNoteInput): Promise<ChatSession> {
+  return invoke<ChatSession>("bind_chat_note", { input });
+}
+
+export async function startChatTurn(
+  input: StartChatTurnInput
+): Promise<StartChatTurnResult> {
+  return invoke<StartChatTurnResult>("start_chat_turn", { input });
+}
+
+export async function triggerChatSessionMemoryOpportunity(
+  input: TriggerChatSessionMemoryOpportunityInput
+): Promise<void> {
+  return invoke<void>("trigger_chat_session_memory_opportunity", { input });
+}
+
+export async function getChatModels(): Promise<GetChatModelsResult> {
+  return invoke<GetChatModelsResult>("get_chat_models");
+}
+
+export async function testChatProvider(
+  input: TestChatProviderInput
+): Promise<TestChatProviderResult> {
+  return invoke<TestChatProviderResult>("test_chat_provider", { input });
 }
 
 // ---- search-sidecar bridge ------------------------------------------------

@@ -91,6 +91,17 @@ pub fn run() {
             let mut conn = db
                 .connect()
                 .map_err(|error: rusqlite::Error| error.to_string())?;
+            let recovered_memories =
+                services::chat::session_memory::recover_orphaned_refreshes(&conn)
+                    .map_err(|error| error.to_string())?;
+            if recovered_memories > 0 {
+                log::info!(
+                    "recovered {recovered_memories} interrupted session memory refresh job(s)"
+                );
+            }
+            let pending_memory_refreshes =
+                services::chat::session_memory::pending_refresh_session_ids(&conn)
+                    .map_err(|error| error.to_string())?;
             reconcile_all_mounts(&mut conn)?;
             ensure_cache_dir(&cache_dir)?;
 
@@ -105,6 +116,49 @@ pub fn run() {
             ));
             search_sidecar.start(app.handle());
             let search_client = Arc::new(SearchSidecarClient::new(Arc::clone(&search_sidecar)));
+
+            if !pending_memory_refreshes.is_empty() {
+                let memory_app_handle = app.handle().clone();
+                let memory_db = db.clone();
+                let memory_storage_dir = app_data_dir.clone();
+                let memory_client = Arc::clone(&search_client);
+                let memory_supervisor = Arc::clone(&search_sidecar);
+                tauri::async_runtime::spawn(async move {
+                    use crate::services::search::SupervisorState;
+                    use std::time::Duration;
+
+                    let step = Duration::from_millis(500);
+                    loop {
+                        match memory_supervisor.state() {
+                            SupervisorState::Running { .. } => break,
+                            SupervisorState::Failed {
+                                retryable: false, ..
+                            }
+                            | SupervisorState::Stopped => {
+                                log::warn!(
+                                    "session memory startup refresh skipped: sidecar unavailable"
+                                );
+                                return;
+                            }
+                            _ => tokio::time::sleep(step).await,
+                        }
+                    }
+
+                    log::info!(
+                        "scheduling {} pending session memory refresh job(s) after startup",
+                        pending_memory_refreshes.len()
+                    );
+                    for session_id in pending_memory_refreshes {
+                        commands::chat::spawn_memory_refresh(
+                            memory_app_handle.clone(),
+                            memory_db.clone(),
+                            memory_storage_dir.clone(),
+                            Arc::clone(&memory_client),
+                            session_id,
+                        );
+                    }
+                });
+            }
 
             // Single emitter shared by every emit site (mount watchers,
             // URL jobs, and the note/folder mutation paths). It does
@@ -299,6 +353,20 @@ pub fn run() {
             commands::thumbnails::get_node_thumbnail,
             commands::urls::create_url,
             commands::urls::retry_url,
+            commands::chat::create_chat_session,
+            commands::chat::list_chat_sessions,
+            commands::chat::get_chat_session,
+            commands::chat::get_chat_session_memory,
+            commands::chat::export_chat_session_memory,
+            commands::chat::delete_chat_session,
+            commands::chat::update_chat_session_title,
+            commands::chat::append_chat_message,
+            commands::chat::record_chat_cluster,
+            commands::chat::bind_chat_note,
+            commands::chat::start_chat_turn,
+            commands::chat::trigger_chat_session_memory_opportunity,
+            commands::chat::get_chat_models,
+            commands::chat::test_chat_provider,
             commands::search::search_query,
             commands::search::get_indexing_status,
             commands::search::get_node_indexing_status,

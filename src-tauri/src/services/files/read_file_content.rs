@@ -8,9 +8,11 @@ use rusqlite::{Connection, OptionalExtension};
 // CodeMirror's layout pass scales noticeably with content length on text.
 //
 // Frontend extension allowlist lives in src/features/explorer/utils/presentation.ts
-// (MARKDOWN_EXTENSIONS). The two lists must change together.
+// (MARKDOWN_EXTENSIONS and PLAIN_TEXT_EXTENSIONS). The two lists must change together.
 pub const MAX_PREVIEW_BYTES: u64 = 1024 * 1024;
-const ALLOWED_EXTENSIONS: &[&str] = &["md", "mdx"];
+const ALLOWED_EXTENSIONS: &[&str] = &[
+    "md", "mdx", "txt", "log", "csv", "tsv", "ini", "toml", "xml", "rtf", "cfg", "conf",
+];
 
 pub fn read_file_content(conn: &Connection, node_id: &str) -> Result<String, String> {
     let record = load_file_record(conn, node_id)

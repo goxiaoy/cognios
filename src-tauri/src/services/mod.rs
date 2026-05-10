@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod files;
 pub mod mounts;
 pub mod mutations;

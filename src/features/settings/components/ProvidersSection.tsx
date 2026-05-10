@@ -25,6 +25,8 @@ const CAPABILITY_LABEL: Record<Capability, string> = {
   vision: "Vision",
   ocr: "OCR",
   "advanced-ocr": "Advanced OCR",
+  chat: "Chat",
+  "web-search": "Web Search",
 };
 
 /** Capability → ModelRoleName. Capabilities are the user-facing
@@ -40,6 +42,8 @@ const CAPABILITY_TO_ROLE: Record<Capability, string> = {
   vision: "captioner",
   ocr: "ocr",
   "advanced-ocr": "advanced-ocr",
+  chat: "chat",
+  "web-search": "web-search",
 };
 
 type FilterId =
@@ -58,7 +62,7 @@ type Filter = {
 
 /**
  * Always-visible Providers section. Lists every preset (configured
- * or not) with an Add/Edit affordance. For local providers the row
+ * or not) with an Add/Details affordance. For local providers the row
  * also surfaces the underlying model role state (downloaded / pending
  * license / error) plus the action that unblocks it — replacing the
  * old "Show Diagnostics" toggle's separate Models card.
@@ -245,11 +249,10 @@ export function ProvidersSection({
               (p) => p.providerId === openId
             );
             if (!preset) return null;
-            // Local providers open the stages modal — they have
-            // no credentials to edit, only per-stage download
-            // state to surface. Cloud providers route through the
-            // credentials editor.
-            if (preset.providerType === "local") {
+            // Download-only local providers open the stages modal.
+            // Configurable locals such as Ollama route through the
+            // editor so users can change endpoint/model settings.
+            if (preset.providerType === "local" && !usesProviderEditor(preset)) {
               const owned = Object.values(rolesByName).filter((role) =>
                 presetOwnsRole(preset, role.role)
               );
@@ -289,6 +292,9 @@ function isProviderConfigured(
   rolesByName: Record<string, ModelRoleStatus>
 ): boolean {
   if (preset.providerType === "local") {
+    if (usesProviderEditor(preset)) {
+      return settings.providers[preset.providerId]?.enabled === true;
+    }
     // For locals "configured" means every underlying model role is
     // ready. ``primaryRoleFor`` returns the full set so a multi-
     // stage provider (PP-StructureV3 owns 13 ``advanced-ocr-*``
@@ -309,6 +315,10 @@ function isProviderConfigured(
     return keyPresence[preset.providerId] ?? false;
   }
   return settings.providers[preset.providerId] !== undefined;
+}
+
+function usesProviderEditor(preset: ProviderPreset): boolean {
+  return preset.providerType === "cloud" || Boolean(preset.baseUrl);
 }
 
 function primaryRoleFor(
@@ -572,7 +582,7 @@ function ProviderActions({
       onClick={onToggle}
       aria-expanded={isOpen}
     >
-      {isOpen ? "Close" : isConfigured ? "Edit" : "Add"}
+      {isOpen ? "Close" : isConfigured ? "Details" : "Add"}
     </button>
   );
 }

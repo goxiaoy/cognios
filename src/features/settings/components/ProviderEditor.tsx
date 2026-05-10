@@ -21,6 +21,12 @@ type EditorState =
   | { kind: "error"; message: string }
   | { kind: "saved" };
 
+type TestState =
+  | { kind: "idle" }
+  | { kind: "testing" }
+  | { kind: "connected"; modelCount: number }
+  | { kind: "error"; message: string };
+
 export function ProviderEditor({
   preset,
   config,
@@ -42,11 +48,14 @@ export function ProviderEditor({
   onKeyPresenceChange?: (providerId: string, present: boolean) => void;
 }) {
   const [state, setState] = useState<EditorState>({ kind: "idle" });
+  const [testState, setTestState] = useState<TestState>({ kind: "idle" });
   const [secret, setSecret] = useState("");
   const [hasSecret, setHasSecret] = useState<boolean>(false);
+  const [baseUrl, setBaseUrl] = useState(config?.baseUrl ?? preset.baseUrl ?? "");
   const [pendingSecretForConsent, setPendingSecretForConsent] = useState<
     string | null
   >(null);
+  const canEditConfig = preset.authKind === "none" && Boolean(preset.baseUrl);
 
   useEffect(() => {
     if (preset.authKind !== "api-key") {
@@ -116,6 +125,7 @@ export function ProviderEditor({
       onKeyPresenceChange?.(preset.providerId, true);
       setSecret("");
       setState({ kind: "saved" });
+      onClose();
     } catch (err) {
       setState({
         kind: "error",
@@ -146,6 +156,77 @@ export function ProviderEditor({
       onClose();
     } catch (err) {
       setState({
+        kind: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  async function handleSaveConfig() {
+    setState({ kind: "validating" });
+    try {
+      const nextProviders: SearchSettings["providers"] = {
+        ...settings.providers,
+        [preset.providerId]: {
+          providerId: preset.providerId,
+          enabled: true,
+          apiKeyRef: config?.apiKeyRef ?? null,
+          baseUrl: baseUrl.trim() || null,
+          modelPerCapability: {},
+        },
+      };
+      const env = await client.updateSettings({
+        ...settings,
+        providers: nextProviders,
+      });
+      if (env.state !== "ready" || !env.data) {
+        setState({
+          kind: "error",
+          message: env.error ?? "Failed to persist settings.",
+        });
+        return;
+      }
+      onSettingsChange(env.data);
+      setState({ kind: "saved" });
+      onClose();
+    } catch (err) {
+      setState({
+        kind: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  async function handleTestConfig() {
+    const trimmedBaseUrl = baseUrl.trim();
+    if (!trimmedBaseUrl) return;
+    setTestState({ kind: "testing" });
+    try {
+      const { result } = await client.testChatProvider({
+        providerId: preset.providerId,
+        baseUrl: trimmedBaseUrl,
+      });
+      const data = result.data;
+      if (result.state !== "ready" || !data) {
+        setTestState({
+          kind: "error",
+          message: result.error ?? "Could not reach provider.",
+        });
+        return;
+      }
+      if (data.state !== "ready") {
+        setTestState({
+          kind: "error",
+          message: data.warnings[0] ?? "Could not reach provider.",
+        });
+        return;
+      }
+      setTestState({
+        kind: "connected",
+        modelCount: data.models.length,
+      });
+    } catch (err) {
+      setTestState({
         kind: "error",
         message: err instanceof Error ? err.message : String(err),
       });
@@ -183,6 +264,22 @@ export function ProviderEditor({
             </p>
           )}
         </section>
+      ) : canEditConfig ? (
+        <section className="provider-editor-section">
+          <label className="provider-editor-key-label">
+            Base URL
+            <input
+              type="url"
+              className="provider-editor-key-input"
+              value={baseUrl}
+              onChange={(e) => {
+                setBaseUrl(e.target.value);
+                setTestState({ kind: "idle" });
+              }}
+              placeholder={preset.baseUrl ?? "http://127.0.0.1:11434"}
+            />
+          </label>
+        </section>
       ) : (
         <p className="provider-editor-info">
           No credentials required.
@@ -200,6 +297,11 @@ export function ProviderEditor({
       {state.kind === "saved" ? (
         <p className="muted-copy">Saved ✓</p>
       ) : null}
+      {testState.kind === "error" ? (
+        <p className="settings-role-error" role="alert">
+          {testState.message}
+        </p>
+      ) : null}
 
       <div className="provider-editor-actions">
         {preset.authKind === "api-key" &&
@@ -212,6 +314,28 @@ export function ProviderEditor({
           >
             Save
           </button>
+        ) : null}
+        {canEditConfig ? (
+          <>
+            <button
+              type="button"
+              className="settings-action is-primary"
+              disabled={state.kind === "validating" || !baseUrl.trim()}
+              onClick={() => void handleSaveConfig()}
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              className={`settings-action${
+                testState.kind === "connected" ? " is-success" : ""
+              }`}
+              disabled={testState.kind === "testing" || !baseUrl.trim()}
+              onClick={() => void handleTestConfig()}
+            >
+              <span aria-live="polite">{testButtonLabel(testState)}</span>
+            </button>
+          </>
         ) : null}
         {hasSecret ? (
           <button
@@ -241,4 +365,16 @@ export function ProviderEditor({
       ) : null}
     </div>
   );
+}
+
+function formatModelCount(count: number): string {
+  return `${count} ${count === 1 ? "model" : "models"}`;
+}
+
+function testButtonLabel(state: TestState): string {
+  if (state.kind === "testing") return "Testing…";
+  if (state.kind === "connected") {
+    return `Connected · ${formatModelCount(state.modelCount)}`;
+  }
+  return "Test";
 }

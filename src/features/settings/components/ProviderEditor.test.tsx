@@ -16,6 +16,7 @@ afterEach(() => cleanup());
 
 const OPENAI = presetById("openai")!;
 const LOCAL_GTE = presetById("local-gte")!;
+const LOCAL_OLLAMA = presetById("local-ollama")!;
 
 function baseSettings(): SearchSettings {
   return {
@@ -46,6 +47,119 @@ describe("ProviderEditor", () => {
     expect(screen.getByText(/no credentials required/i)).toBeInTheDocument();
   });
 
+  it("lets configurable local providers persist endpoint settings", async () => {
+    const updateSettings = vi.fn().mockResolvedValue({
+      state: "ready",
+      data: baseSettings(),
+    });
+    const onSettingsChange = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <ProviderEditor
+        preset={LOCAL_OLLAMA}
+        config={null}
+        settings={baseSettings()}
+        client={makeStubSearchClient({ updateSettings })}
+        onSettingsChange={onSettingsChange}
+        onClose={onClose}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText(/base url/i), {
+      target: { value: "http://localhost:11435" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(updateSettings).toHaveBeenCalled();
+    });
+    const arg = updateSettings.mock.calls[0][0];
+    expect(arg.providers["local-ollama"]).toMatchObject({
+      providerId: "local-ollama",
+      enabled: true,
+      apiKeyRef: null,
+      baseUrl: "http://localhost:11435",
+      modelPerCapability: {},
+    });
+    expect(onSettingsChange).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("tests configurable local provider connectivity without saving", async () => {
+    const testChatProvider = vi.fn().mockResolvedValue({
+      result: {
+        state: "ready",
+        data: {
+          state: "ready",
+          providerId: "local-ollama",
+          models: [{ id: "qwen2.5:7b", name: "qwen2.5:7b" }],
+          cached: false,
+          cacheExpiresAt: null,
+          warnings: [],
+        },
+      },
+    });
+    render(
+      <ProviderEditor
+        preset={LOCAL_OLLAMA}
+        config={null}
+        settings={baseSettings()}
+        client={makeStubSearchClient({ testChatProvider })}
+        onSettingsChange={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText(/base url/i), {
+      target: { value: "http://localhost:11435" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^test$/i }));
+
+    await waitFor(() => {
+      expect(testChatProvider).toHaveBeenCalledWith({
+        providerId: "local-ollama",
+        baseUrl: "http://localhost:11435",
+      });
+    });
+    const button = await screen.findByRole("button", {
+      name: /connected · 1 model/i,
+    });
+    expect(button).toHaveClass("is-success");
+  });
+
+  it("surfaces configurable local provider test failures", async () => {
+    render(
+      <ProviderEditor
+        preset={LOCAL_OLLAMA}
+        config={null}
+        settings={baseSettings()}
+        client={makeStubSearchClient({
+          testChatProvider: vi.fn().mockResolvedValue({
+            result: {
+              state: "ready",
+              data: {
+                state: "provider_error",
+                providerId: "local-ollama",
+                models: [],
+                cached: false,
+                cacheExpiresAt: null,
+                warnings: ["local-ollama: local runtime unreachable"],
+              },
+            },
+          }),
+        })}
+        onSettingsChange={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^test$/i }));
+
+    expect(
+      await screen.findByText(/local runtime unreachable/i)
+    ).toBeInTheDocument();
+  });
+
   it("shows API key input when cloud provider has no key configured", async () => {
     render(
       <ProviderEditor
@@ -67,6 +181,7 @@ describe("ProviderEditor", () => {
   it("saves a new key + persists settings + invokes onSettingsChange", async () => {
     const setProviderSecret = vi.fn().mockResolvedValue(undefined);
     const onSettingsChange = vi.fn();
+    const onClose = vi.fn();
     const updateSettings = vi.fn().mockResolvedValue({
       state: "ready",
       data: baseSettings(),
@@ -82,7 +197,7 @@ describe("ProviderEditor", () => {
           hasProviderSecret: vi.fn().mockResolvedValue(false),
         })}
         onSettingsChange={onSettingsChange}
-        onClose={vi.fn()}
+        onClose={onClose}
       />
     );
     await waitFor(() => {
@@ -106,6 +221,7 @@ describe("ProviderEditor", () => {
     expect(arg.providers.openai.apiKeyRef).toBe(
       "keychain://cognios-search/provider:openai"
     );
+    expect(onClose).toHaveBeenCalled();
   });
 
   it("surfaces an error when setProviderSecret rejects", async () => {

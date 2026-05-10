@@ -1,7 +1,7 @@
 ---
 title: "feat: Build cluster-first agent chat"
 type: feat
-status: active
+status: completed
 date: 2026-05-10
 origin: docs/brainstorms/2026-05-10-cluster-first-agent-chat-requirements.md
 ---

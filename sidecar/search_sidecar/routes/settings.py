@@ -7,11 +7,7 @@ name. Bearer auth is inherited from the global middleware.
 
 ``needs_restart`` is a computed flag indicating whether the on-disk
 settings differ from what the running sidecar booted with in any
-dispatcher-affecting way. v1 of this unit returns ``False``
-unconditionally — Unit 3 wires the boot-signature comparison that
-makes the flag actually useful. Returning ``False`` here keeps the
-JSON shape stable so the frontend can build against the final
-contract immediately.
+indexing-dispatcher-affecting way.
 """
 
 from __future__ import annotations
@@ -20,6 +16,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
+from ..chat.factory import select_chat_provider
+from ..chat.orchestrator import ChatOrchestrator
 from ..providers import invalidate_provider_secret_cache
 from ..settings import (
     SearchSettings,
@@ -27,6 +25,7 @@ from ..settings import (
     load_settings,
     save_settings,
 )
+from ..web_search.factory import select_web_search_provider
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -76,6 +75,21 @@ def _set_runner_pause(request: Request, paused: bool) -> None:
     runner.set_paused(paused)
 
 
+def _refresh_runtime_settings(request: Request, settings: SearchSettings) -> None:
+    """Apply non-dispatcher settings to live chat dependencies.
+
+    The indexing dispatcher is intentionally restart-gated to avoid
+    mixed embedding/extraction state. Chat and web-search providers
+    are per-request clients, so they can be swapped immediately after
+    a settings save without pausing the runner or asking for restart.
+    """
+    orchestrator = getattr(request.app.state, "chat_orchestrator", None)
+    if not isinstance(orchestrator, ChatOrchestrator):
+        return
+    orchestrator.set_chat_provider(select_chat_provider(settings))
+    orchestrator.set_web_search_provider(select_web_search_provider(settings))
+
+
 @router.get("")
 def get_settings(request: Request) -> dict:
     """Return the current persisted settings + computed ``needs_restart``."""
@@ -109,6 +123,7 @@ def put_settings(body: SearchSettings, request: Request) -> dict:
     # ``providers.keychain`` would otherwise serve the stale value
     # until the next sidecar restart.
     invalidate_provider_secret_cache()
+    _refresh_runtime_settings(request, settings)
     needs_restart = _compute_needs_restart(request, settings)
     _set_runner_pause(request, needs_restart)
     return _settings_response(needs_restart, settings)

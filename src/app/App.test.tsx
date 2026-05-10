@@ -50,6 +50,47 @@ vi.mock("../lib/tauri/ipc", () => ({
   setProviderSecret: vi.fn().mockResolvedValue(undefined),
   getProviderSecretPresent: vi.fn().mockResolvedValue(false),
   deleteProviderSecret: vi.fn().mockResolvedValue(undefined),
+  createChatSession: vi.fn().mockResolvedValue({
+    id: "s1",
+    title: "Research chat",
+    boundNoteId: null,
+    createdAt: "now",
+    updatedAt: "now",
+  }),
+  listChatSessions: vi.fn().mockResolvedValue([]),
+  getChatSession: vi.fn().mockResolvedValue({
+    session: {
+      id: "s1",
+      title: "Research chat",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    },
+    messages: [],
+    clusters: [],
+  }),
+  deleteChatSession: vi.fn().mockResolvedValue({ deleted: true }),
+  getChatSessionMemory: vi.fn().mockResolvedValue({ available: false }),
+  exportChatSessionMemory: vi.fn().mockResolvedValue({
+    noteId: "note-1",
+    snapshot: { roots: [] },
+  }),
+  triggerChatSessionMemoryOpportunity: vi.fn().mockResolvedValue(undefined),
+  updateChatSessionTitle: vi.fn().mockImplementation(async (input: { sessionId: string; title: string }) => ({
+    id: input.sessionId,
+    title: input.title,
+    boundNoteId: null,
+    createdAt: "now",
+    updatedAt: "now",
+  })),
+  appendChatMessage: vi.fn(),
+  recordChatCluster: vi.fn(),
+  bindChatNote: vi.fn(),
+  startChatTurn: vi.fn().mockResolvedValue({ turn: { state: "initialising" } }),
+  getChatModels: vi.fn().mockResolvedValue({ models: { state: "initialising" } }),
+  testChatProvider: vi.fn().mockResolvedValue({
+    result: { state: "initialising" },
+  }),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({

@@ -17,6 +17,7 @@ afterEach(() => cleanup());
 const SEMANTIC = FEATURE_CATALOG.find((m) => m.featureId === "semantic-search")!;
 const RERANKING = FEATURE_CATALOG.find((m) => m.featureId === "result-reranking")!;
 const OCR = FEATURE_CATALOG.find((m) => m.featureId === "image-ocr")!;
+const CAPTIONING = FEATURE_CATALOG.find((m) => m.featureId === "image-captioning")!;
 
 // Synthetic optional/non-coming-soon feature for toggle-path tests —
 // every catalog entry is currently either mandatory or coming-soon, so
@@ -55,7 +56,7 @@ function baseSettings(): SearchSettings {
 }
 
 describe("FeatureRow", () => {
-  it("renders a Required badge for mandatory features (no toggle)", () => {
+  it("hides the toggle for mandatory features without a Required label", () => {
     render(
       <FeatureRow
         meta={SEMANTIC}
@@ -65,7 +66,7 @@ describe("FeatureRow", () => {
         onSettingsChange={vi.fn()}
       />
     );
-    expect(screen.getByText("Required")).toBeInTheDocument();
+    expect(screen.queryByText("Required")).toBeNull();
     expect(screen.queryByRole("switch")).toBeNull();
   });
 
@@ -83,7 +84,7 @@ describe("FeatureRow", () => {
     expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 
-  it("renders a Required badge for the result-reranking feature", () => {
+  it("hides the toggle for the mandatory result-reranking feature", () => {
     expect(RERANKING.mandatory).toBe(true);
     render(
       <FeatureRow
@@ -94,7 +95,7 @@ describe("FeatureRow", () => {
         onSettingsChange={vi.fn()}
       />
     );
-    expect(screen.getByText("Required")).toBeInTheDocument();
+    expect(screen.queryByText("Required")).toBeNull();
     expect(screen.queryByRole("switch")).toBeNull();
   });
 
@@ -191,7 +192,7 @@ describe("FeatureRow", () => {
     expect(arg.features["semantic-search"].providerId).toBe("openai");
   });
 
-  it("toggling an optional feature flips enabled in the PUT payload", async () => {
+  it("toggling an optional feature with a provider flips enabled in the PUT payload", async () => {
     const updateSettings = vi.fn().mockResolvedValue({
       state: "ready",
       data: baseSettings(),
@@ -199,7 +200,7 @@ describe("FeatureRow", () => {
     render(
       <FeatureRow
         meta={OPTIONAL_TEST_FEATURE}
-        config={{ enabled: false, providerId: null }}
+        config={{ enabled: false, providerId: "local-gte-reranker" }}
         settings={baseSettings()}
         client={makeStubSearchClient({ updateSettings })}
         onSettingsChange={vi.fn()}
@@ -211,5 +212,60 @@ describe("FeatureRow", () => {
     });
     const arg = updateSettings.mock.calls[0][0];
     expect(arg.features["result-reranking"].enabled).toBe(true);
+  });
+
+  it("opens provider chooser before enabling an optional feature without a provider", async () => {
+    const updateSettings = vi.fn();
+    render(
+      <FeatureRow
+        meta={CAPTIONING}
+        config={{ enabled: false, providerId: null }}
+        settings={baseSettings()}
+        client={makeStubSearchClient({ updateSettings })}
+        onSettingsChange={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("switch"));
+
+    expect(screen.getByRole("dialog", { name: /choose provider for image captioning/i })).toBeInTheDocument();
+    expect(updateSettings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false");
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("enables an optional feature only after provider selection", async () => {
+    const updateSettings = vi.fn().mockResolvedValue({
+      state: "ready",
+      data: baseSettings(),
+    });
+    const settings = baseSettings();
+    settings.cloudConsentAcked = ["openai"];
+    render(
+      <FeatureRow
+        meta={CAPTIONING}
+        config={{ enabled: false, providerId: null }}
+        settings={settings}
+        client={makeStubSearchClient({
+          updateSettings,
+          hasProviderSecret: vi.fn().mockResolvedValue(true),
+        })}
+        onSettingsChange={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("switch"));
+    fireEvent.click(screen.getByRole("radio", { name: /openai/i }));
+    fireEvent.click(screen.getByRole("button", { name: /use this provider/i }));
+
+    await waitFor(() => {
+      expect(updateSettings).toHaveBeenCalled();
+    });
+    const arg = updateSettings.mock.calls[0][0];
+    expect(arg.features["image-captioning"]).toEqual({
+      enabled: true,
+      providerId: "openai",
+    });
   });
 });

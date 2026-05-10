@@ -94,6 +94,17 @@ describe("useExplorerStore", () => {
           {
             id: "txt-1",
             parentId: "mount-1",
+            name: "notes.txt",
+            kind: "file",
+            state: "ready",
+            createdAt: "2026-04-26 00:00:00",
+            modifiedAt: "2026-04-26 00:00:00",
+            sizeBytes: 8,
+            children: [],
+          },
+          {
+            id: "json-1",
+            parentId: "mount-1",
             name: "data.json",
             kind: "file",
             state: "ready",
@@ -187,6 +198,19 @@ describe("useExplorerStore", () => {
     expect(result.current.activePreviewId).toBe("md-1");
   });
 
+  it("activateArtifact on a plain text file sets activePreviewId", async () => {
+    const client = makeClient(baseSnapshot);
+    const { result } = renderHook(() => useExplorerStore(client));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    act(() => {
+      result.current.activateArtifact("txt-1");
+    });
+    expect(result.current.activePreviewId).toBe("txt-1");
+  });
+
   it("activateArtifact on an image file sets activeImagePreviewId", async () => {
     const client = makeClient(baseSnapshot);
     const { result } = renderHook(() => useExplorerStore(client));
@@ -223,7 +247,7 @@ describe("useExplorerStore", () => {
     });
 
     act(() => {
-      result.current.activateArtifact("txt-1");
+      result.current.activateArtifact("json-1");
     });
     expect(result.current.activeNoteId).toBeNull();
     expect(result.current.activePreviewId).toBeNull();

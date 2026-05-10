@@ -14,6 +14,8 @@ const CAPABILITY_LABEL: Record<Capability, string> = {
   vision: "Vision",
   ocr: "OCR",
   "advanced-ocr": "Advanced OCR",
+  chat: "Chat",
+  "web-search": "Web Search",
 };
 
 /**

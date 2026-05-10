@@ -120,6 +120,35 @@ describe("searchClient.modelsStatus", () => {
   });
 });
 
+describe("searchClient.testChatProvider", () => {
+  it("forwards provider probe input to invoke", async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      result: {
+        state: "ready",
+        data: {
+          state: "ready",
+          providerId: "local-ollama",
+          models: [],
+          cached: false,
+          warnings: [],
+        },
+      },
+    });
+
+    await searchClient.testChatProvider({
+      providerId: "local-ollama",
+      baseUrl: "http://localhost:11435",
+    });
+
+    expect(mockedInvoke).toHaveBeenCalledWith("test_chat_provider", {
+      input: {
+        providerId: "local-ollama",
+        baseUrl: "http://localhost:11435",
+      },
+    });
+  });
+});
+
 describe("unwrapEnvelope", () => {
   it("returns data on ready", () => {
     expect(unwrapEnvelope({ state: "ready", data: 42 })).toBe(42);

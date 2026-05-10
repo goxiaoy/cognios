@@ -24,8 +24,10 @@ def test_v1_presets_cover_known_providers():
         "local-gte-reranker",
         "local-paddleocr",
         "local-paddleocr-advanced",
+        "local-ollama",
         "openai",
         "qwen-dashscope",
+        "brave-search",
     }
 
 
@@ -36,6 +38,8 @@ def test_each_preset_is_well_formed():
         "vision",
         "ocr",
         "advanced-ocr",
+        "chat",
+        "web-search",
     }
     valid_types: set[ProviderType] = {"local", "cloud"}
     valid_auth: set[AuthKind] = {"none", "api-key"}
@@ -65,7 +69,7 @@ def test_cloud_providers_carry_base_url_and_validation_endpoint():
 
 def test_local_providers_have_no_base_url():
     for preset in PRESETS.values():
-        if preset.provider_type == "local":
+        if preset.provider_type == "local" and preset.provider_id != "local-ollama":
             assert preset.base_url is None, preset.provider_id
 
 
@@ -75,8 +79,10 @@ def test_capability_matrix_matches_v1_decision():
     - local-gte-reranker → reranking
     - local-paddleocr → ocr
     - local-paddleocr-advanced → advanced-ocr (PP-StructureV3 bundle)
-    - openai → embedding + vision + ocr + advanced-ocr
+    - local-ollama → chat
+    - openai → embedding + vision + ocr + advanced-ocr + chat
     - qwen-dashscope → vision + ocr + advanced-ocr
+    - brave-search → web-search
     """
     assert PRESETS["local-gte"].capabilities == frozenset({"embedding"})
     assert PRESETS["local-gte-reranker"].capabilities == frozenset({"reranking"})
@@ -84,20 +90,22 @@ def test_capability_matrix_matches_v1_decision():
     assert PRESETS["local-paddleocr-advanced"].capabilities == frozenset(
         {"advanced-ocr"}
     )
+    assert PRESETS["local-ollama"].capabilities == frozenset({"chat"})
     assert PRESETS["openai"].capabilities == frozenset(
-        {"embedding", "vision", "ocr", "advanced-ocr"}
+        {"embedding", "vision", "ocr", "advanced-ocr", "chat"}
     )
     assert PRESETS["qwen-dashscope"].capabilities == frozenset(
         {"vision", "ocr", "advanced-ocr"}
     )
+    assert PRESETS["brave-search"].capabilities == frozenset({"web-search"})
 
 
-def test_chat_capability_intentionally_absent_in_v1():
-    """Chat is out of v1 scope. No preset advertises it; no consumer
-    code references it. If chat lands later, both this assertion and
-    the Capability Literal need updating in the same change."""
-    for preset in PRESETS.values():
-        assert "chat" not in preset.capabilities, preset.provider_id
+def test_chat_and_web_search_capabilities_are_explicit():
+    chat_ids = {p.provider_id for p in presets_with_capability("chat")}
+    web_ids = {p.provider_id for p in presets_with_capability("web-search")}
+
+    assert chat_ids == {"local-ollama", "openai"}
+    assert web_ids == {"brave-search"}
 
 
 def test_presets_with_capability_filters_correctly():
@@ -122,6 +130,14 @@ def test_presets_with_capability_filters_correctly():
         "openai",
         "qwen-dashscope",
     }
+
+    chat_providers = presets_with_capability("chat")
+    chat_ids = {p.provider_id for p in chat_providers}
+    assert chat_ids == {"local-ollama", "openai"}
+
+    web_providers = presets_with_capability("web-search")
+    web_ids = {p.provider_id for p in web_providers}
+    assert web_ids == {"brave-search"}
 
 
 def test_openai_embedding_default_is_3_small():

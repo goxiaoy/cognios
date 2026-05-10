@@ -22,7 +22,7 @@ const ROW_ID = (idx: number) => `search-palette-row-${idx}`;
  * The Cmd+K palette — the only search surface in the app. Holds the
  * free-text query, the structured filter bar (kind chips, mount
  * picker, modified-date inputs, sort dropdown), and the result list
- * with cursor-based "Load more" pagination.
+ * with cursor-based infinite scroll pagination.
  *
  * Filters and free text both flow into the same composed query
  * string via :func:`buildQueryString`, so the sidecar parses one
@@ -38,10 +38,12 @@ export function SearchPalette({
   client,
   onClose,
   onActivate,
+  onSelectNode,
 }: {
   client: SearchClient;
   onClose(): void;
   onActivate(): void;
+  onSelectNode?(node: SearchPaletteSelection): void;
 }) {
   const store = useExplorerStoreContext();
   const recentNodes = useRecentNodes();
@@ -78,6 +80,7 @@ export function SearchPalette({
         kind: "recent" as const,
         nodeId: node.id,
         label: node.name,
+        nodeKind: node.kind,
       }));
     }
     return state.results.map((result) => ({
@@ -114,12 +117,17 @@ export function SearchPalette({
   }, [onClose]);
 
   const activate = useCallback(
-    (nodeId: string) => {
-      store.activateArtifact(nodeId);
+    (item: NavigableItem) => {
+      if (onSelectNode) {
+        onSelectNode(selectionFromItem(item));
+        onClose();
+        return;
+      }
+      store.activateArtifact(item.nodeId);
       onActivate();
       onClose();
     },
-    [store, onActivate, onClose]
+    [store, onActivate, onClose, onSelectNode]
   );
 
   const handleKeyDown = useCallback(
@@ -146,7 +154,7 @@ export function SearchPalette({
       if (event.key === "Enter") {
         event.preventDefault();
         const item = navigableItems[activeIndex];
-        if (item) activate(item.nodeId);
+        if (item) activate(item);
         return;
       }
     },
@@ -276,8 +284,16 @@ export function SearchPalette({
 }
 
 type NavigableItem =
-  | { kind: "recent"; nodeId: string; label: string }
+  | { kind: "recent"; nodeId: string; label: string; nodeKind: string }
   | { kind: "result"; nodeId: string; label: string; result: SearchResult };
+
+export interface SearchPaletteSelection {
+  nodeId: string;
+  name: string;
+  kind?: string | null;
+  path?: string | null;
+  snippet?: string | null;
+}
 
 function PaletteBody({
   state,
@@ -302,7 +318,7 @@ function PaletteBody({
   activeIndex: number;
   onRowHover(idx: number): void;
   onListMouseLeave(): void;
-  activate(nodeId: string): void;
+  activate(item: NavigableItem): void;
   recentNodes: ReturnType<typeof useRecentNodes>;
   results: SearchResult[];
   hasMore: boolean;
@@ -320,32 +336,41 @@ function PaletteBody({
     return (
       <>
         <p className="search-palette-list-eyebrow">Recently modified</p>
-        <ul
-          id={LIST_ID}
-          role="listbox"
-          className="search-palette-list"
-          aria-label="Recently modified"
-          onMouseLeave={onListMouseLeave}
-        >
-          {recentNodes.map((node, idx) => (
-            <li
-              key={node.id}
-              id={ROW_ID(idx)}
-              role="option"
-              aria-selected={idx === activeIndex}
-              className={`search-result-row${idx === activeIndex ? " is-active" : ""}`}
-              onMouseEnter={() => onRowHover(idx)}
-              onClick={() => activate(node.id)}
-            >
-              <span className="search-result-body">
-                <span className="search-result-title">
-                  <span className="search-result-name">{node.name}</span>
-                  <span className="search-result-kind">{node.kind}</span>
+        <div className="search-palette-scroll">
+          <ul
+            id={LIST_ID}
+            role="listbox"
+            className="search-palette-list"
+            aria-label="Recently modified"
+            onMouseLeave={onListMouseLeave}
+          >
+            {recentNodes.map((node, idx) => (
+              <li
+                key={node.id}
+                id={ROW_ID(idx)}
+                role="option"
+                aria-selected={idx === activeIndex}
+                className={`search-result-row${idx === activeIndex ? " is-active" : ""}`}
+                onMouseEnter={() => onRowHover(idx)}
+                onClick={() =>
+                  activate({
+                    kind: "recent",
+                    nodeId: node.id,
+                    label: node.name,
+                    nodeKind: node.kind,
+                  })
+                }
+              >
+                <span className="search-result-body">
+                  <span className="search-result-title">
+                    <span className="search-result-name">{node.name}</span>
+                    <span className="search-result-kind">{node.kind}</span>
+                  </span>
                 </span>
-              </span>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        </div>
       </>
     );
   }
@@ -382,7 +407,16 @@ function PaletteBody({
   }
 
   return (
-    <>
+    <div
+      className="search-palette-scroll"
+      onScroll={(event) => {
+        if (!hasMore || state === "loadingMore") return;
+        const target = event.currentTarget;
+        const remaining =
+          target.scrollHeight - target.scrollTop - target.clientHeight;
+        if (remaining <= 48) onLoadMore();
+      }}
+    >
       <ul
         id={LIST_ID}
         role="listbox"
@@ -396,23 +430,42 @@ function PaletteBody({
             result={result}
             active={idx === activeIndex}
             rowId={ROW_ID(idx)}
-            onActivate={() => activate(result.nodeId)}
+            onActivate={() =>
+              activate({
+                kind: "result",
+                nodeId: result.nodeId,
+                label: result.name,
+                result,
+              })
+            }
             onHover={() => onRowHover(idx)}
           />
         ))}
       </ul>
-      {hasMore ? (
-        <button
-          type="button"
-          className="search-palette-more search-palette-more-button"
-          disabled={state === "loadingMore"}
-          onClick={onLoadMore}
-        >
-          {state === "loadingMore" ? "Loading…" : "Load more"}
-        </button>
+      {state === "loadingMore" || !hasMore ? (
+        <p className="search-palette-more" role="status">
+          {state === "loadingMore" ? "Loading more..." : "No more results."}
+        </p>
       ) : null}
-    </>
+    </div>
   );
+}
+
+function selectionFromItem(item: NavigableItem): SearchPaletteSelection {
+  if (item.kind === "result") {
+    return {
+      nodeId: item.result.nodeId,
+      name: item.result.name,
+      kind: item.result.kind,
+      path: item.result.path ?? null,
+      snippet: item.result.snippet,
+    };
+  }
+  return {
+    nodeId: item.nodeId,
+    name: item.label,
+    kind: item.nodeKind,
+  };
 }
 
 function liveRegionMessage(

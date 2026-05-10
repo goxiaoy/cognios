@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { chatClient } from "../features/chat/api/chatClient";
+import { ChatLayout } from "../features/chat/components/ChatLayout";
 import { explorerClient } from "../features/explorer/api/explorerClient";
 import { ExplorerLayout } from "../features/explorer/components/ExplorerLayout";
 import { ExplorerStoreProvider } from "../features/explorer/store/ExplorerStoreContext";
@@ -91,7 +93,13 @@ function AppShell() {
             </section>
           ) : null}
 
-          {activeSection !== "explorer" && activeSection !== "settings" ? (
+          {activeSection === "chat" ? (
+            <section className="chat-page-panel">
+              <ChatLayout client={chatClient} searchClient={searchClient} />
+            </section>
+          ) : null}
+
+          {activeSection !== "explorer" && activeSection !== "settings" && activeSection !== "chat" ? (
             <section className="placeholder-panel">
               <p className="eyebrow">{sectionLabel}</p>
               <p className="muted-copy">

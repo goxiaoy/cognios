@@ -102,13 +102,8 @@ describe("SearchFilterBar", () => {
 
   it("emits the selected mount id from the dropdown", () => {
     const { onFiltersChange } = renderBar();
-    const mountSelect = screen
-      .getAllByRole("combobox")
-      .find((el) => el.querySelector('option[value=""]')?.textContent === "Any mount");
-    expect(mountSelect).toBeDefined();
-    fireEvent.change(mountSelect!, {
-      target: { value: "11111111-1111-1111-1111-111111111111" },
-    });
+    fireEvent.click(screen.getByRole("button", { name: /mount: any mount/i }));
+    fireEvent.click(screen.getByRole("option", { name: "Notes" }));
     expect(onFiltersChange).toHaveBeenCalledWith({
       ...EMPTY_FILTERS,
       mountId: "11111111-1111-1111-1111-111111111111",
@@ -117,11 +112,23 @@ describe("SearchFilterBar", () => {
 
   it("emits the chosen sort mode", () => {
     const { onSortChange } = renderBar();
-    const sortSelect = screen
-      .getAllByRole("combobox")
-      .find((el) => el.querySelector('option[value="modified"]'));
-    expect(sortSelect).toBeDefined();
-    fireEvent.change(sortSelect!, { target: { value: "modified" } });
+    fireEvent.click(screen.getByRole("button", { name: /sort: relevance/i }));
+    fireEvent.click(screen.getByRole("option", { name: "Modified date" }));
     expect(onSortChange).toHaveBeenCalledWith("modified");
+  });
+
+  it("emits a selected modified date from the calendar", () => {
+    const { onFiltersChange } = renderBar({
+      ...EMPTY_FILTERS,
+      modifiedAfter: "2026-03-10",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /modified after: 2026-03-10/i }));
+    fireEvent.click(screen.getByRole("button", { name: "2026-03-15" }));
+
+    expect(onFiltersChange).toHaveBeenCalledWith({
+      ...EMPTY_FILTERS,
+      modifiedAfter: "2026-03-15",
+    });
   });
 });

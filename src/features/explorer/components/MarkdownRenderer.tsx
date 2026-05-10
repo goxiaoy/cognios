@@ -7,13 +7,17 @@ import "katex/dist/katex.min.css";
 
 interface MarkdownRendererProps {
   children: string;
+  allowHtml?: boolean;
 }
 
-export function MarkdownRenderer({ children }: MarkdownRendererProps) {
+export function MarkdownRenderer({
+  allowHtml = true,
+  children,
+}: MarkdownRendererProps) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[rehypeRaw, rehypeKatex]}
+      rehypePlugins={allowHtml ? [rehypeRaw, rehypeKatex] : [rehypeKatex]}
     >
       {children}
     </ReactMarkdown>

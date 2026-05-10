@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
+  within,
   waitFor,
 } from "@testing-library/react";
 
 import { SettingsLayout } from "./SettingsLayout";
+import type { SearchSettings } from "../../../lib/contracts/search";
 import type { SearchClient } from "../../search/types/search";
 
 // SettingsLayout subscribes to Tauri's models/progress event via
@@ -60,13 +63,16 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
     setProviderSecret: vi.fn().mockResolvedValue(undefined),
     hasProviderSecret: vi.fn().mockResolvedValue(false),
     deleteProviderSecret: vi.fn().mockResolvedValue(undefined),
+    testChatProvider: vi.fn().mockResolvedValue({
+      result: { state: "initialising" },
+    }),
     ...overrides,
   };
 }
 
 afterEach(() => cleanup());
 
-function readySettings() {
+function readySettings(): { state: "ready"; data: SearchSettings } {
   return {
     state: "ready" as const,
     data: {
@@ -157,6 +163,100 @@ describe("SettingsLayout", () => {
     // The local-gte provider's role is "ready" in the makeClient
     // mock, so its row's status pill reads "Ready".
     expect(screen.getAllByText("Ready").length).toBeGreaterThan(0);
+  });
+
+  it("labels ready cloud provider actions as Details instead of Edit", async () => {
+    const ready = readySettings();
+    ready.data.providers.openai = {
+      providerId: "openai",
+      enabled: true,
+      apiKeyRef: "keychain://cognios-search/provider:openai",
+      baseUrl: "https://api.openai.com/v1",
+      modelPerCapability: {},
+    };
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(ready),
+      hasProviderSecret: vi.fn().mockImplementation(({ providerId }) =>
+        Promise.resolve(providerId === "openai")
+      ),
+    });
+    render(<SettingsLayout client={client} />);
+
+    const openaiName = await screen.findByText("OpenAI");
+    const openaiRow = openaiName.closest("li");
+    expect(openaiRow).not.toBeNull();
+    await waitFor(() => {
+      expect(
+        within(openaiRow as HTMLElement).getByRole("button", { name: /Details/i })
+      ).toBeInTheDocument();
+    });
+    expect(
+      within(openaiRow as HTMLElement).queryByRole("button", { name: /Edit/i })
+    ).toBeNull();
+  });
+
+  it("opens default Ollama configuration from Add", async () => {
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(readySettings()),
+    });
+    render(<SettingsLayout client={client} />);
+
+    const ollamaName = await screen.findByText("Ollama");
+    const ollamaRow = ollamaName.closest("li");
+    expect(ollamaRow).not.toBeNull();
+    expect(
+      within(ollamaRow as HTMLElement).getByText(/not set up/i)
+    ).toBeInTheDocument();
+    fireEvent.click(
+      within(ollamaRow as HTMLElement).getByRole("button", { name: /Add/i })
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Ollama" });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Local Ollama" })).toBeNull();
+    expect(await screen.findByLabelText(/base url/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/chat model/i)).toBeNull();
+  });
+
+  it("marks Ollama ready after its default configuration is saved", async () => {
+    const ready = readySettings();
+    ready.data.providers["local-ollama"] = {
+      providerId: "local-ollama",
+      enabled: true,
+      apiKeyRef: null,
+      baseUrl: "http://127.0.0.1:11434",
+      modelPerCapability: {},
+    };
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(ready),
+    });
+    render(<SettingsLayout client={client} />);
+
+    const ollamaName = await screen.findByText("Ollama");
+    const ollamaRow = ollamaName.closest("li");
+    expect(ollamaRow).not.toBeNull();
+    expect(
+      within(ollamaRow as HTMLElement).getByRole("button", { name: /Details/i })
+    ).toBeInTheDocument();
+  });
+
+  it("removes the Local prefix from local model stage details", async () => {
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(readySettings()),
+    });
+    render(<SettingsLayout client={client} />);
+
+    const gteNames = await screen.findAllByText("GTE");
+    const gteRow = gteNames
+      .map((node) => node.closest("li.provider-row"))
+      .find((node): node is HTMLElement => node !== null);
+    if (!gteRow) throw new Error("GTE provider row not found");
+    fireEvent.click(
+      within(gteRow).getByRole("button", { name: /Details/i })
+    );
+
+    expect(await screen.findByRole("dialog", { name: "GTE" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Local GTE" })).toBeNull();
   });
 
   it("renders OCR enhancement diagnostics when advanced OCR is ready", async () => {
