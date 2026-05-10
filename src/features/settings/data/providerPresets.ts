@@ -171,9 +171,9 @@ export function presetOwnsRole(preset: ProviderPreset, role: string): boolean {
   return role === preset.localRoleId;
 }
 
-/** UI display order for features. Mirrors the canonical order used
- * elsewhere — Embedding (mandatory) first, then optional in
- * dependency-bundle order. */
+/** UI display order for features. User-configurable capabilities
+ * come first; built-in mandatory pipeline stages sit at the end so
+ * the Settings page leads with choices the user can act on. */
 export interface FeatureMeta {
   featureId: string;
   displayName: string;
@@ -187,35 +187,6 @@ export interface FeatureMeta {
 }
 
 export const FEATURE_CATALOG: readonly FeatureMeta[] = [
-  {
-    featureId: "semantic-search",
-    displayName: "Semantic search",
-    description:
-      "Required. Powers semantic search across your indexed content.",
-    capability: "embedding",
-    mandatory: true,
-    comingSoon: false,
-  },
-  {
-    featureId: "result-reranking",
-    displayName: "Result reranking",
-    description:
-      "Required. Refines top search results with a second-pass quality check.",
-    capability: "reranking",
-    mandatory: true,
-    comingSoon: false,
-  },
-  {
-    featureId: "image-ocr",
-    displayName: "Image OCR",
-    description:
-      "Required. Extracts text from screenshots and scans. " +
-      "Local PaddleOCR ships bundled with no download; cloud providers " +
-      "transcribe via vision API.",
-    capability: "ocr",
-    mandatory: true,
-    comingSoon: false,
-  },
   {
     featureId: "image-captioning",
     displayName: "Image captioning",
@@ -254,6 +225,35 @@ export const FEATURE_CATALOG: readonly FeatureMeta[] = [
       "Adds current web sources to Chat research. Results are cited in-session and are not saved as Cognios URL nodes by default.",
     capability: "web-search",
     mandatory: false,
+    comingSoon: false,
+  },
+  {
+    featureId: "semantic-search",
+    displayName: "Semantic search",
+    description:
+      "Required. Powers semantic search across your indexed content.",
+    capability: "embedding",
+    mandatory: true,
+    comingSoon: false,
+  },
+  {
+    featureId: "result-reranking",
+    displayName: "Result reranking",
+    description:
+      "Required. Refines top search results with a second-pass quality check.",
+    capability: "reranking",
+    mandatory: true,
+    comingSoon: false,
+  },
+  {
+    featureId: "image-ocr",
+    displayName: "Image OCR",
+    description:
+      "Required. Extracts text from screenshots and scans. " +
+      "Local PaddleOCR ships bundled with no download; cloud providers " +
+      "transcribe via vision API.",
+    capability: "ocr",
+    mandatory: true,
     comingSoon: false,
   },
 ];
