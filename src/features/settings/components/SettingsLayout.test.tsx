@@ -195,6 +195,39 @@ describe("SettingsLayout", () => {
     ).toBeNull();
   });
 
+  it("keeps provider filter chips aligned with provider capability labels", async () => {
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(readySettings()),
+    });
+    render(<SettingsLayout client={client} />);
+
+    const filterList = await screen.findByRole("tablist", {
+      name: /filter providers/i,
+    });
+    const providersCard = screen.getByText("Providers").closest(".providers-card");
+    expect(providersCard).not.toBeNull();
+    for (const label of [
+      "Embedding",
+      "Reranking",
+      "Vision",
+      "OCR",
+      "Advanced OCR",
+      "Chat",
+      "Web Search",
+    ]) {
+      expect(
+        within(filterList).getByRole("tab", {
+          name: new RegExp(`^${escapeRegExp(label)}\\d+$`, "i"),
+        })
+      ).toBeInTheDocument();
+    }
+
+    fireEvent.click(within(filterList).getByRole("tab", { name: /Chat/i }));
+    expect(within(providersCard as HTMLElement).getByText("Ollama")).toBeInTheDocument();
+    expect(within(providersCard as HTMLElement).getByText("OpenAI")).toBeInTheDocument();
+    expect(within(providersCard as HTMLElement).queryByText("GTE")).not.toBeInTheDocument();
+  });
+
   it("opens default Ollama configuration from Add", async () => {
     const client = makeClient({
       settings: vi.fn().mockResolvedValue(readySettings()),
@@ -297,3 +330,7 @@ describe("SettingsLayout", () => {
     expect(screen.getByText("1 failed")).toBeInTheDocument();
   });
 });
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Cloud, Cpu, X } from "lucide-react";
 
+import type { SearchSettings } from "../../../lib/contracts/search";
 import type { SearchClient } from "../../search/types/search";
 import {
   Capability,
@@ -32,6 +33,7 @@ export function ProviderChooserModal({
   feature,
   providers,
   currentProviderId,
+  settings,
   client,
   onClose,
   onChoose,
@@ -39,9 +41,10 @@ export function ProviderChooserModal({
   feature: FeatureMeta;
   providers: readonly ProviderPreset[];
   currentProviderId: string | null;
+  settings: SearchSettings;
   client: SearchClient;
   onClose: () => void;
-  onChoose: (providerId: string) => void;
+  onChoose: (providerId: string, isConfigured: boolean) => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<string | null>(currentProviderId);
@@ -91,8 +94,17 @@ export function ProviderChooserModal({
 
   function handleConfirm() {
     if (!selected) return;
-    onChoose(selected);
+    const preset = providers.find((provider) => provider.providerId === selected);
+    if (!preset) return;
+    onChoose(selected, isConfigured(preset, settings, keyPresence));
   }
+
+  const selectedPreset = selected
+    ? providers.find((provider) => provider.providerId === selected)
+    : null;
+  const selectedIsConfigured = selectedPreset
+    ? isConfigured(selectedPreset, settings, keyPresence)
+    : false;
 
   return (
     <div
@@ -143,7 +155,7 @@ export function ProviderChooserModal({
                 key={preset.providerId}
                 preset={preset}
                 selected={selected === preset.providerId}
-                isConfigured={isConfigured(preset, keyPresence)}
+                isConfigured={isConfigured(preset, settings, keyPresence)}
                 onSelect={() => setSelected(preset.providerId)}
               />
             ))}
@@ -166,10 +178,11 @@ export function ProviderChooserModal({
           <button
             type="button"
             className="settings-action is-primary"
-            disabled={!selected || selected === currentProviderId}
+            disabled={!selected || (selected === currentProviderId && selectedIsConfigured)}
             onClick={handleConfirm}
           >
-            <Check size={12} aria-hidden="true" /> Use this provider
+            <Check size={12} aria-hidden="true" />
+            {selectedIsConfigured ? "Use this provider" : "Set up provider"}
           </button>
         </footer>
       </div>
@@ -179,9 +192,15 @@ export function ProviderChooserModal({
 
 function isConfigured(
   preset: ProviderPreset,
+  settings: SearchSettings,
   keyPresence: Record<string, boolean>
 ): boolean {
-  if (preset.authKind === "none") return true;
+  if (preset.authKind === "none") {
+    if (preset.baseUrl) {
+      return settings.providers[preset.providerId]?.enabled === true;
+    }
+    return true;
+  }
   if (preset.authKind === "api-key") return keyPresence[preset.providerId] ?? false;
   return false;
 }

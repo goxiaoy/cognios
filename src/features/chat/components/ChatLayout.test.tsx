@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -6,8 +7,12 @@ import type {
   ChatSessionMemoryEventPayload,
   ChatTurnStreamPayload,
 } from "../../../lib/contracts/chat";
-import { ExplorerStoreProvider } from "../../explorer/store/ExplorerStoreContext";
-import type { ExplorerClient } from "../../explorer/types/explorer";
+import {
+  ExplorerStoreProvider,
+  useExplorerStoreContext,
+} from "../../explorer/store/ExplorerStoreContext";
+import type { ExplorerClient, ExplorerSnapshot } from "../../explorer/types/explorer";
+import type { SearchSettings } from "../../../lib/contracts/search";
 import type { SearchClient } from "../../search/types/search";
 import type { ChatClient } from "../api/chatClient";
 import { ChatLayout } from "./ChatLayout";
@@ -115,7 +120,29 @@ function makeClient(): ChatClient {
   };
 }
 
-function makeSearchClient(): SearchClient {
+function makeSearchSettings(overrides: Partial<SearchSettings> = {}): SearchSettings {
+  const base: SearchSettings = {
+    version: 1,
+    providers: {
+      "local-ollama": {
+        providerId: "local-ollama",
+        enabled: true,
+        apiKeyRef: null,
+        baseUrl: "http://127.0.0.1:11434",
+        modelPerCapability: {},
+      },
+    },
+    features: {
+      chat: { enabled: true, providerId: "local-ollama" },
+    },
+    cloudConsentAcked: [],
+    firstRunSkipped: false,
+    needsRestart: false,
+  };
+  return { ...base, ...overrides };
+}
+
+function makeSearchClient(settings = makeSearchSettings()): SearchClient {
   return {
     search: vi.fn().mockResolvedValue({
       state: "ready",
@@ -149,14 +176,31 @@ function makeSearchClient(): SearchClient {
     }),
     modelsStatus: vi.fn(),
     startModelDownload: vi.fn(),
-    settings: vi.fn(),
-    updateSettings: vi.fn(),
+    settings: vi.fn().mockResolvedValue({
+      state: "ready",
+      data: settings,
+    }),
+    updateSettings: vi.fn().mockImplementation(async (next: SearchSettings) => ({
+      state: "ready",
+      data: { ...next, needsRestart: false },
+    })),
     restartSidecar: vi.fn(),
-    readSettingsFallback: vi.fn(),
+    readSettingsFallback: vi.fn().mockResolvedValue(settings),
     setProviderSecret: vi.fn(),
     hasProviderSecret: vi.fn(),
     deleteProviderSecret: vi.fn(),
-    testChatProvider: vi.fn(),
+    testChatProvider: vi.fn().mockResolvedValue({
+      result: {
+        state: "ready",
+        data: {
+          state: "ready",
+          providerId: "local-ollama",
+          models: [{ id: "llama3.2", name: "llama3.2" }],
+          cached: false,
+          warnings: [],
+        },
+      },
+    }),
   };
 }
 
@@ -181,6 +225,24 @@ function makeExplorerClient(): ExplorerClient {
   };
 }
 
+async function readyComposer(): Promise<HTMLTextAreaElement> {
+  const composer = (await screen.findByLabelText("Chat message")) as HTMLTextAreaElement;
+  await waitFor(() => {
+    expect(composer).not.toBeDisabled();
+  });
+  return composer;
+}
+
+function ExplorerSnapshotProbe({ snapshot }: { snapshot: ExplorerSnapshot }) {
+  const store = useExplorerStoreContext();
+
+  useEffect(() => {
+    store.applySnapshot(snapshot);
+  }, [snapshot]);
+
+  return <output aria-label="Selected source">{store.selectedArtifactIds.join(",")}</output>;
+}
+
 describe("ChatLayout", () => {
   beforeEach(() => {
     scrollIntoViewMock.mockReset();
@@ -198,9 +260,21 @@ describe("ChatLayout", () => {
 
   it("sends a prompt with Enter and shows the submitted prompt in the transcript", async () => {
     const client = makeClient();
+    const createdSession = {
+      id: "s1",
+      title: "整理事故时间线",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    vi.mocked(client.listSessions).mockResolvedValueOnce([]).mockResolvedValue([createdSession]);
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
-    const composer = screen.getByPlaceholderText(/timeline/i);
+    expect(screen.queryByRole("complementary", { name: /chat sessions/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Web$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Workspace \+ web/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Web search enabled")).not.toBeInTheDocument();
+    const composer = await readyComposer();
     fireEvent.change(composer, {
       target: { value: "整理事故时间线" },
     });
@@ -234,13 +308,106 @@ describe("ChatLayout", () => {
     expect(sentMessage?.closest(".chat-message.is-user")?.querySelector(".chat-message-role")).toBeNull();
     expect(screen.getByText(/3 月 1 日/).closest(".chat-message.is-assistant")?.querySelector(".chat-message-role")).toBeNull();
     expect(client.createSession).toHaveBeenCalledWith({ title: "整理事故时间线" });
+    expect(await screen.findByRole("complementary", { name: /chat sessions/i })).toBeInTheDocument();
   });
 
-  it("keeps Shift Enter available for multiline drafting", () => {
+  it("loads chat history on startup without selecting an old session", async () => {
+    const client = makeClient();
+    const session = {
+      id: "s1",
+      title: "事故复盘",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    vi.mocked(client.listSessions).mockResolvedValue([session]);
+
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    expect(await screen.findByRole("button", { name: "事故复盘" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "New chat" })).toBeInTheDocument();
+    expect(client.getSession).not.toHaveBeenCalled();
+  });
+
+  it("renders context nodes saved on historical user messages", async () => {
+    const client = makeClient();
+    const session = {
+      id: "s1",
+      title: "事故复盘",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    vi.mocked(client.listSessions).mockResolvedValue([session]);
+    vi.mocked(client.getSession).mockResolvedValue({
+      session,
+      messages: [
+        {
+          id: "m1",
+          sessionId: "s1",
+          role: "user",
+          body: "这次事故怎么发生的？",
+          ordinal: 0,
+          metadataJson: JSON.stringify({
+            stage: "submitted",
+            contextNodes: [
+              {
+                nodeId: "n1",
+                title: "事故报告",
+                kind: "note",
+                path: "事故/报告.md",
+              },
+            ],
+          }),
+          createdAt: "now",
+        },
+      ],
+      clusters: [],
+    });
+
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "事故复盘" }));
+    const message = (await screen.findByText("这次事故怎么发生的？")).closest(".chat-message");
+    expect(message).not.toBeNull();
+    const attachedContext = within(message as HTMLElement).getByLabelText("Attached context");
+    const messageBody = within(message as HTMLElement).getByText("这次事故怎么发生的？");
+    expect(attachedContext).toBeInTheDocument();
+    expect(within(message as HTMLElement).getByText("事故报告")).toBeInTheDocument();
+    expect(attachedContext.compareDocumentPosition(messageBody) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows a web search icon beside the model picker when web search is enabled", async () => {
+    const settings = makeSearchSettings();
+    settings.providers["brave-search"] = {
+      providerId: "brave-search",
+      enabled: true,
+      apiKeyRef: "keychain://cognios-search/provider:brave-search",
+      baseUrl: "https://api.search.brave.com/res/v1",
+      modelPerCapability: { "web-search": "brave-web" },
+    };
+    settings.features["web-search"] = {
+      enabled: true,
+      providerId: "brave-search",
+    };
+
+    render(<ChatLayout client={makeClient()} searchClient={makeSearchClient(settings)} />);
+
+    await readyComposer();
+    const indicator = screen.getByLabelText("Web search enabled");
+    const modelGroup = indicator.closest(".chat-composer-meta-group");
+    expect(modelGroup).not.toBeNull();
+    expect(
+      within(modelGroup as HTMLElement).getByRole("button", { name: /model: llama3\.2/i })
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Workspace \+ web/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps Shift Enter available for multiline drafting", async () => {
     const client = makeClient();
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
-    const composer = screen.getByPlaceholderText(/timeline/i);
+    const composer = await readyComposer();
     fireEvent.change(composer, {
       target: { value: "第一行" },
     });
@@ -261,7 +428,7 @@ describe("ChatLayout", () => {
     );
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
-    const composer = screen.getByPlaceholderText(/timeline/i);
+    const composer = await readyComposer();
     fireEvent.change(composer, {
       target: { value: "整理事故时间线" },
     });
@@ -351,12 +518,115 @@ describe("ChatLayout", () => {
 
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
+    fireEvent.click(await screen.findByRole("button", { name: "事故复盘" }));
+
     expect(await screen.findByRole("heading", { name: "事故时间线", level: 3 })).toBeInTheDocument();
     expect(screen.getByText("3 月 1 日")).toHaveProperty("tagName", "STRONG");
     expect(screen.getByText(/事故发生/).closest("li")).toBeInTheDocument();
     expect(screen.getByText("**这个不应该加粗**")).toBeInTheDocument();
     expect(document.querySelector(".chat-message.is-user strong")).toBeNull();
     expect(document.querySelector(".chat-message.is-assistant script")).toBeNull();
+  });
+
+  it("renders assistant citations as inline badges", async () => {
+    const client = makeClient();
+    const session = {
+      id: "s1",
+      title: "事故复盘",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    vi.mocked(client.listSessions).mockResolvedValue([session]);
+    vi.mocked(client.getSession).mockResolvedValue({
+      session,
+      messages: [
+        {
+          id: "m1",
+          sessionId: "s1",
+          role: "assistant",
+          body: "金额为 **1,383.00 元** [W3][W8]。\n\n`[W9]`",
+          ordinal: 0,
+          metadataJson: JSON.stringify({
+            citations: [
+              {
+                marker: "W3",
+                label: "住院.pdf",
+                nodeId: "n-w3",
+                citation: "n-w3",
+                title: "住院费用清单",
+                sourceKind: "workspace",
+                path: "费用/住院.pdf",
+              },
+              {
+                marker: "W8",
+                label: "发票.jpg",
+                nodeId: "n-w8",
+                citation: "n-w8",
+                title: "发票照片",
+                sourceKind: "workspace",
+                path: "照片/发票.jpg",
+              },
+            ],
+          }),
+          createdAt: "now",
+        },
+      ],
+      clusters: [],
+    });
+    const snapshot: ExplorerSnapshot = {
+      roots: [
+        {
+          id: "n-w3",
+          parentId: null,
+          name: "住院费用清单.md",
+          kind: "note",
+          state: "ready",
+          createdAt: "now",
+          modifiedAt: "now",
+          sizeBytes: 0,
+          children: [],
+        },
+        {
+          id: "n-w8",
+          parentId: null,
+          name: "发票照片.jpg",
+          kind: "file",
+          state: "indexed",
+          createdAt: "now",
+          modifiedAt: "now",
+          sizeBytes: 0,
+          children: [],
+        },
+      ],
+    };
+    const onActivateSource = vi.fn();
+
+    render(
+      <ExplorerStoreProvider client={makeExplorerClient()}>
+        <ExplorerSnapshotProbe snapshot={snapshot} />
+        <ChatLayout
+          client={client}
+          searchClient={makeSearchClient()}
+          onActivateSource={onActivateSource}
+        />
+      </ExplorerStoreProvider>
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "事故复盘" }));
+
+    const w3 = await screen.findByRole("link", { name: "Citation W3: 住院.pdf" });
+    expect(w3).toHaveClass("chat-inline-citation");
+    expect(w3).toHaveAttribute("href", "#citation-W3");
+    expect(w3).toHaveAttribute("title", "住院.pdf - 费用/住院.pdf");
+    expect(w3).toHaveTextContent("3");
+    expect(screen.getByRole("link", { name: "Citation W8: 发票.jpg" })).toHaveTextContent("8");
+    expect(screen.queryByLabelText("Sources")).not.toBeInTheDocument();
+    fireEvent.click(w3);
+    expect(screen.getByLabelText("Selected source")).toHaveTextContent("n-w3");
+    expect(onActivateSource).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("link", { name: /Citation W9/ })).not.toBeInTheDocument();
+    expect(screen.getByText("[W9]")).toHaveProperty("tagName", "CODE");
   });
 
   it("opens read-only Session Memory and exports a Note snapshot", async () => {
@@ -392,6 +662,7 @@ describe("ChatLayout", () => {
 
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
+    fireEvent.click(await screen.findByRole("button", { name: "事故复盘" }));
     fireEvent.click(await screen.findByRole("button", { name: "Open Session Memory" }));
 
     expect(await screen.findByRole("heading", { name: "Session Memory" })).toBeInTheDocument();
@@ -419,7 +690,7 @@ describe("ChatLayout", () => {
     );
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
-    const composer = screen.getByPlaceholderText(/timeline/i);
+    const composer = await readyComposer();
     await waitFor(() => {
       expect(eventMock.chatTurnListener).not.toBeNull();
     });
@@ -496,7 +767,10 @@ describe("ChatLayout", () => {
     });
 
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
-    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+
+    fireEvent.click(await screen.findByRole("button", { name: "New chat" }));
+    const composer = await readyComposer();
+    fireEvent.change(composer, {
       target: { value: "这次事故的费用和责任怎么判断？" },
     });
     fireEvent.click(await screen.findByRole("button", { name: /^Send$/i }));
@@ -528,12 +802,14 @@ describe("ChatLayout", () => {
 
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
+    fireEvent.click(await screen.findByRole("button", { name: "New chat" }));
     await waitFor(() => {
       expect(client.getSession).toHaveBeenCalledWith({ sessionId: "s1" });
     });
     expect(screen.getByRole("button", { name: "Start new chat" })).toBeDisabled();
 
-    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+    const composer = await readyComposer();
+    fireEvent.change(composer, {
       target: { value: "整理事故时间线" },
     });
     fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
@@ -553,7 +829,8 @@ describe("ChatLayout", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /model: llama3\.2/i }));
     fireEvent.click(screen.getByRole("option", { name: "qwen2.5:7b" }));
-    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+    const composer = await readyComposer();
+    fireEvent.change(composer, {
       target: { value: "整理事故时间线" },
     });
     fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
@@ -579,6 +856,7 @@ describe("ChatLayout", () => {
       </ExplorerStoreProvider>
     );
 
+    const composer = await readyComposer();
     fireEvent.click(screen.getByRole("button", { name: "Add context" }));
     fireEvent.change(screen.getByPlaceholderText(/Search notes/i), {
       target: { value: "事故报告" },
@@ -587,9 +865,11 @@ describe("ChatLayout", () => {
     await waitFor(() => {
       expect(searchClient.nodeContent).toHaveBeenCalledWith("n1");
     });
-    expect(await screen.findByText(/1 context/)).toBeInTheDocument();
+    const chip = (await screen.findByText("事故报告")).closest(".chat-context-chip");
+    expect(chip).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Remove context 事故报告" })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+    fireEvent.change(composer, {
       target: { value: "整理事故时间线" },
     });
     fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
@@ -653,6 +933,7 @@ describe("ChatLayout", () => {
       </ExplorerStoreProvider>
     );
 
+    await readyComposer();
     fireEvent.click(screen.getByRole("button", { name: "Add context" }));
     fireEvent.change(screen.getByPlaceholderText(/Search notes/i), {
       target: { value: "20260301" },
@@ -708,7 +989,8 @@ describe("ChatLayout", () => {
     });
 
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
-    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+    const composer = await readyComposer();
+    fireEvent.change(composer, {
       target: { value: "整理事故时间线" },
     });
     fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
@@ -749,10 +1031,11 @@ describe("ChatLayout", () => {
       });
 
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
-    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+    const composer = await readyComposer();
+    fireEvent.change(composer, {
       target: { value: "整理事故时间线" },
     });
-    fireEvent.keyDown(screen.getByPlaceholderText(/timeline/i), { key: "Enter", code: "Enter" });
+    fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
 
     await waitFor(() => {
       expect(client.getSession).toHaveBeenCalledTimes(2);
@@ -776,6 +1059,7 @@ describe("ChatLayout", () => {
     };
     vi.mocked(client.listSessions)
       .mockResolvedValueOnce([session])
+      .mockResolvedValueOnce([session])
       .mockResolvedValueOnce([]);
     vi.mocked(client.getSession).mockResolvedValue({
       session,
@@ -785,6 +1069,7 @@ describe("ChatLayout", () => {
 
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
+    fireEvent.click(await screen.findByRole("button", { name: "Research chat" }));
     expect(screen.queryByRole("button", { name: /Delete chat Research chat/i })).not.toBeInTheDocument();
     fireEvent.contextMenu(await screen.findByRole("button", { name: "Research chat" }), {
       clientX: 120,
@@ -796,7 +1081,7 @@ describe("ChatLayout", () => {
     await waitFor(() => {
       expect(client.deleteSession).toHaveBeenCalledWith({ sessionId: "s1" });
     });
-    expect(await screen.findByText("No chats yet")).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: /chat sessions/i })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "New chat" })).toBeInTheDocument();
   });
 
@@ -818,6 +1103,7 @@ describe("ChatLayout", () => {
     };
     vi.mocked(client.listSessions)
       .mockResolvedValueOnce([first, second])
+      .mockResolvedValueOnce([first, second])
       .mockResolvedValueOnce([second]);
     vi.mocked(client.getSession).mockImplementation(async ({ sessionId }) => ({
       session: sessionId === "s2" ? second : first,
@@ -827,6 +1113,7 @@ describe("ChatLayout", () => {
 
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
+    fireEvent.click(await screen.findByRole("button", { name: "First chat" }));
     fireEvent.contextMenu(await screen.findByRole("button", { name: "First chat" }), {
       clientX: 120,
       clientY: 160,
@@ -838,5 +1125,62 @@ describe("ChatLayout", () => {
       expect(client.deleteSession).toHaveBeenCalledWith({ sessionId: "s1" });
     });
     expect(await screen.findByRole("heading", { name: "Second chat" })).toBeInTheDocument();
+  });
+
+  it("guides users to configure a chat provider outside the composer", async () => {
+    const client = makeClient();
+    vi.mocked(client.getModels).mockResolvedValue({
+      models: {
+        state: "ready",
+        data: {
+          state: "provider_unavailable",
+          providerId: null,
+          models: [],
+          cached: false,
+          warnings: ["No configured chat provider is ready."],
+        },
+      },
+    });
+    const settings = makeSearchSettings({
+      providers: {},
+      features: {
+        chat: { enabled: false, providerId: null },
+      },
+    });
+    const searchClient = makeSearchClient(settings);
+
+    render(<ChatLayout client={client} searchClient={searchClient} />);
+
+    expect(await screen.findByRole("heading", { name: /Set up Chat before sending/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Chat message")).not.toBeInTheDocument();
+    expect(screen.queryByRole("form", { name: /chat composer/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Send$/i })).not.toBeInTheDocument();
+    expect(screen.getByText("No configured chat provider is ready.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Base URL"), {
+      target: { value: "http://127.0.0.1:11434" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    await waitFor(() => {
+      expect(searchClient.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providers: expect.objectContaining({
+            "local-ollama": expect.objectContaining({
+              providerId: "local-ollama",
+              enabled: true,
+              baseUrl: "http://127.0.0.1:11434",
+            }),
+          }),
+          features: expect.objectContaining({
+            chat: { enabled: true, providerId: "local-ollama" },
+          }),
+        })
+      );
+    });
+    expect(screen.queryByRole("button", { name: /Remove/i })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(client.getModels).toHaveBeenCalledTimes(2);
+    });
   });
 });

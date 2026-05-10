@@ -1,4 +1,5 @@
 import {
+  type AnchorHTMLAttributes,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   useEffect,
@@ -24,7 +25,9 @@ import {
 
 import type {
   ChatContextNode,
+  ChatMessage,
   ChatMessageRole,
+  ChatModelsResponse,
   ChatSession,
   ChatSessionDetail,
   ChatModel,
@@ -33,24 +36,54 @@ import type {
   ChatTurnStreamPayload,
 } from "../../../lib/contracts/chat";
 import { AppSelect } from "../../../components/FormControls";
+import type { SearchSettings } from "../../../lib/contracts/search";
 import { unwrapEnvelope } from "../../../lib/contracts/search";
 import { MarkdownRenderer } from "../../explorer/components/MarkdownRenderer";
+import { useOptionalExplorerStoreContext } from "../../explorer/store/ExplorerStoreContext";
 import { SearchPalette, type SearchPaletteSelection } from "../../search/components/SearchPalette";
 import type { SearchClient } from "../../search/types/search";
+import { ProviderEditor } from "../../settings/components/ProviderEditor";
+import { PROVIDER_PRESETS, type ProviderPreset } from "../../settings/data/providerPresets";
 import type { ChatClient } from "../api/chatClient";
 
 const CONTEXT_CONTENT_LIMIT = 8_000;
 const CHAT_TURN_EVENT = "chat/turn";
 const CHAT_MEMORY_EVENT = "chat/session-memory";
+const DEFAULT_CHAT_PROVIDER_ID = "local-ollama";
+const chatProviderPresets = PROVIDER_PRESETS.filter((preset) =>
+  preset.capabilities.includes("chat")
+);
 
 interface OptimisticUserMessage {
   id: string;
   sessionId: string;
   body: string;
+  contextNodes: ChatContextNode[];
   persistedBodyCountAtCreation: number;
 }
 
-export function ChatLayout({ client, searchClient }: { client: ChatClient; searchClient: SearchClient }) {
+interface ChatCitation {
+  marker: string;
+  label: string | null;
+  nodeId: string | null;
+  citation: string | null;
+  title: string | null;
+  sourceKind: string | null;
+  path: string | null;
+}
+
+export function ChatLayout({
+  client,
+  searchClient,
+  visible = true,
+  onActivateSource,
+}: {
+  client: ChatClient;
+  searchClient: SearchClient;
+  visible?: boolean;
+  onActivateSource?: () => void;
+}) {
+  const explorerStore = useOptionalExplorerStoreContext();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [active, setActive] = useState<ChatSessionDetail | null>(null);
   const [query, setQuery] = useState("");
@@ -67,7 +100,13 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
   const [memoryExporting, setMemoryExporting] = useState(false);
   const [memoryExportedNoteId, setMemoryExportedNoteId] = useState<string | null>(null);
   const [models, setModels] = useState<ChatModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsStatus, setModelsStatus] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState("");
+  const [settings, setSettings] = useState<SearchSettings | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [setupProviderId, setSetupProviderId] = useState(DEFAULT_CHAT_PROVIDER_ID);
   const [busy, setBusy] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ChatSession | null>(null);
@@ -79,11 +118,15 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
   const memoryButtonRef = useRef<HTMLButtonElement | null>(null);
   const memoryPanelRef = useRef<HTMLElement | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  const initializedRef = useRef(false);
 
   useEffect(() => {
+    if (!visible || initializedRef.current) return;
+    initializedRef.current = true;
     void refreshSessions();
     void refreshModels();
-  }, []);
+    void refreshProviderSettings();
+  }, [visible]);
 
   useEffect(() => {
     let cancelled = false;
@@ -184,15 +227,77 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
   }, [sessionMenu]);
 
   async function refreshModels() {
+    setModelsLoading(true);
     try {
       const result = await client.getModels();
       const data = unwrapEnvelope(result.models);
-      if (!data || data.state !== "ready") return;
+      if (!data || data.state !== "ready") {
+        setModels([]);
+        setSelectedModel("");
+        setModelsStatus(chatModelsStatusMessage(data, result.models.error));
+        return;
+      }
       setModels(data.models);
       setSelectedModel((current) => current || data.models[0]?.id || "");
+      setModelsStatus(null);
     } catch {
       setModels([]);
+      setSelectedModel("");
+      setModelsStatus("Chat provider unavailable.");
+    } finally {
+      setModelsLoading(false);
     }
+  }
+
+  async function refreshProviderSettings() {
+    setSettingsLoading(true);
+    try {
+      const env = await searchClient.settings();
+      if (env.state === "ready" && env.data) {
+        applyProviderSettings(env.data);
+        return;
+      }
+      try {
+        const fallback = await searchClient.readSettingsFallback();
+        applyProviderSettings(fallback);
+        setSettingsError(env.error ?? "Provider settings loaded from disk.");
+      } catch {
+        setSettings(null);
+        setSettingsError(env.error ?? "Provider settings unavailable.");
+      }
+    } catch (err) {
+      try {
+        const fallback = await searchClient.readSettingsFallback();
+        applyProviderSettings(fallback);
+        setSettingsError("Provider settings loaded from disk.");
+      } catch {
+        setSettings(null);
+        setSettingsError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      setSettingsLoading(false);
+    }
+  }
+
+  function applyProviderSettings(next: SearchSettings) {
+    setSettings(next);
+    setSettingsError(null);
+    const providerId = next.features.chat?.providerId;
+    if (providerId && chatProviderPresets.some((preset) => preset.providerId === providerId)) {
+      setSetupProviderId(providerId);
+    }
+  }
+
+  function handleProviderSettingsChange(next: SearchSettings) {
+    applyProviderSettings(next);
+    void refreshModels();
+  }
+
+  function handleCitationClick(citation: ChatCitation | null) {
+    if (!citation?.nodeId || citation.sourceKind !== "workspace") return;
+    explorerStore?.selectArtifact(citation.nodeId, false);
+    explorerStore?.activateArtifact(citation.nodeId);
+    onActivateSource?.();
   }
 
   async function refreshSessions(preferredId?: string) {
@@ -201,7 +306,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
     const current = active?.session.id && next.some((session) => session.id === active.session.id)
       ? active.session.id
       : null;
-    const target = preferredId ?? current ?? next[0]?.id;
+    const target = preferredId ?? current;
     if (target) {
       const detail = await client.getSession({ sessionId: target });
       setActive(detail);
@@ -253,6 +358,10 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
     if (busy) return;
     const trimmedQuery = query.trim();
     if (!trimmedQuery) return;
+    if (!chatProviderReady) {
+      setError("Configure a chat provider before sending.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -261,6 +370,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
         id: `optimistic-${session.session.id}-${Date.now()}`,
         sessionId: session.session.id,
         body: trimmedQuery,
+        contextNodes: contextNodes.map(contextNodeForMessageHistory),
         persistedBodyCountAtCreation: persistedUserBodyCount(session, trimmedQuery),
       };
       const turnEventId = createTurnEventId();
@@ -474,62 +584,77 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
   const title = active?.session.title ?? "New chat";
   const memoryAvailable = Boolean(active?.memory?.available);
   const renderableMemoryBody = memoryBody ? normalizeMemoryMarkdown(memoryBody) : "";
+  const hasSessionHistory = sessions.length > 0;
+  const chatProviderReady = !modelsLoading && models.length > 0;
+  const showProviderSetup = !modelsLoading && Boolean(settings) && !chatProviderReady;
+  const composerDisabled = busy || !chatProviderReady || settingsLoading || Boolean(settingsError && !settings);
+  const webSearchProviderId = settings?.features["web-search"]?.providerId ?? null;
+  const webSearchEnabled = Boolean(
+    settings?.features["web-search"]?.enabled &&
+      webSearchProviderId &&
+      settings.providers[webSearchProviderId]?.enabled
+  );
 
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ block: "end", inline: "nearest" });
-  }, [active?.session.id, transcript.length, optimisticTranscript.length, showAssistantLoading, turn?.answer]);
+    if (!visible) return;
+    transcriptEndRef.current?.scrollIntoView?.({ block: "end", inline: "nearest" });
+  }, [visible, active?.session.id, transcript.length, optimisticTranscript.length, showAssistantLoading, turn?.answer]);
 
   return (
-    <section className={`chat-layout${memoryOpen ? " has-memory-panel" : ""}`} aria-label="Chat">
-      <aside className="chat-session-list" aria-label="Chat sessions">
-        <div className="chat-section-head chat-sidebar-head">
-          <h2>Chats</h2>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={createNewSession}
-            aria-label="Start new chat"
-            disabled={busy || currentChatIsEmpty}
-          >
-            <Plus size={16} aria-hidden="true" />
-          </button>
-        </div>
-        <div className="chat-session-stack">
-          {sessions.length === 0 ? <p className="chat-session-empty">No chats yet</p> : null}
-          {sessions.map((session) => {
-            const isActive = active?.session.id === session.id;
+    <section
+      className={`chat-layout${memoryOpen ? " has-memory-panel" : ""}${hasSessionHistory ? "" : " has-no-session-list"}`}
+      aria-label="Chat"
+    >
+      {hasSessionHistory ? (
+        <aside className="chat-session-list" aria-label="Chat sessions">
+          <div className="chat-section-head chat-sidebar-head">
+            <h2>Chats</h2>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={createNewSession}
+              aria-label="Start new chat"
+              disabled={busy || currentChatIsEmpty}
+            >
+              <Plus size={16} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="chat-session-stack">
+            {sessions.map((session) => {
+              const isActive = active?.session.id === session.id;
 
-            return (
-              <div
-                key={session.id}
-                className={`chat-session-row${isActive ? " is-active" : ""}`}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  setSessionMenu({ session, x: event.clientX, y: event.clientY });
-                }}
-              >
-                <button
-                  type="button"
-                  className="chat-session-item"
-                  onClick={() => void selectSession(session.id)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+              return (
+                <div
+                  key={session.id}
+                  className={`chat-session-row${isActive ? " is-active" : ""}`}
+                  onContextMenu={(event) => {
                     event.preventDefault();
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    setSessionMenu({
-                      session,
-                      x: rect.left + Math.min(rect.width - 12, 160),
-                      y: rect.top + Math.min(rect.height - 4, 44),
-                    });
+                    setSessionMenu({ session, x: event.clientX, y: event.clientY });
                   }}
                 >
-                  <span className="chat-session-title">{session.title}</span>
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      </aside>
+                  <button
+                    type="button"
+                    className="chat-session-item"
+                    onClick={() => void selectSession(session.id)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+                      event.preventDefault();
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      setSessionMenu({
+                        session,
+                        x: rect.left + Math.min(rect.width - 12, 160),
+                        y: rect.top + Math.min(rect.height - 4, 44),
+                      });
+                    }}
+                  >
+                    <span className="chat-session-title">{session.title}</span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+      ) : null}
 
       <main className="chat-main">
         <header className="chat-topbar">
@@ -541,10 +666,6 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
             <h2>{title}</h2>
           </div>
           <div className="chat-topbar-actions">
-            <span className="chat-runtime-pill">
-              <Globe size={14} aria-hidden="true" />
-              Web
-            </span>
             <button
               ref={memoryButtonRef}
               className="chat-runtime-pill chat-memory-trigger"
@@ -572,20 +693,37 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
               <p>Timeline, costs, causes, evidence gaps.</p>
             </div>
           ) : null}
-          {transcript.map((message) => (
-            <article key={message.id} className={`chat-message is-${message.role}`}>
-              {message.role === "system" ? <p className="chat-message-role">{message.role}</p> : null}
-              <ChatMessageBody role={message.role} body={message.body} />
-            </article>
-          ))}
+          {transcript.map((message) => {
+            const attachedContext = contextNodesFromMessage(message);
+            const citations = citationsFromMessage(message);
+
+            return (
+              <article key={message.id} className={`chat-message is-${message.role}`}>
+                {message.role === "system" ? <p className="chat-message-role">{message.role}</p> : null}
+                <MessageContextNodes nodes={attachedContext} />
+                <ChatMessageBody
+                  role={message.role}
+                  body={message.body}
+                  citations={citations}
+                  onCitationClick={handleCitationClick}
+                />
+              </article>
+            );
+          })}
           {optimisticTranscript.map((message) => (
             <article key={message.id} className="chat-message is-user">
+              <MessageContextNodes nodes={message.contextNodes} />
               <ChatMessageBody role="user" body={message.body} />
             </article>
           ))}
           {showTransientAnswer ? (
             <article className="chat-message is-assistant">
-              <ChatMessageBody role="assistant" body={turn?.answer ?? ""} />
+              <ChatMessageBody
+                role="assistant"
+                body={turn?.answer ?? ""}
+                citations={citationsFromUnknown(turn?.citations)}
+                onCitationClick={handleCitationClick}
+              />
             </article>
           ) : null}
           {showAssistantLoading ? (
@@ -596,7 +734,31 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
           <div ref={transcriptEndRef} className="chat-transcript-end" aria-hidden="true" />
         </section>
 
-        <form className="chat-composer" aria-label="Chat composer" onSubmit={submit}>
+        {settingsLoading ? (
+          <div className="chat-provider-status">
+            <p className="chat-provider-setup-note">Loading chat provider settings...</p>
+          </div>
+        ) : null}
+        {settingsError && !settings ? (
+          <div className="chat-provider-status">
+            <p className="chat-provider-setup-error" role="alert">
+              {settingsError}
+            </p>
+          </div>
+        ) : null}
+        {showProviderSetup && settings ? (
+          <ChatProviderSetup
+            settings={settings}
+            selectedProviderId={setupProviderId}
+            providerStatus={modelsStatus}
+            client={searchClient}
+            onSelectedProviderChange={setSetupProviderId}
+            onSettingsChange={handleProviderSettingsChange}
+          />
+        ) : null}
+
+        {!showProviderSetup ? (
+          <form className="chat-composer" aria-label="Chat composer" onSubmit={submit}>
           {contextNodes.length > 0 || contextError ? (
             <div className="chat-context-area">
               {contextNodes.length > 0 ? (
@@ -623,8 +785,13 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={handleComposerKeyDown}
-            placeholder="Ask about a timeline, cost, cause, evidence gaps..."
+            placeholder={
+              chatProviderReady
+                ? "Ask about a timeline, cost, cause, evidence gaps..."
+                : "Configure a chat provider to start..."
+            }
             aria-label="Chat message"
+            disabled={composerDisabled}
           />
           <div className="chat-composer-footer">
             <div className="chat-composer-meta-group">
@@ -637,10 +804,16 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
                   className="chat-model-picker"
                 />
               ) : null}
-              <span className="chat-composer-meta">
-                <Globe size={14} aria-hidden="true" />
-                Workspace + web{contextNodes.length > 0 ? ` + ${contextNodes.length} context` : ""}
-              </span>
+              {webSearchEnabled ? (
+                <span
+                  className="chat-web-search-indicator"
+                  role="img"
+                  aria-label="Web search enabled"
+                  title="Web search enabled"
+                >
+                  <Globe size={14} aria-hidden="true" />
+                </span>
+              ) : null}
             </div>
             <div className="chat-composer-actions">
               <button
@@ -649,17 +822,19 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
                 title="Add context"
                 aria-label="Add context"
                 aria-expanded={contextOpen}
+                disabled={!chatProviderReady}
                 onClick={() => setContextOpen((open) => !open)}
               >
                 <Paperclip size={15} aria-hidden="true" />
               </button>
-              <button className="chat-primary-action" type="submit" disabled={busy || !query.trim()}>
+              <button className="chat-primary-action" type="submit" disabled={composerDisabled || !query.trim()}>
                 <Send size={15} aria-hidden="true" />
                 {busy ? "Waiting..." : "Send"}
               </button>
             </div>
           </div>
-        </form>
+          </form>
+        ) : null}
       </main>
 
       {memoryOpen ? (
@@ -819,22 +994,346 @@ function AssistantLoading() {
   );
 }
 
+function ChatProviderSetup({
+  settings,
+  selectedProviderId,
+  providerStatus,
+  client,
+  onSelectedProviderChange,
+  onSettingsChange,
+}: {
+  settings: SearchSettings;
+  selectedProviderId: string;
+  providerStatus: string | null;
+  client: SearchClient;
+  onSelectedProviderChange: (providerId: string) => void;
+  onSettingsChange: (next: SearchSettings) => void;
+}) {
+  const selectedPreset =
+    chatProviderPresets.find((preset) => preset.providerId === selectedProviderId) ??
+    chatProviderPresets[0];
+
+  if (!selectedPreset) return null;
+
+  const editorSettings = settingsWithChatProvider(settings, selectedPreset);
+
+  return (
+    <section className="chat-provider-setup" aria-label="Set up chat provider">
+      <div className="chat-provider-setup-head">
+        <div>
+          <p className="chat-provider-setup-kicker">Provider required</p>
+          <h3>Set up Chat before sending</h3>
+        </div>
+        <AppSelect
+          label="Provider"
+          value={selectedPreset.providerId}
+          onChange={onSelectedProviderChange}
+          options={chatProviderPresets.map((preset) => ({
+            value: preset.providerId,
+            label: providerDisplayName(preset),
+          }))}
+          className="chat-provider-picker"
+        />
+      </div>
+      <p className="chat-provider-setup-copy">
+        Choose a provider, save it here, then send your first message.
+      </p>
+      {providerStatus ? (
+        <p className="chat-provider-setup-note">{providerStatus}</p>
+      ) : null}
+      <ProviderEditor
+        key={selectedPreset.providerId}
+        preset={selectedPreset}
+        config={editorSettings.providers[selectedPreset.providerId] ?? null}
+        settings={editorSettings}
+        client={client}
+        onSettingsChange={onSettingsChange}
+        onClose={() => {}}
+        allowRemove={false}
+      />
+    </section>
+  );
+}
+
+function settingsWithChatProvider(
+  settings: SearchSettings,
+  preset: ProviderPreset
+): SearchSettings {
+  return {
+    ...settings,
+    features: {
+      ...settings.features,
+      chat: {
+        enabled: true,
+        providerId: preset.providerId,
+      },
+    },
+  };
+}
+
+function providerDisplayName(preset: ProviderPreset): string {
+  return preset.displayName.replace(/^Local\s+/, "");
+}
+
 function ChatMessageBody({
   role,
   body,
+  citations = [],
+  onCitationClick,
 }: {
   role: ChatMessageRole;
   body: string;
+  citations?: ChatCitation[];
+  onCitationClick?: (citation: ChatCitation | null) => void;
 }) {
   if (role !== "assistant") {
     return <p className="chat-message-body">{body}</p>;
   }
 
+  const citationByLabel = new Map(citations.map((citation) => [citation.marker, citation]));
+
   return (
     <div className="chat-message-body chat-message-markdown markdown-body">
-      <MarkdownRenderer allowHtml={false}>{body}</MarkdownRenderer>
+      <MarkdownRenderer
+        allowHtml={false}
+        components={chatMarkdownComponents(citationByLabel, onCitationClick)}
+      >
+        {formatInlineCitations(body)}
+      </MarkdownRenderer>
     </div>
   );
+}
+
+function chatMarkdownComponents(
+  citationByLabel: Map<string, ChatCitation>,
+  onCitationClick?: (citation: ChatCitation | null) => void
+) {
+  return {
+    a({
+      node: _node,
+      href,
+      children,
+      ...props
+    }: AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown }) {
+      const label = citationLabelFromHref(href);
+      if (!label) {
+        return (
+          <a href={href} {...props}>
+            {children}
+          </a>
+        );
+      }
+
+      const citation = citationByLabel.get(label) ?? null;
+      return (
+        <a
+          href={href}
+          {...props}
+          className="chat-inline-citation"
+          data-citation-kind={citation?.sourceKind ?? undefined}
+          aria-label={citationAriaLabel(label, citation)}
+          title={citationTitle(label, citation)}
+          onClick={(event) => {
+            event.preventDefault();
+            onCitationClick?.(citation);
+          }}
+        >
+          {citationDisplayLabel(label)}
+        </a>
+      );
+    },
+  };
+}
+
+function formatInlineCitations(markdown: string): string {
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  let inFence = false;
+  let fenceMarker: string | null = null;
+
+  return lines
+    .map((line) => {
+      const fenceMatch = /^(\s*)(`{3,}|~{3,})/.exec(line);
+      if (fenceMatch) {
+        const marker = fenceMatch[2][0];
+        if (!inFence) {
+          inFence = true;
+          fenceMarker = marker;
+        } else if (fenceMarker === marker) {
+          inFence = false;
+          fenceMarker = null;
+        }
+        return line;
+      }
+
+      return inFence ? line : replaceCitationsOutsideInlineCode(line);
+    })
+    .join("\n");
+}
+
+function replaceCitationsOutsideInlineCode(line: string): string {
+  let result = "";
+  let index = 0;
+
+  while (index < line.length) {
+    if (line[index] !== "`") {
+      const nextCode = line.indexOf("`", index);
+      const end = nextCode === -1 ? line.length : nextCode;
+      result += linkifyCitationSegment(line.slice(index, end));
+      index = end;
+      continue;
+    }
+
+    const runStart = index;
+    while (index < line.length && line[index] === "`") index += 1;
+    const run = line.slice(runStart, index);
+    const closing = line.indexOf(run, index);
+    if (closing === -1) {
+      result += line.slice(runStart);
+      break;
+    }
+    result += line.slice(runStart, closing + run.length);
+    index = closing + run.length;
+  }
+
+  return result;
+}
+
+function linkifyCitationSegment(segment: string): string {
+  return segment.replace(/\[((?:WEB|W)\d+)\](?!\()/g, (match, label: string, offset: number) => {
+    if (segment[offset - 1] === "\\") return match;
+    return `[${label}](#citation-${label})`;
+  });
+}
+
+function citationLabelFromHref(href: string | undefined): string | null {
+  if (!href) return null;
+  const match = /^#citation-((?:WEB|W)\d+)$/.exec(href);
+  return match?.[1] ?? null;
+}
+
+function citationAriaLabel(label: string, citation: ChatCitation | null): string {
+  const sourceLabel = citationSourceLabel(citation);
+  return sourceLabel ? `Citation ${label}: ${sourceLabel}` : `Citation ${label}`;
+}
+
+function citationTitle(label: string, citation: ChatCitation | null): string {
+  if (!citation) return `Citation ${label}`;
+  const parts = [citationSourceLabel(citation), citation.path].filter(Boolean);
+  return parts.join(" - ");
+}
+
+function citationDisplayLabel(label: string): string {
+  return label.replace(/^(?:WEB|W)/, "");
+}
+
+function citationSourceLabel(citation: ChatCitation | null): string | null {
+  return citation?.label ?? citation?.title ?? null;
+}
+
+function MessageContextNodes({ nodes }: { nodes: ChatContextNode[] }) {
+  if (nodes.length === 0) return null;
+
+  return (
+    <div className="chat-message-context" aria-label="Attached context">
+      {nodes.map((node) => (
+        <span
+          className="chat-context-chip chat-message-context-chip"
+          key={`${node.nodeId}:${node.path ?? node.title}`}
+          title={node.path ?? node.title}
+        >
+          <ContextNodeIcon node={node} />
+          <span>{node.title}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function contextNodesFromMessage(message: ChatMessage): ChatContextNode[] {
+  if (message.role !== "user") return [];
+
+  try {
+    const metadata = JSON.parse(message.metadataJson);
+    if (!isRecord(metadata) || !Array.isArray(metadata.contextNodes)) return [];
+    return metadata.contextNodes
+      .map(normalizeContextNodeFromMetadata)
+      .filter((node): node is ChatContextNode => Boolean(node));
+  } catch {
+    return [];
+  }
+}
+
+function normalizeContextNodeFromMetadata(value: unknown): ChatContextNode | null {
+  if (!isRecord(value)) return null;
+  const nodeId = stringValue(value.nodeId) ?? stringValue(value.node_id);
+  const title =
+    stringValue(value.title) ??
+    stringValue(value.name) ??
+    stringValue(value.path) ??
+    nodeId;
+  if (!nodeId || !title) return null;
+
+  return {
+    nodeId,
+    title,
+    kind: stringValue(value.kind),
+    path: stringValue(value.path),
+    snippet: stringValue(value.snippet),
+  };
+}
+
+function citationsFromMessage(message: ChatMessage): ChatCitation[] {
+  if (message.role !== "assistant") return [];
+
+  try {
+    const metadata = JSON.parse(message.metadataJson);
+    return isRecord(metadata) ? citationsFromUnknown(metadata.citations) : [];
+  } catch {
+    return [];
+  }
+}
+
+function citationsFromUnknown(value: unknown): ChatCitation[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(normalizeCitation)
+    .filter((citation): citation is ChatCitation => Boolean(citation));
+}
+
+function normalizeCitation(value: unknown): ChatCitation | null {
+  if (!isRecord(value)) return null;
+  const marker = stringValue(value.marker) ?? stringValue(value.label);
+  if (!marker) return null;
+  const sourceKind = stringValue(value.sourceKind) ?? stringValue(value.source_kind);
+  const citation = stringValue(value.citation);
+
+  return {
+    marker,
+    label: stringValue(value.label),
+    nodeId: stringValue(value.nodeId) ?? stringValue(value.node_id) ?? (sourceKind === "workspace" ? citation : null),
+    citation,
+    title: stringValue(value.title),
+    sourceKind,
+    path: stringValue(value.path),
+  };
+}
+
+function contextNodeForMessageHistory(node: ChatContextNode): ChatContextNode {
+  return {
+    nodeId: node.nodeId,
+    title: node.title,
+    kind: node.kind,
+    path: node.path,
+    snippet: node.snippet,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 function normalizeMemoryMarkdown(body: string): string {
@@ -910,6 +1409,16 @@ function chatStatusMessage(state: string): string {
   if (state === "provider_unavailable") return "Chat provider unavailable.";
   if (state === "provider_error") return "Chat provider returned an error.";
   return "Chat could not complete.";
+}
+
+function chatModelsStatusMessage(
+  data: ChatModelsResponse | null,
+  envelopeError?: string
+): string {
+  if (data?.warnings[0]) return data.warnings[0];
+  if (data?.state === "provider_error") return "Chat provider returned an error.";
+  if (data?.state === "provider_unavailable") return "No configured chat provider is ready.";
+  return envelopeError ?? "Chat provider unavailable.";
 }
 
 function sessionTitleFromQuery(query: string): string {

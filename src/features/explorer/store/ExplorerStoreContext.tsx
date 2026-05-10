@@ -44,3 +44,7 @@ export function useExplorerStoreContext(): ExplorerStoreValue {
   }
   return value;
 }
+
+export function useOptionalExplorerStoreContext(): ExplorerStoreValue | null {
+  return useContext(ExplorerStoreContext);
+}

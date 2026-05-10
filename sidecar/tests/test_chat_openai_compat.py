@@ -21,6 +21,8 @@ def test_openai_compat_chat_normalizes_successful_response():
         assert body["model"] == "gpt-4o-mini"
         assert body["messages"][0]["role"] == "system"
         assert "Source context" not in body["messages"][0]["content"]
+        assert "Inline citation requirements" in body["messages"][0]["content"]
+        assert "workspace label" in body["messages"][0]["content"]
         assert body["messages"][1]["role"] == "user"
         assert "Source context" in body["messages"][1]["content"]
         return httpx.Response(

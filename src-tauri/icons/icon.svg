@@ -22,20 +22,22 @@
     x="37"
     y="37"
   />
-  <g transform="translate(256 256) scale(0.78) translate(-256 -256)">
-    <path
-      d="M416 144A176 176 0 1 0 416 368"
-      stroke="#211F1A"
-      stroke-linecap="round"
-      stroke-width="38.4"
-    />
-    <path
-      d="M352 184A104 104 0 0 0 192 256"
-      opacity="0.95"
-      stroke="#C95434"
-      stroke-linecap="round"
-      stroke-width="35.2"
-    />
+  <g transform="translate(248 248) scale(0.78) translate(-256 -256)">
+    <g transform="translate(-14 0)">
+      <path
+        d="M416 144A176 176 0 1 0 416 368"
+        stroke="#211F1A"
+        stroke-linecap="round"
+        stroke-width="38.4"
+      />
+      <path
+        d="M352 184A104 104 0 0 0 192 256"
+        opacity="0.95"
+        stroke="#C95434"
+        stroke-linecap="round"
+        stroke-width="35.2"
+      />
+    </g>
     <circle cx="352" cy="320" fill="#C95434" r="54.4" />
     <circle cx="352" cy="320" fill="#F6D0C6" opacity="0.78" r="17.6" />
   </g>

@@ -74,9 +74,16 @@ def _auth():
 
 
 def test_chat_turn_route_generates_with_retrieved_sources_without_confirmation():
+    captured = {}
+
+    class _ContextProvider(_Provider):
+        def generate(self, request: ChatGenerationRequest) -> ChatGeneration:
+            captured["context"] = request.context
+            return super().generate(request)
+
     app = build_app(
         token=TOKEN,
-        chat_orchestrator=ChatOrchestrator(retrieval=_Retrieval(), chat_provider=_Provider()),
+        chat_orchestrator=ChatOrchestrator(retrieval=_Retrieval(), chat_provider=_ContextProvider()),
     )
 
     with TestClient(app) as client:
@@ -87,6 +94,11 @@ def test_chat_turn_route_generates_with_retrieved_sources_without_confirmation()
     assert body["state"] == "ready"
     assert body["clusters"][0]["source_kind"] == "workspace"
     assert body["answer"] == "answer"
+    assert body["citations"][0]["marker"] == "W1"
+    assert body["citations"][0]["label"] == "a.jpg"
+    assert body["citations"][0]["nodeId"] == "n1"
+    assert "Citation: [W1]" in captured["context"][0]
+    assert "Path: 事故/照片/a.jpg" in captured["context"][0]
 
 
 def test_chat_turn_route_generates_after_cluster_acceptance():
@@ -107,6 +119,9 @@ def test_chat_turn_route_generates_after_cluster_acceptance():
     assert body["state"] == "ready"
     assert body["answer"] == "answer"
     assert body["citations"][0]["sourceKind"] == "workspace"
+    assert body["citations"][0]["marker"] == "W1"
+    assert body["citations"][0]["label"] == "a.jpg"
+    assert body["citations"][0]["nodeId"] == "n1"
 
 
 def test_chat_turn_route_passes_selected_model_to_provider():
@@ -163,7 +178,11 @@ def test_chat_turn_route_includes_manual_context_nodes():
 
     assert resp.status_code == 200
     assert resp.json()["citations"][0]["citation"] == "n-manual"
+    assert resp.json()["citations"][0]["nodeId"] == "n-manual"
+    assert resp.json()["citations"][0]["marker"] == "W1"
+    assert resp.json()["citations"][0]["label"] == "报告.md"
     assert "User-attached node: 事故报告" in captured["context"][0]
+    assert "Citation: [W1]" in captured["context"][0]
     assert "完整事故报告内容" in captured["context"][0]
 
 

@@ -10,6 +10,8 @@ const createUrl = vi.fn();
 const readFileContent = vi.fn().mockResolvedValue("");
 const openExternal = vi.fn().mockResolvedValue(undefined);
 const showNodeInFileManager = vi.fn().mockResolvedValue(undefined);
+const listChatSessions = vi.fn();
+const getChatSession = vi.fn();
 
 vi.mock("../lib/tauri/ipc", () => ({
   getExplorerSnapshot: () => getExplorerSnapshot(),
@@ -57,18 +59,8 @@ vi.mock("../lib/tauri/ipc", () => ({
     createdAt: "now",
     updatedAt: "now",
   }),
-  listChatSessions: vi.fn().mockResolvedValue([]),
-  getChatSession: vi.fn().mockResolvedValue({
-    session: {
-      id: "s1",
-      title: "Research chat",
-      boundNoteId: null,
-      createdAt: "now",
-      updatedAt: "now",
-    },
-    messages: [],
-    clusters: [],
-  }),
+  listChatSessions: () => listChatSessions(),
+  getChatSession: (input: unknown) => getChatSession(input),
   deleteChatSession: vi.fn().mockResolvedValue({ deleted: true }),
   getChatSessionMemory: vi.fn().mockResolvedValue({ available: false }),
   exportChatSessionMemory: vi.fn().mockResolvedValue({
@@ -133,6 +125,20 @@ describe("App", () => {
     openExternal.mockResolvedValue(undefined);
     showNodeInFileManager.mockReset();
     showNodeInFileManager.mockResolvedValue(undefined);
+    listChatSessions.mockReset();
+    listChatSessions.mockResolvedValue([]);
+    getChatSession.mockReset();
+    getChatSession.mockResolvedValue({
+      session: {
+        id: "s1",
+        title: "Research chat",
+        boundNoteId: null,
+        createdAt: "now",
+        updatedAt: "now",
+      },
+      messages: [],
+      clusters: [],
+    });
   });
 
   afterEach(() => {
@@ -472,5 +478,47 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Explorer$/i }));
     expect(await screen.findByText("Inbox")).toBeInTheDocument();
     expect(getExplorerSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the active chat session when switching to Explorer and back", async () => {
+    getExplorerSnapshot.mockResolvedValue({ roots: [] });
+    const session = {
+      id: "chat-1",
+      title: "事故复盘",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    listChatSessions.mockResolvedValue([session]);
+    getChatSession.mockResolvedValue({
+      session,
+      messages: [
+        {
+          id: "m1",
+          sessionId: session.id,
+          role: "user",
+          body: "这次事故的费用是多少？",
+          ordinal: 0,
+          metadataJson: "{}",
+          createdAt: "now",
+        },
+      ],
+      clusters: [],
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Chat$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "事故复盘" }));
+    expect(await screen.findByRole("heading", { name: "事故复盘" })).toBeInTheDocument();
+    const callsAfterOpening = listChatSessions.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: /^Explorer$/i }));
+    expect(screen.getByRole("button", { name: /^Explorer$/i })).toHaveAttribute("aria-current", "page");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Chat$/i }));
+
+    expect(screen.getByRole("heading", { name: "事故复盘" })).toBeInTheDocument();
+    expect(listChatSessions).toHaveBeenCalledTimes(callsAfterOpening);
   });
 });

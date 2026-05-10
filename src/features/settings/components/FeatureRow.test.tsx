@@ -18,6 +18,7 @@ const SEMANTIC = FEATURE_CATALOG.find((m) => m.featureId === "semantic-search")!
 const RERANKING = FEATURE_CATALOG.find((m) => m.featureId === "result-reranking")!;
 const OCR = FEATURE_CATALOG.find((m) => m.featureId === "image-ocr")!;
 const CAPTIONING = FEATURE_CATALOG.find((m) => m.featureId === "image-captioning")!;
+const CHAT = FEATURE_CATALOG.find((m) => m.featureId === "chat")!;
 
 // Synthetic optional/non-coming-soon feature for toggle-path tests —
 // every catalog entry is currently either mandatory or coming-soon, so
@@ -171,7 +172,10 @@ describe("FeatureRow", () => {
         meta={SEMANTIC}
         config={{ enabled: true, providerId: "local-gte" }}
         settings={settings}
-        client={makeStubSearchClient({ updateSettings })}
+        client={makeStubSearchClient({
+          updateSettings,
+          hasProviderSecret: vi.fn().mockResolvedValue(true),
+        })}
         onSettingsChange={onSettingsChange}
       />
     );
@@ -183,13 +187,73 @@ describe("FeatureRow", () => {
     );
     fireEvent.click(screen.getByRole("radio", { name: /openai/i }));
     fireEvent.click(
-      screen.getByRole("button", { name: /use this provider/i })
+      await screen.findByRole("button", { name: /use this provider/i })
     );
     await waitFor(() => {
       expect(updateSettings).toHaveBeenCalled();
     });
     const arg = updateSettings.mock.calls[0][0];
     expect(arg.features["semantic-search"].providerId).toBe("openai");
+  });
+
+  it("opens provider setup instead of binding an unconfigured cloud provider", async () => {
+    const updateSettings = vi.fn().mockResolvedValue({
+      state: "ready",
+      data: baseSettings(),
+    });
+    const settings = baseSettings();
+    settings.cloudConsentAcked = ["openai"];
+    render(
+      <FeatureRow
+        meta={SEMANTIC}
+        config={{ enabled: true, providerId: "local-gte" }}
+        settings={settings}
+        client={makeStubSearchClient({
+          updateSettings,
+          hasProviderSecret: vi.fn().mockResolvedValue(false),
+        })}
+        onSettingsChange={vi.fn()}
+      />
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /change provider for semantic search/i,
+      })
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /openai/i }));
+    fireEvent.click(screen.getByRole("button", { name: /set up provider/i }));
+
+    expect(await screen.findByRole("dialog", { name: "OpenAI" })).toBeInTheDocument();
+    expect(await screen.findByLabelText(/api key/i)).toBeInTheDocument();
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("opens provider setup for a selected but unconfigured Ollama chat provider", async () => {
+    const updateSettings = vi.fn();
+    const settings = baseSettings();
+    settings.features.chat = { enabled: true, providerId: "local-ollama" };
+    render(
+      <FeatureRow
+        meta={CHAT}
+        config={{ enabled: true, providerId: "local-ollama" }}
+        settings={settings}
+        client={makeStubSearchClient({ updateSettings })}
+        onSettingsChange={vi.fn()}
+      />
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /change provider for chat/i,
+      })
+    );
+    expect(screen.getAllByText(/needs setup/i).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /set up provider/i }));
+
+    expect(await screen.findByRole("dialog", { name: "Ollama" })).toBeInTheDocument();
+    expect(await screen.findByLabelText(/base url/i)).toBeInTheDocument();
+    expect(updateSettings).not.toHaveBeenCalled();
   });
 
   it("toggling an optional feature with a provider flips enabled in the PUT payload", async () => {
@@ -257,7 +321,7 @@ describe("FeatureRow", () => {
 
     fireEvent.click(screen.getByRole("switch"));
     fireEvent.click(screen.getByRole("radio", { name: /openai/i }));
-    fireEvent.click(screen.getByRole("button", { name: /use this provider/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /use this provider/i }));
 
     await waitFor(() => {
       expect(updateSettings).toHaveBeenCalled();

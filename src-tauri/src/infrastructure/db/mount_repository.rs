@@ -289,7 +289,7 @@ pub fn reconcile_mount(
     let existing_entries = load_mount_entries(conn, mount_id)?;
     let mount_name = mount_display_name(&normalized_path);
     let changed = !mount.is_available
-        || mount.state != NodeState::Ready.as_str()
+        || mount.state == NodeState::Unavailable.as_str()
         || mount.name != mount_name
         || existing_entries
             .iter()

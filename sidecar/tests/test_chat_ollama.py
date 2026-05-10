@@ -19,6 +19,8 @@ def test_ollama_chat_sends_history_to_local_chat_endpoint():
         body = json.loads(req.read().decode("utf-8"))
         assert body["model"] == "qwen2.5:7b"
         assert body["messages"][0]["role"] == "system"
+        assert "Inline citation requirements" in body["messages"][0]["content"]
+        assert "workspace label" in body["messages"][0]["content"]
         assert body["messages"][1]["role"] == "user"
         assert body["messages"][2]["content"] == "整理时间线"
         return httpx.Response(

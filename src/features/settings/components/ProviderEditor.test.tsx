@@ -127,6 +127,52 @@ describe("ProviderEditor", () => {
     expect(button).toHaveClass("is-success");
   });
 
+  it("removes configurable local provider settings without touching keychain", async () => {
+    const deleteProviderSecret = vi.fn().mockResolvedValue(undefined);
+    const updateSettings = vi.fn().mockResolvedValue({
+      state: "ready",
+      data: baseSettings(),
+    });
+    const onClose = vi.fn();
+    const settings: SearchSettings = {
+      ...baseSettings(),
+      providers: {
+        "local-ollama": {
+          providerId: "local-ollama",
+          enabled: true,
+          apiKeyRef: null,
+          baseUrl: "http://localhost:11435",
+          modelPerCapability: {},
+        },
+      },
+      features: {
+        chat: { enabled: true, providerId: "local-ollama" },
+      },
+    };
+
+    render(
+      <ProviderEditor
+        preset={LOCAL_OLLAMA}
+        config={settings.providers["local-ollama"]}
+        settings={settings}
+        client={makeStubSearchClient({ deleteProviderSecret, updateSettings })}
+        onSettingsChange={vi.fn()}
+        onClose={onClose}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^remove$/i }));
+
+    await waitFor(() => {
+      expect(updateSettings).toHaveBeenCalled();
+    });
+    expect(deleteProviderSecret).not.toHaveBeenCalled();
+    const arg = updateSettings.mock.calls[0][0];
+    expect(arg.providers["local-ollama"]).toBeUndefined();
+    expect(arg.features.chat).toEqual({ enabled: false, providerId: null });
+    expect(onClose).toHaveBeenCalled();
+  });
+
   it("surfaces configurable local provider test failures", async () => {
     render(
       <ProviderEditor

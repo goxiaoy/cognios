@@ -2,11 +2,16 @@ use std::fs;
 
 use tempfile::tempdir;
 
-use cognios_lib::infrastructure::db::connection::open_in_memory_database;
+use cognios_lib::infrastructure::db::connection::{
+    open_database, open_in_memory_database, Database,
+};
 use cognios_lib::infrastructure::db::mount_repository::{
-    create_mount, find_nested_mount_conflict, CreateMountInput, NestedMountDirection,
+    create_mount, find_nested_mount_conflict, reconcile_mount, CreateMountInput,
+    NestedMountDirection,
 };
 use cognios_lib::services::mounts::scanner::normalize_mount_path;
+use cognios_lib::services::search::client::IndexChangeDto;
+use cognios_lib::services::search::index_state_sync::apply_index_changes;
 
 #[test]
 fn creates_a_mount_and_mirrors_non_ignored_entries() {
@@ -54,6 +59,80 @@ fn creates_a_mount_and_mirrors_non_ignored_entries() {
         .expect("docs child");
     assert_eq!(docs.kind, "folder");
     assert!(docs.children.iter().any(|child| child.name == "notes.txt"));
+}
+
+#[test]
+fn reconcile_ignores_index_derived_container_state_when_mount_contents_are_unchanged() {
+    let app_tempdir = tempdir().expect("app tempdir");
+    let mount_tempdir = tempdir().expect("mount tempdir");
+    let db_path = app_tempdir.path().join("cognios.db");
+    fs::write(mount_tempdir.path().join("root.txt"), "root").expect("root file");
+
+    let created_mount = {
+        let mut conn = open_database(&db_path).expect("database");
+        create_mount(
+            &mut conn,
+            &CreateMountInput {
+                path: mount_tempdir.path().to_string_lossy().into_owned(),
+                parent_id: None,
+                ignore_config: None,
+            },
+        )
+        .expect("mount created")
+    };
+
+    let child_id = {
+        let conn = open_database(&db_path).expect("database");
+        conn.query_row(
+            "SELECT id FROM nodes WHERE mount_id = ?1 AND name = 'root.txt'",
+            [&created_mount.mount_id],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("mounted child")
+    };
+
+    apply_index_changes(
+        &Database::new(db_path.clone()),
+        &[IndexChangeDto {
+            node_id: child_id,
+            state: "indexed".to_string(),
+            indexed_at: None,
+            error: None,
+            transition_seq: 1,
+        }],
+    )
+    .expect("index transition applied");
+
+    {
+        let conn = open_database(&db_path).expect("database");
+        conn.execute(
+            "UPDATE nodes SET updated_at = '2000-01-01 00:00:00' WHERE id = ?1",
+            [&created_mount.mount_id],
+        )
+        .expect("pin mount timestamp");
+    }
+
+    let outcome = {
+        let mut conn = open_database(&db_path).expect("database");
+        reconcile_mount(&mut conn, &created_mount.mount_id).expect("reconcile")
+    };
+
+    let (state, updated_at) = {
+        let conn = open_database(&db_path).expect("database");
+        conn.query_row(
+            "SELECT state, updated_at FROM nodes WHERE id = ?1",
+            [&created_mount.mount_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .expect("mount row")
+    };
+
+    assert!(
+        !outcome.changed,
+        "index-derived mount state must not look like a filesystem change"
+    );
+    assert_eq!(state, "indexed");
+    assert_eq!(updated_at, "2000-01-01 00:00:00");
 }
 
 #[test]

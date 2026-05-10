@@ -25,6 +25,7 @@ import {
 } from "../data/providerPresets";
 import { CloudEgressConsentDialog } from "./CloudEgressConsentDialog";
 import { ProviderChooserModal } from "./ProviderChooserModal";
+import { ProviderEditorModal } from "./ProviderEditorModal";
 
 const FEATURE_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
   "semantic-search": Search,
@@ -61,6 +62,9 @@ export function FeatureRow({
   onSettingsChange: (next: SearchSettings) => void;
 }) {
   const [pendingConsentFor, setPendingConsentFor] = useState<
+    { preset: ProviderPreset; enableOnCommit: boolean } | null
+  >(null);
+  const [pendingSetupFor, setPendingSetupFor] = useState<
     { preset: ProviderPreset; enableOnCommit: boolean } | null
   >(null);
   const [chooserOpen, setChooserOpen] = useState(false);
@@ -109,8 +113,17 @@ export function FeatureRow({
     }
   }
 
-  async function handleProviderChange(nextId: string, enableOnCommit = false) {
+  async function handleProviderChange(
+    nextId: string,
+    enableOnCommit = false,
+    isProviderConfigured = true
+  ) {
     const next = nextId === "" ? null : nextId;
+    if (next && !isProviderConfigured) {
+      const preset = presetById(next);
+      if (preset) setPendingSetupFor({ preset, enableOnCommit });
+      return;
+    }
     // Cloud-egress consent gate: first time the user binds *any*
     // feature to a cloud provider, intercept and prompt before the
     // PUT lands. Already-acked providers pass through silently.
@@ -271,17 +284,37 @@ export function FeatureRow({
           feature={meta}
           providers={compatible}
           currentProviderId={boundProviderId}
+          settings={settings}
           client={client}
           onClose={() => {
             setChooserOpen(false);
             setEnableOnProviderPick(false);
           }}
-          onChoose={(providerId) => {
+          onChoose={(providerId, isConfigured) => {
             setChooserOpen(false);
             const shouldEnable = enableOnProviderPick;
             setEnableOnProviderPick(false);
-            void handleProviderChange(providerId, shouldEnable);
+            void handleProviderChange(providerId, shouldEnable, isConfigured);
           }}
+        />
+      ) : null}
+
+      {pendingSetupFor ? (
+        <ProviderEditorModal
+          preset={pendingSetupFor.preset}
+          config={settings.providers[pendingSetupFor.preset.providerId] ?? null}
+          settings={settingsWithFeatureBinding(
+            settings,
+            meta.featureId,
+            pendingSetupFor.preset.providerId,
+            pendingSetupFor.enableOnCommit ? true : enabled
+          )}
+          client={client}
+          onSettingsChange={(next) => {
+            onSettingsChange(next);
+            void kickoffMissingDownloads(pendingSetupFor.preset.providerId);
+          }}
+          onClose={() => setPendingSetupFor(null)}
         />
       ) : null}
 
@@ -305,4 +338,22 @@ export function FeatureRow({
       ) : null}
     </li>
   );
+}
+
+function settingsWithFeatureBinding(
+  settings: SearchSettings,
+  featureId: string,
+  providerId: string,
+  enabled: boolean
+): SearchSettings {
+  return {
+    ...settings,
+    features: {
+      ...settings.features,
+      [featureId]: {
+        enabled,
+        providerId,
+      },
+    },
+  };
 }

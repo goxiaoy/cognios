@@ -327,32 +327,63 @@ class ChatOrchestrator:
             ]
         else:
             accepted = clusters
+
+        citation_labels: dict[tuple[str, str], str] = {}
+        citation_counts = {"workspace": 0, "web": 0}
+        citations: list[dict] = []
+
+        def register_citation(
+            source_kind: str,
+            title: str,
+            citation: str,
+            path: str | None = None,
+        ) -> str:
+            key = (source_kind, citation)
+            if key in citation_labels:
+                return citation_labels[key]
+            prefix = "W" if source_kind == "workspace" else "WEB"
+            citation_counts[source_kind] = citation_counts.get(source_kind, 0) + 1
+            marker = f"{prefix}{citation_counts[source_kind]}"
+            citation_labels[key] = marker
+            body = {
+                "sourceKind": source_kind,
+                "title": title,
+                "citation": citation,
+                "label": _citation_display_label(title, path),
+                "marker": marker,
+            }
+            if source_kind == "workspace":
+                body["nodeId"] = citation
+            if path:
+                body["path"] = path
+            citations.append(body)
+            return marker
+
+        manual_contexts = [
+            _manual_context(
+                node,
+                register_citation("workspace", node.title, node.node_id, node.path),
+            )
+            for node in request.context_nodes
+        ]
+        cluster_contexts = []
+        for cluster in accepted:
+            source_labels = [
+                register_citation(source.source_kind, source.title, source.citation, source.path)
+                for source in cluster.sources
+            ]
+            cluster_contexts.append(_cluster_context(cluster, source_labels))
+
         context = [
             *(
                 [_memory_context(request.session_memory)]
                 if request.session_memory is not None
                 else []
             ),
-            *[_manual_context(node) for node in request.context_nodes],
-            *[_cluster_context(cluster) for cluster in accepted],
+            *manual_contexts,
+            *cluster_contexts,
         ]
         messages = request.messages or [ChatMessage(role="user", content=request.query)]
-        citations = [
-            {
-                "sourceKind": "workspace",
-                "title": node.title,
-                "citation": node.node_id,
-            }
-            for node in request.context_nodes
-        ] + [
-            {
-                "sourceKind": source.source_kind,
-                "title": source.title,
-                "citation": source.citation,
-            }
-            for cluster in accepted
-            for source in cluster.sources
-        ]
         return _PreparedTurn(
             clusters=clusters,
             accepted=accepted,
@@ -384,10 +415,14 @@ class ChatOrchestrator:
         return self._chat_provider.list_models()
 
 
-def _cluster_context(cluster: SourceCluster) -> str:
+def _cluster_context(cluster: SourceCluster, source_labels: list[str]) -> str:
     lines = [f"Cluster: {cluster.title}", cluster.summary]
-    for source in cluster.sources:
-        lines.append(f"- [{source.source_kind}] {source.title}: {source.snippet} ({source.citation})")
+    for source, label in zip(cluster.sources, source_labels, strict=True):
+        source_line = f"- Citation: [{label}]; Source: [{source.source_kind}] {source.title}"
+        if source.path:
+            source_line += f"; Path: {source.path}"
+        source_line += f"; Excerpt: {source.snippet}"
+        lines.append(source_line)
     return "\n".join(lines)
 
 
@@ -403,8 +438,9 @@ def _memory_context(memory: ChatMemoryContext) -> str:
     )
 
 
-def _manual_context(node: ChatContextNode) -> str:
+def _manual_context(node: ChatContextNode, citation_label: str) -> str:
     lines = [f"User-attached node: {node.title}"]
+    lines.append(f"Citation: [{citation_label}]")
     if node.kind:
         lines.append(f"Kind: {node.kind}")
     if node.path:
@@ -413,6 +449,13 @@ def _manual_context(node: ChatContextNode) -> str:
     if body:
         lines.append(body)
     return "\n".join(lines)
+
+
+def _citation_display_label(title: str, path: str | None) -> str:
+    source = (path or title).rstrip("/\\")
+    if not source:
+        return title
+    return source.replace("\\", "/").rsplit("/", 1)[-1] or title
 
 
 def _memory_refresh_messages(request: ChatMemoryRefreshRequest) -> list[ChatMessage]:

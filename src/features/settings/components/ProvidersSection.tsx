@@ -29,6 +29,16 @@ const CAPABILITY_LABEL: Record<Capability, string> = {
   "web-search": "Web Search",
 };
 
+const CAPABILITY_FILTER_ORDER: readonly Capability[] = [
+  "embedding",
+  "reranking",
+  "vision",
+  "ocr",
+  "advanced-ocr",
+  "chat",
+  "web-search",
+];
+
 /** Capability → ModelRoleName. Capabilities are the user-facing
  * "what does this do" vocabulary; roles are the sidecar-internal
  * "which model slot" name. They differ because reranking maps to a
@@ -143,10 +153,17 @@ export function ProvidersSection({
         label: "Cloud",
         count: PROVIDER_PRESETS.filter((p) => p.providerType === "cloud").length,
       },
-      { id: "embedding", label: "Embedding" },
-      { id: "reranking", label: "Reranking" },
-      { id: "vision", label: "Vision" },
-      { id: "ocr", label: "OCR" },
+      ...CAPABILITY_FILTER_ORDER.filter((capability) =>
+        PROVIDER_PRESETS.some((preset) =>
+          preset.capabilities.includes(capability)
+        )
+      ).map((capability) => ({
+        id: capability,
+        label: CAPABILITY_LABEL[capability],
+        count: PROVIDER_PRESETS.filter((preset) =>
+          preset.capabilities.includes(capability)
+        ).length,
+      })),
     ],
     [configuredCount]
   );

@@ -93,11 +93,16 @@ function AppShell() {
             </section>
           ) : null}
 
-          {activeSection === "chat" ? (
-            <section className="chat-page-panel">
-              <ChatLayout client={chatClient} searchClient={searchClient} />
+          <div className={`app-panel${activeSection === "chat" ? " is-active" : ""}`}>
+            <section className="chat-page-panel" aria-hidden={activeSection !== "chat"}>
+              <ChatLayout
+                client={chatClient}
+                searchClient={searchClient}
+                visible={activeSection === "chat"}
+                onActivateSource={focusExplorer}
+              />
             </section>
-          ) : null}
+          </div>
 
           {activeSection !== "explorer" && activeSection !== "settings" && activeSection !== "chat" ? (
             <section className="placeholder-panel">

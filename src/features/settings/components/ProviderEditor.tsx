@@ -35,6 +35,7 @@ export function ProviderEditor({
   onSettingsChange,
   onClose,
   onKeyPresenceChange,
+  allowRemove = true,
 }: {
   preset: ProviderPreset;
   config: ProviderConfig | null;
@@ -42,6 +43,7 @@ export function ProviderEditor({
   client: SearchClient;
   onSettingsChange: (next: SearchSettings) => void;
   onClose: () => void;
+  allowRemove?: boolean;
   /** Optimistic notification to the parent section so it can update
    * its key-presence map without re-probing the keychain (which
    * would prompt the user on macOS after a binary rebuild). */
@@ -137,11 +139,22 @@ export function ProviderEditor({
   async function handleRemove() {
     setState({ kind: "validating" });
     try {
-      await client.deleteProviderSecret({ providerId: preset.providerId });
+      if (preset.authKind === "api-key") {
+        await client.deleteProviderSecret({ providerId: preset.providerId });
+      }
       const { [preset.providerId]: _, ...rest } = settings.providers;
+      const nextFeatures: SearchSettings["features"] = Object.fromEntries(
+        Object.entries(settings.features).map(([featureId, feature]) => [
+          featureId,
+          feature.providerId === preset.providerId
+            ? { ...feature, enabled: false, providerId: null }
+            : feature,
+        ])
+      );
       const env = await client.updateSettings({
         ...settings,
         providers: rest,
+        features: nextFeatures,
       });
       if (env.state !== "ready" || !env.data) {
         setState({
@@ -337,7 +350,7 @@ export function ProviderEditor({
             </button>
           </>
         ) : null}
-        {hasSecret ? (
+        {allowRemove && hasSecret ? (
           <button
             type="button"
             className="settings-action"
@@ -345,6 +358,16 @@ export function ProviderEditor({
             disabled={state.kind === "validating"}
           >
             Remove key
+          </button>
+        ) : null}
+        {allowRemove && canEditConfig && config ? (
+          <button
+            type="button"
+            className="settings-action"
+            onClick={() => void handleRemove()}
+            disabled={state.kind === "validating"}
+          >
+            Remove
           </button>
         ) : null}
       </div>

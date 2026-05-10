@@ -75,14 +75,16 @@ describe("CloudEgressConsentDialog", () => {
 /** Open the FeatureRow's chooser modal, pick the provider whose name
  * matches ``radioPattern``, and click "Use this provider" — the
  * post-Unit-13 replacement for ``fireEvent.change(combobox)``. */
-function selectProviderViaChooser(radioPattern: RegExp) {
+async function selectProviderViaChooser(radioPattern: RegExp) {
   fireEvent.click(
     screen.getByRole("button", {
       name: /(change|choose) provider for semantic search/i,
     })
   );
   fireEvent.click(screen.getByRole("radio", { name: radioPattern }));
-  fireEvent.click(screen.getByRole("button", { name: /use this provider/i }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /use this provider/i })
+  );
 }
 
 describe("Cloud-egress consent gate (FeatureRow integration)", () => {
@@ -96,11 +98,14 @@ describe("Cloud-egress consent gate (FeatureRow integration)", () => {
         meta={SEMANTIC}
         config={{ enabled: true, providerId: "local-gte" }}
         settings={baseSettings()}
-        client={makeStubSearchClient({ updateSettings })}
+        client={makeStubSearchClient({
+          updateSettings,
+          hasProviderSecret: vi.fn().mockResolvedValue(true),
+        })}
         onSettingsChange={vi.fn()}
       />
     );
-    selectProviderViaChooser(/openai/i);
+    await selectProviderViaChooser(/openai/i);
     // Dialog should appear; PUT must NOT have fired yet.
     await waitFor(() => {
       expect(
@@ -120,11 +125,14 @@ describe("Cloud-egress consent gate (FeatureRow integration)", () => {
         meta={SEMANTIC}
         config={{ enabled: true, providerId: "local-gte" }}
         settings={baseSettings()}
-        client={makeStubSearchClient({ updateSettings })}
+        client={makeStubSearchClient({
+          updateSettings,
+          hasProviderSecret: vi.fn().mockResolvedValue(true),
+        })}
         onSettingsChange={vi.fn()}
       />
     );
-    selectProviderViaChooser(/openai/i);
+    await selectProviderViaChooser(/openai/i);
     fireEvent.click(
       await screen.findByRole("button", { name: /enable openai/i })
     );
@@ -148,11 +156,14 @@ describe("Cloud-egress consent gate (FeatureRow integration)", () => {
         meta={SEMANTIC}
         config={{ enabled: true, providerId: "local-gte" }}
         settings={settings}
-        client={makeStubSearchClient({ updateSettings })}
+        client={makeStubSearchClient({
+          updateSettings,
+          hasProviderSecret: vi.fn().mockResolvedValue(true),
+        })}
         onSettingsChange={vi.fn()}
       />
     );
-    selectProviderViaChooser(/openai/i);
+    await selectProviderViaChooser(/openai/i);
     await waitFor(() => {
       expect(updateSettings).toHaveBeenCalled();
     });
@@ -169,11 +180,14 @@ describe("Cloud-egress consent gate (FeatureRow integration)", () => {
         meta={SEMANTIC}
         config={{ enabled: true, providerId: "local-gte" }}
         settings={baseSettings()}
-        client={makeStubSearchClient({ updateSettings })}
+        client={makeStubSearchClient({
+          updateSettings,
+          hasProviderSecret: vi.fn().mockResolvedValue(true),
+        })}
         onSettingsChange={vi.fn()}
       />
     );
-    selectProviderViaChooser(/openai/i);
+    await selectProviderViaChooser(/openai/i);
     // The chooser closes once we confirm; only the consent dialog's
     // Cancel button is on screen now.
     fireEvent.click(
@@ -203,7 +217,7 @@ describe("Cloud-egress consent gate (FeatureRow integration)", () => {
         onSettingsChange={vi.fn()}
       />
     );
-    selectProviderViaChooser(/^GTE/i);
+    await selectProviderViaChooser(/^GTE/i);
     await waitFor(() => {
       expect(updateSettings).toHaveBeenCalled();
     });
