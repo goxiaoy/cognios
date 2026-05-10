@@ -6764,6 +6764,10 @@ button.chat-context-toggle:not(:disabled):hover {
   padding: 0.8rem;
 }
 
+.home-stat.is-loading {
+  border-color: var(--line);
+}
+
 .home-stat.is-ok {
   border-color: color-mix(in srgb, #16794f 28%, var(--line));
 }
@@ -6781,6 +6785,56 @@ button.chat-context-toggle:not(:disabled):hover {
   color: var(--accent);
   background: var(--paper-2);
   border-radius: var(--radius-sm);
+}
+
+.home-skeleton {
+  display: block;
+  overflow: hidden;
+  position: relative;
+  background: var(--paper-2);
+  border-radius: var(--radius-sm);
+}
+
+.home-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--paper) 72%, transparent),
+    transparent
+  );
+  animation: home-skeleton-shimmer 1.35s ease-in-out infinite;
+}
+
+@keyframes home-skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.home-skeleton-icon {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 4px;
+}
+
+.home-stat-skeleton {
+  display: grid;
+  gap: 0.28rem;
+  margin-top: 0.18rem;
+}
+
+.home-skeleton-value {
+  width: 4.4rem;
+  height: 1.35rem;
+}
+
+.home-skeleton-sub {
+  width: 5.8rem;
+  height: 0.75rem;
 }
 
 .home-stat-label,
@@ -6887,6 +6941,10 @@ button.chat-context-toggle:not(:disabled):hover {
   gap: 0.28rem;
 }
 
+.home-heatmap.is-loading {
+  min-height: 4.25rem;
+}
+
 .home-heat-cell {
   aspect-ratio: 1;
   min-width: 0.55rem;
@@ -6925,6 +6983,59 @@ button.chat-context-toggle:not(:disabled):hover {
 
 .home-chart .recharts-surface {
   overflow: visible;
+}
+
+.home-chart-skeleton {
+  display: grid;
+  align-items: end;
+  gap: 0.35rem;
+  height: 170px;
+  min-width: 0;
+  padding: 0.35rem 0.15rem 0;
+}
+
+.home-chart-skeleton.is-bar {
+  grid-template-columns: repeat(14, minmax(0, 1fr));
+}
+
+.home-chart-skeleton.is-bar .home-skeleton:nth-child(3n + 1) {
+  height: 36%;
+}
+
+.home-chart-skeleton.is-bar .home-skeleton:nth-child(3n + 2) {
+  height: 64%;
+}
+
+.home-chart-skeleton.is-bar .home-skeleton:nth-child(3n) {
+  height: 48%;
+}
+
+.home-chart-skeleton.is-line {
+  align-items: center;
+  gap: 0.45rem;
+  padding-top: 1rem;
+}
+
+.home-chart-skeleton.is-line .home-skeleton {
+  width: 100%;
+  height: 0.55rem;
+  border-radius: 999px;
+}
+
+.home-chart-skeleton.is-line .home-skeleton:nth-child(1) {
+  width: 88%;
+}
+
+.home-chart-skeleton.is-line .home-skeleton:nth-child(2) {
+  width: 72%;
+}
+
+.home-chart-skeleton.is-line .home-skeleton:nth-child(3) {
+  width: 94%;
+}
+
+.home-chart-skeleton.is-line .home-skeleton:nth-child(4) {
+  width: 64%;
 }
 
 .home-latency-legend,
@@ -6976,6 +7087,17 @@ button.chat-context-toggle:not(:disabled):hover {
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 2px;
+}
+
+.home-legend-skeleton {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.home-legend-skeleton .home-skeleton {
+  width: 4.6rem;
+  height: 1.15rem;
 }
 
 .home-empty {

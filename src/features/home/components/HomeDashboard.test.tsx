@@ -8,6 +8,12 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HomeDashboard } from "./HomeDashboard";
+import type {
+  IndexStatus,
+  ModelsStatus,
+  SearchObservability,
+  SidecarEnvelope,
+} from "../../../lib/contracts/search";
 import type { SearchClient } from "../../search/types/search";
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -124,6 +130,19 @@ function makeClient(): SearchClient {
   };
 }
 
+function makeLoadingClient(): SearchClient {
+  return {
+    ...makeClient(),
+    indexStatus: vi.fn(() => pending<SidecarEnvelope<IndexStatus>>()),
+    modelsStatus: vi.fn(() => pending<SidecarEnvelope<ModelsStatus>>()),
+    observability: vi.fn(() => pending<SidecarEnvelope<SearchObservability>>()),
+  };
+}
+
+function pending<T>(): Promise<T> {
+  return new Promise(() => {});
+}
+
 function observabilityWindows(client: SearchClient): number[] {
   return vi
     .mocked(client.observability)
@@ -131,6 +150,18 @@ function observabilityWindows(client: SearchClient): number[] {
 }
 
 describe("HomeDashboard", () => {
+  it("shows skeleton placeholders while Home data is loading", () => {
+    const client = makeLoadingClient();
+    render(<HomeDashboard client={client} />);
+
+    expect(screen.getByLabelText("Indexed items loading")).toBeInTheDocument();
+    expect(screen.getByLabelText("In flight loading")).toBeInTheDocument();
+    expect(screen.getByLabelText("OCR enhancement loading")).toBeInTheDocument();
+    expect(screen.getByLabelText("Recent indexing loading")).toBeInTheDocument();
+    expect(screen.getByLabelText("Latency loading")).toBeInTheDocument();
+    expect(screen.getByLabelText("Token usage loading")).toBeInTheDocument();
+  });
+
   it("renders current status, activity, latency, and token usage", async () => {
     const client = makeClient();
     render(<HomeDashboard client={client} />);

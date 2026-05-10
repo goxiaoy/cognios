@@ -114,6 +114,10 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
   const recentObservabilityData = readyData(recentObservability);
   const metricsObservabilityData = readyData(metricsObservability);
   const enhancement = enhancementDisplay(indexData, modelData);
+  const indexLoading = indexing === null;
+  const enhancementLoading = indexing === null || models === null;
+  const recentLoading = recentObservability === null;
+  const metricsLoading = metricsObservability === null;
 
   return (
     <section className="home-dashboard" aria-label="Home statistics">
@@ -123,12 +127,14 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
           label="Indexed items"
           value={indexData ? indexData.indexedChunks.toLocaleString() : "—"}
           sub={indexData ? `${indexData.queueDepth} queued` : statusCopy(indexing)}
+          loading={indexLoading}
         />
         <StatTile
           icon={<Activity size={17} aria-hidden="true" />}
           label="In flight"
           value={indexData ? activeIndexJobs(indexData).toLocaleString() : "—"}
           sub="jobs running"
+          loading={indexLoading}
         />
         <StatTile
           icon={<Boxes size={17} aria-hidden="true" />}
@@ -136,6 +142,7 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
           value={enhancement.value}
           sub={enhancement.sub}
           tone={enhancement.tone}
+          loading={enhancementLoading}
         />
       </section>
 
@@ -167,6 +174,7 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
           <ActivityChart
             days={recentObservabilityData?.recentIndexedNodes ?? []}
             windowDays={recentIndexDays}
+            loading={recentLoading}
           />
         </section>
 
@@ -174,7 +182,7 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
           <header className="home-section-head home-section-head--with-control">
             <div>
               <h2>Latency</h2>
-              <span>{metricsObservabilityData ? "recent samples" : statusCopy(metricsObservability)}</span>
+              <span>{metricsLoading ? "loading" : metricsObservabilityData ? "recent samples" : statusCopy(metricsObservability)}</span>
             </div>
             <div
               className="home-window-toggle"
@@ -198,6 +206,7 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
             observability={metricsObservabilityData}
             metric={latencyMetric}
             category={latencyCategory}
+            loading={metricsLoading}
             onCategoryChange={(category) =>
               setLatencyCategory((current) => (current === category ? null : category))
             }
@@ -207,9 +216,9 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
         <section className="home-section">
           <header className="home-section-head">
             <h2>Token usage</h2>
-            <span>{tokenTotal(metricsObservabilityData).toLocaleString()} tokens</span>
+            <span>{metricsLoading ? "loading" : `${tokenTotal(metricsObservabilityData).toLocaleString()} tokens`}</span>
           </header>
-          <TokenUsage observability={metricsObservabilityData} />
+          <TokenUsage observability={metricsObservabilityData} loading={metricsLoading} />
         </section>
       </div>
     </section>
@@ -222,20 +231,31 @@ function StatTile({
   value,
   sub,
   tone = "neutral",
+  loading = false,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   sub: string;
   tone?: "neutral" | "ok" | "warn";
+  loading?: boolean;
 }) {
   return (
-    <article className={`home-stat is-${tone}`}>
-      <div className="home-stat-icon">{icon}</div>
+    <article className={`home-stat is-${tone}${loading ? " is-loading" : ""}`}>
+      <div className="home-stat-icon">{loading ? <span className="home-skeleton home-skeleton-icon" aria-hidden="true" /> : icon}</div>
       <div>
         <p className="home-stat-label">{label}</p>
-        <p className="home-stat-value">{value}</p>
-        <p className="home-stat-sub">{sub}</p>
+        {loading ? (
+          <div className="home-stat-skeleton" aria-label={`${label} loading`}>
+            <span className="home-skeleton home-skeleton-value" />
+            <span className="home-skeleton home-skeleton-sub" />
+          </div>
+        ) : (
+          <>
+            <p className="home-stat-value">{value}</p>
+            <p className="home-stat-sub">{sub}</p>
+          </>
+        )}
       </div>
     </article>
   );
@@ -244,10 +264,15 @@ function StatTile({
 function ActivityChart({
   days,
   windowDays,
+  loading = false,
 }: {
   days: SearchObservability["recentIndexedNodes"];
   windowDays: RecentIndexWindow;
+  loading?: boolean;
 }) {
+  if (loading) {
+    return <ChartSkeleton label="Recent indexing loading" variant={windowDays === 90 ? "heatmap" : "bar"} />;
+  }
   if (days.length === 0) {
     return <p className="home-empty">No recent indexed nodes.</p>;
   }
@@ -311,13 +336,23 @@ function LatencyChart({
   observability,
   metric,
   category,
+  loading = false,
   onCategoryChange,
 }: {
   observability: SearchObservability | null;
   metric: LatencyMetricKey;
   category: LatencyCategoryKey | null;
+  loading?: boolean;
   onCategoryChange: (category: LatencyCategoryKey) => void;
 }) {
+  if (loading) {
+    return (
+      <div className="home-latency-panel">
+        <ChartSkeleton label="Latency loading" variant="line" />
+        <LegendSkeleton count={3} />
+      </div>
+    );
+  }
   if (!observability) return <p className="home-empty">Latency unavailable.</p>;
   const data = latencyChartData(observability, metric);
   const visibleCategories = category
@@ -388,9 +423,19 @@ function LatencyChart({
 
 function TokenUsage({
   observability,
+  loading = false,
 }: {
   observability: SearchObservability | null;
+  loading?: boolean;
 }) {
+  if (loading) {
+    return (
+      <div className="home-token-panel">
+        <ChartSkeleton label="Token usage loading" variant="bar" />
+        <LegendSkeleton count={3} />
+      </div>
+    );
+  }
   const usage = observability?.tokenUsageByDay ?? [];
   const hasUsage = usage.some((day) => day.totalTokens > 0);
   if (!hasUsage) {
@@ -464,6 +509,41 @@ function TokenUsage({
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ChartSkeleton({
+  label,
+  variant,
+}: {
+  label: string;
+  variant: "bar" | "line" | "heatmap";
+}) {
+  if (variant === "heatmap") {
+    return (
+      <div className="home-heatmap is-loading" aria-label={label}>
+        {Array.from({ length: 90 }).map((_, index) => (
+          <span key={index} className="home-skeleton home-heat-cell" />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className={`home-chart-skeleton is-${variant}`} aria-label={label}>
+      {Array.from({ length: variant === "bar" ? 14 : 4 }).map((_, index) => (
+        <span key={index} className="home-skeleton" />
+      ))}
+    </div>
+  );
+}
+
+function LegendSkeleton({ count }: { count: number }) {
+  return (
+    <div className="home-legend-skeleton" aria-hidden="true">
+      {Array.from({ length: count }).map((_, index) => (
+        <span key={index} className="home-skeleton" />
+      ))}
     </div>
   );
 }
