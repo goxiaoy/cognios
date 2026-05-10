@@ -399,7 +399,7 @@ pub struct NodeContentDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+#[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
 pub struct ChatTurnRequestDto {
     pub query: String,
     #[serde(default)]
@@ -410,6 +410,8 @@ pub struct ChatTurnRequestDto {
     pub include_web: bool,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default, alias = "contextNodes")]
+    pub context_nodes: Vec<ChatContextNodeDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -417,6 +419,21 @@ pub struct ChatTurnRequestDto {
 pub struct ChatTurnMessageDto {
     pub role: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
+pub struct ChatContextNodeDto {
+    pub node_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub snippet: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1236,5 +1253,33 @@ mod tests {
         assert_eq!(json["force"], false);
         // Optional fields with None must be skipped.
         assert!(json.get("mount_id").is_none());
+    }
+
+    #[test]
+    fn chat_turn_request_serialises_snake_case_for_python() {
+        let request = ChatTurnRequestDto {
+            query: "整理事故时间线".into(),
+            messages: vec![ChatTurnMessageDto {
+                role: "user".into(),
+                content: "整理事故时间线".into(),
+            }],
+            accepted_cluster_ids: vec![],
+            include_web: true,
+            model: Some("llama3.2".into()),
+            context_nodes: vec![ChatContextNodeDto {
+                node_id: "n1".into(),
+                title: "事故报告".into(),
+                kind: Some("note".into()),
+                path: Some("事故/报告.md".into()),
+                snippet: Some("3 月 1 日事故现场记录".into()),
+                content: Some("完整事故报告内容".into()),
+            }],
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["include_web"], true);
+        assert_eq!(json["context_nodes"][0]["node_id"], "n1");
+        assert_eq!(json["context_nodes"][0]["title"], "事故报告");
+        assert!(json.get("includeWeb").is_none());
+        assert!(json.get("contextNodes").is_none());
     }
 }

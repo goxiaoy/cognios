@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from ..chat.orchestrator import ChatOrchestrator, ChatTurnRequest
+from ..chat.orchestrator import ChatContextNode, ChatOrchestrator, ChatTurnRequest
 from ..chat.ollama import OllamaChatProvider
 from ..chat.types import ChatMessage, ChatProviderError
 
@@ -17,12 +17,22 @@ class ChatMessagePayload(BaseModel):
     content: str
 
 
+class ChatContextNodePayload(BaseModel):
+    node_id: str
+    title: str
+    kind: str | None = None
+    path: str | None = None
+    snippet: str | None = None
+    content: str | None = None
+
+
 class ChatTurnPayload(BaseModel):
     query: str = ""
     messages: list[ChatMessagePayload] = Field(default_factory=list)
     accepted_cluster_ids: list[str] = Field(default_factory=list)
     include_web: bool = True
     model: str | None = None
+    context_nodes: list[ChatContextNodePayload] = Field(default_factory=list)
 
 
 class ChatProviderTestPayload(BaseModel):
@@ -120,6 +130,17 @@ def post_chat_turn(body: ChatTurnPayload, request: Request) -> dict:
             accepted_cluster_ids=body.accepted_cluster_ids,
             include_web=body.include_web,
             model=body.model,
+            context_nodes=[
+                ChatContextNode(
+                    node_id=node.node_id,
+                    title=node.title,
+                    kind=node.kind,
+                    path=node.path,
+                    snippet=node.snippet,
+                    content=node.content,
+                )
+                for node in body.context_nodes
+            ],
         )
     )
     return response.to_dict()

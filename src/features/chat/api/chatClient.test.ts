@@ -107,9 +107,9 @@ describe("chatClient", () => {
       turn: {
         state: "ready",
         data: {
-          state: "awaiting_source_confirmation",
+          state: "ready",
           clusters: [],
-          answer: null,
+          answer: "answer",
           citations: [],
           warnings: [],
         },

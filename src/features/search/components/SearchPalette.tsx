@@ -38,10 +38,12 @@ export function SearchPalette({
   client,
   onClose,
   onActivate,
+  onSelectNode,
 }: {
   client: SearchClient;
   onClose(): void;
   onActivate(): void;
+  onSelectNode?(node: SearchPaletteSelection): void;
 }) {
   const store = useExplorerStoreContext();
   const recentNodes = useRecentNodes();
@@ -114,12 +116,17 @@ export function SearchPalette({
   }, [onClose]);
 
   const activate = useCallback(
-    (nodeId: string) => {
-      store.activateArtifact(nodeId);
+    (item: NavigableItem) => {
+      if (onSelectNode) {
+        onSelectNode(selectionFromItem(item));
+        onClose();
+        return;
+      }
+      store.activateArtifact(item.nodeId);
       onActivate();
       onClose();
     },
-    [store, onActivate, onClose]
+    [store, onActivate, onClose, onSelectNode]
   );
 
   const handleKeyDown = useCallback(
@@ -146,7 +153,7 @@ export function SearchPalette({
       if (event.key === "Enter") {
         event.preventDefault();
         const item = navigableItems[activeIndex];
-        if (item) activate(item.nodeId);
+        if (item) activate(item);
         return;
       }
     },
@@ -279,6 +286,14 @@ type NavigableItem =
   | { kind: "recent"; nodeId: string; label: string }
   | { kind: "result"; nodeId: string; label: string; result: SearchResult };
 
+export interface SearchPaletteSelection {
+  nodeId: string;
+  name: string;
+  kind?: string | null;
+  path?: string | null;
+  snippet?: string | null;
+}
+
 function PaletteBody({
   state,
   error,
@@ -302,7 +317,7 @@ function PaletteBody({
   activeIndex: number;
   onRowHover(idx: number): void;
   onListMouseLeave(): void;
-  activate(nodeId: string): void;
+  activate(item: NavigableItem): void;
   recentNodes: ReturnType<typeof useRecentNodes>;
   results: SearchResult[];
   hasMore: boolean;
@@ -335,7 +350,7 @@ function PaletteBody({
               aria-selected={idx === activeIndex}
               className={`search-result-row${idx === activeIndex ? " is-active" : ""}`}
               onMouseEnter={() => onRowHover(idx)}
-              onClick={() => activate(node.id)}
+              onClick={() => activate({ kind: "recent", nodeId: node.id, label: node.name })}
             >
               <span className="search-result-body">
                 <span className="search-result-title">
@@ -396,7 +411,7 @@ function PaletteBody({
             result={result}
             active={idx === activeIndex}
             rowId={ROW_ID(idx)}
-            onActivate={() => activate(result.nodeId)}
+            onActivate={() => activate({ kind: "result", nodeId: result.nodeId, label: result.name, result })}
             onHover={() => onRowHover(idx)}
           />
         ))}
@@ -413,6 +428,22 @@ function PaletteBody({
       ) : null}
     </>
   );
+}
+
+function selectionFromItem(item: NavigableItem): SearchPaletteSelection {
+  if (item.kind === "result") {
+    return {
+      nodeId: item.result.nodeId,
+      name: item.result.name,
+      kind: item.result.kind,
+      path: item.result.path ?? null,
+      snippet: item.result.snippet,
+    };
+  }
+  return {
+    nodeId: item.nodeId,
+    name: item.label,
+  };
 }
 
 function liveRegionMessage(

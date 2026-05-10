@@ -103,9 +103,17 @@ export interface ChatTurnCluster {
   sources: ChatTurnSource[];
 }
 
+export interface ChatContextNode {
+  nodeId: string;
+  title: string;
+  kind?: string | null;
+  path?: string | null;
+  snippet?: string | null;
+  content?: string | null;
+}
+
 export interface ChatTurnResponse {
   state:
-    | "awaiting_source_confirmation"
     | "needs_redirect"
     | "provider_unavailable"
     | "provider_error"
@@ -142,6 +150,7 @@ export interface StartChatTurnInput {
   model?: string | null;
   acceptedClusterIds?: string[];
   includeWeb?: boolean;
+  contextNodes?: ChatContextNode[];
 }
 
 export interface StartChatTurnResult {

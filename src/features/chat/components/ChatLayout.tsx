@@ -1,22 +1,28 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Check, CircleAlert, FileText, Globe, MessageSquare, Plus, Search, Sparkles } from "lucide-react";
+import { FormEvent, useEffect, useState } from "react";
+import { CircleAlert, FileText, Globe, MessageSquare, Paperclip, Plus, Search, Send, X } from "lucide-react";
 
 import type {
+  ChatContextNode,
   ChatSession,
   ChatSessionDetail,
   ChatModel,
-  ChatTurnCluster,
   ChatTurnResponse,
 } from "../../../lib/contracts/chat";
 import { unwrapEnvelope } from "../../../lib/contracts/search";
+import { SearchPalette, type SearchPaletteSelection } from "../../search/components/SearchPalette";
+import type { SearchClient } from "../../search/types/search";
 import type { ChatClient } from "../api/chatClient";
 
-export function ChatLayout({ client }: { client: ChatClient }) {
+const CONTEXT_CONTENT_LIMIT = 8_000;
+
+export function ChatLayout({ client, searchClient }: { client: ChatClient; searchClient: SearchClient }) {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [active, setActive] = useState<ChatSessionDetail | null>(null);
   const [query, setQuery] = useState("");
   const [turn, setTurn] = useState<ChatTurnResponse | null>(null);
-  const [accepted, setAccepted] = useState<Set<string>>(new Set());
+  const [contextOpen, setContextOpen] = useState(false);
+  const [contextNodes, setContextNodes] = useState<ChatContextNode[]>([]);
+  const [contextError, setContextError] = useState<string | null>(null);
   const [models, setModels] = useState<ChatModel[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [busy, setBusy] = useState(false);
@@ -101,7 +107,7 @@ export function ChatLayout({ client }: { client: ChatClient }) {
     if (isCurrentChatEmpty(active, turn)) return;
     setActive(null);
     setTurn(null);
-    setAccepted(new Set());
+    clearContextDraft();
     setQuery("");
     setError(null);
   }
@@ -119,41 +125,20 @@ export function ChatLayout({ client }: { client: ChatClient }) {
         query: trimmedQuery,
         model: selectedModel || null,
         includeWeb: true,
+        contextNodes,
       });
       const data = unwrapEnvelope(result.turn);
       if (!data) {
         setError(result.turn.error ?? "Chat runtime is still starting.");
         return;
       }
+      if (data.state !== "ready" && !data.answer) {
+        setError(data.warnings[0] ?? chatStatusMessage(data.state));
+      }
       setTurn(data);
-      setAccepted(new Set());
+      setQuery("");
+      clearContextDraft();
       await refreshSessions(session.session.id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function synthesize() {
-    if (!active || !query.trim() || accepted.size === 0) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await client.startTurn({
-        sessionId: active.session.id,
-        query: query.trim(),
-        model: selectedModel || null,
-        acceptedClusterIds: [...accepted],
-        includeWeb: true,
-      });
-      const data = unwrapEnvelope(result.turn);
-      if (!data) {
-        setError(result.turn.error ?? "Chat runtime is still starting.");
-        return;
-      }
-      setTurn(data);
-      await refreshSessions(active.session.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -178,7 +163,7 @@ export function ChatLayout({ client }: { client: ChatClient }) {
       if (active?.session.id === session.id) {
         const fallback = next[0];
         setTurn(null);
-        setAccepted(new Set());
+        clearContextDraft();
         setQuery("");
         if (fallback) {
           const detail = await client.getSession({ sessionId: fallback.id });
@@ -196,7 +181,39 @@ export function ChatLayout({ client }: { client: ChatClient }) {
     }
   }
 
-  const clusters = turn?.clusters ?? [];
+  async function addContextSelection(selection: SearchPaletteSelection) {
+    if (contextNodes.some((node) => node.nodeId === selection.nodeId)) return;
+    setContextError(null);
+    try {
+      const envelope = await searchClient.nodeContent(selection.nodeId);
+      const content = unwrapEnvelope(envelope)?.joined;
+      setContextNodes((nodes) => [
+        ...nodes,
+        {
+          nodeId: selection.nodeId,
+          title: selection.name,
+          kind: selection.kind ?? null,
+          path: selection.path ?? null,
+          snippet: selection.snippet ?? null,
+          content: content ? content.slice(0, CONTEXT_CONTENT_LIMIT) : selection.snippet ?? null,
+        },
+      ]);
+      setContextOpen(false);
+    } catch (err) {
+      setContextError(err instanceof Error ? err.message : "Context unavailable.");
+    }
+  }
+
+  function removeContextNode(nodeId: string) {
+    setContextNodes((nodes) => nodes.filter((node) => node.nodeId !== nodeId));
+  }
+
+  function clearContextDraft() {
+    setContextNodes([]);
+    setContextOpen(false);
+    setContextError(null);
+  }
+
   const transcript = active?.messages ?? [];
   const currentChatIsEmpty = isCurrentChatEmpty(active, turn);
   const showTransientAnswer = Boolean(
@@ -325,6 +342,28 @@ export function ChatLayout({ client }: { client: ChatClient }) {
         </section>
 
         <form className="chat-composer" onSubmit={submit}>
+          {contextNodes.length > 0 || contextError ? (
+            <div className="chat-context-area">
+              {contextNodes.length > 0 ? (
+                <div className="chat-context-chips" aria-label="Context nodes">
+                  {contextNodes.map((node) => (
+                    <span className="chat-context-chip" key={node.nodeId}>
+                      <FileText size={13} aria-hidden="true" />
+                      <span>{node.title}</span>
+                      <button
+                        type="button"
+                        aria-label={`Remove context ${node.title}`}
+                        onClick={() => removeContextNode(node.nodeId)}
+                      >
+                        <X size={12} aria-hidden="true" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {contextError ? <p className="chat-context-status">{contextError}</p> : null}
+            </div>
+          ) : null}
           <textarea
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -334,38 +373,27 @@ export function ChatLayout({ client }: { client: ChatClient }) {
           <div className="chat-composer-footer">
             <span className="chat-composer-meta">
               <Globe size={14} aria-hidden="true" />
-              Workspace + web
+              Workspace + web{contextNodes.length > 0 ? ` + ${contextNodes.length} context` : ""}
             </span>
             <div className="chat-composer-actions">
-              <button className="chat-secondary-action" type="submit" disabled={busy || !query.trim()}>
-                {busy ? "Working..." : "Search"}
-              </button>
               <button
-                className="chat-primary-action"
+                className="chat-context-toggle"
                 type="button"
-                disabled={busy || accepted.size === 0}
-                onClick={synthesize}
+                title="Add context"
+                aria-label="Add context"
+                aria-expanded={contextOpen}
+                onClick={() => setContextOpen((open) => !open)}
               >
-                <Sparkles size={15} aria-hidden="true" />
-                {accepted.size > 0 ? `Synthesize ${accepted.size}` : "Synthesize"}
+                <Paperclip size={15} aria-hidden="true" />
+              </button>
+              <button className="chat-primary-action" type="submit" disabled={busy || !query.trim()}>
+                <Send size={15} aria-hidden="true" />
+                {busy ? "Waiting..." : "Send"}
               </button>
             </div>
           </div>
         </form>
       </main>
-
-      <SourceClusterPanel
-        clusters={clusters}
-        accepted={accepted}
-        onToggle={(clusterId) => {
-          setAccepted((current) => {
-            const next = new Set(current);
-            if (next.has(clusterId)) next.delete(clusterId);
-            else next.add(clusterId);
-            return next;
-          });
-        }}
-      />
 
       {sessionMenu ? (
         <div
@@ -387,6 +415,15 @@ export function ChatLayout({ client }: { client: ChatClient }) {
             Delete
           </button>
         </div>
+      ) : null}
+
+      {contextOpen ? (
+        <SearchPalette
+          client={searchClient}
+          onClose={() => setContextOpen(false)}
+          onActivate={() => {}}
+          onSelectNode={(selection) => void addContextSelection(selection)}
+        />
       ) : null}
 
       {deleteTarget ? (
@@ -433,53 +470,6 @@ export function ChatLayout({ client }: { client: ChatClient }) {
   );
 }
 
-function SourceClusterPanel({
-  clusters,
-  accepted,
-  onToggle,
-}: {
-  clusters: ChatTurnCluster[];
-  accepted: Set<string>;
-  onToggle(clusterId: string): void;
-}) {
-  const visible = useMemo(() => clusters.slice(0, 6), [clusters]);
-  const acceptedVisible = visible.filter((cluster) => accepted.has(cluster.clusterId)).length;
-
-  return (
-    <aside className="chat-clusters" aria-label="Source clusters">
-      <div className="chat-section-head chat-source-head">
-        <h2>Sources</h2>
-        {visible.length > 0 ? (
-          <span>
-            {acceptedVisible}/{visible.length}
-          </span>
-        ) : null}
-      </div>
-      {visible.length === 0 ? (
-        <p className="chat-source-empty">Sources appear after search.</p>
-      ) : (
-        visible.map((cluster) => (
-          <button
-            type="button"
-            key={cluster.clusterId}
-            className={`chat-cluster-item${accepted.has(cluster.clusterId) ? " is-accepted" : ""}`}
-            onClick={() => onToggle(cluster.clusterId)}
-          >
-            <span className="chat-cluster-row">
-              <span className="chat-cluster-title">{cluster.title}</span>
-              <span className="chat-cluster-check" aria-hidden="true">
-                {accepted.has(cluster.clusterId) ? <Check size={14} /> : null}
-              </span>
-            </span>
-            <span className="chat-cluster-kind">{cluster.sourceKind}</span>
-            <span className="chat-cluster-summary">{cluster.summary}</span>
-          </button>
-        ))
-      )}
-    </aside>
-  );
-}
-
 function shouldRetitleSession(detail: ChatSessionDetail): boolean {
   const title = detail.session.title.trim().toLowerCase();
   return detail.messages.length === 0 && (title === "new chat" || title === "research chat");
@@ -487,6 +477,12 @@ function shouldRetitleSession(detail: ChatSessionDetail): boolean {
 
 function isCurrentChatEmpty(detail: ChatSessionDetail | null, turn: ChatTurnResponse | null): boolean {
   return !turn && (!detail || detail.messages.length === 0);
+}
+
+function chatStatusMessage(state: string): string {
+  if (state === "provider_unavailable") return "Chat provider unavailable.";
+  if (state === "provider_error") return "Chat provider returned an error.";
+  return "Chat could not complete.";
 }
 
 function sessionTitleFromQuery(query: string): string {

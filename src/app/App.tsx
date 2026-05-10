@@ -95,7 +95,7 @@ function AppShell() {
 
           {activeSection === "chat" ? (
             <section className="chat-page-panel">
-              <ChatLayout client={chatClient} />
+              <ChatLayout client={chatClient} searchClient={searchClient} />
             </section>
           ) : null}
 

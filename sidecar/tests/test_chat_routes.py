@@ -58,7 +58,7 @@ def _auth():
     return {"Authorization": f"Bearer {TOKEN}"}
 
 
-def test_chat_turn_route_returns_clusters_before_synthesis():
+def test_chat_turn_route_generates_with_retrieved_sources_without_confirmation():
     app = build_app(
         token=TOKEN,
         chat_orchestrator=ChatOrchestrator(retrieval=_Retrieval(), chat_provider=_Provider()),
@@ -69,9 +69,9 @@ def test_chat_turn_route_returns_clusters_before_synthesis():
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["state"] == "awaiting_source_confirmation"
+    assert body["state"] == "ready"
     assert body["clusters"][0]["source_kind"] == "workspace"
-    assert body["answer"] is None
+    assert body["answer"] == "answer"
 
 
 def test_chat_turn_route_generates_after_cluster_acceptance():
@@ -113,6 +113,43 @@ def test_chat_turn_route_passes_selected_model_to_provider():
 
     assert resp.status_code == 200
     assert resp.json()["provider"]["model"] == "qwen2.5:7b"
+
+
+def test_chat_turn_route_includes_manual_context_nodes():
+    captured = {}
+
+    class _ContextProvider(_Provider):
+        def generate(self, request: ChatGenerationRequest) -> ChatGeneration:
+            captured["context"] = request.context
+            return super().generate(request)
+
+    app = build_app(
+        token=TOKEN,
+        chat_orchestrator=ChatOrchestrator(retrieval=_Retrieval(), chat_provider=_ContextProvider()),
+    )
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/chat/turns",
+            json={
+                "query": "事故",
+                "context_nodes": [
+                    {
+                        "node_id": "n-manual",
+                        "title": "事故报告",
+                        "kind": "note",
+                        "path": "事故/报告.md",
+                        "content": "完整事故报告内容",
+                    }
+                ],
+            },
+            headers=_auth(),
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["citations"][0]["citation"] == "n-manual"
+    assert "User-attached node: 事故报告" in captured["context"][0]
+    assert "完整事故报告内容" in captured["context"][0]
 
 
 def test_chat_models_route_returns_cached_provider_models():

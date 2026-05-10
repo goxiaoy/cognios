@@ -2,6 +2,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatSessionDetail } from "../../../lib/contracts/chat";
+import { ExplorerStoreProvider } from "../../explorer/store/ExplorerStoreContext";
+import type { ExplorerClient } from "../../explorer/types/explorer";
+import type { SearchClient } from "../../search/types/search";
 import type { ChatClient } from "../api/chatClient";
 import { ChatLayout } from "./ChatLayout";
 
@@ -63,7 +66,7 @@ function makeClient(): ChatClient {
       turn: {
         state: "ready",
         data: {
-          state: "awaiting_source_confirmation",
+          state: "ready",
           clusters: [
             {
               clusterId: "workspace:事故/照片",
@@ -75,7 +78,7 @@ function makeClient(): ChatClient {
               sources: [],
             },
           ],
-          answer: null,
+          answer: "事故发生在 3 月 1 日。",
           citations: [],
           warnings: [],
         },
@@ -84,27 +87,95 @@ function makeClient(): ChatClient {
   };
 }
 
+function makeSearchClient(): SearchClient {
+  return {
+    search: vi.fn().mockResolvedValue({
+      state: "ready",
+      data: {
+        results: [
+          {
+            nodeId: "n1",
+            kind: "note",
+            name: "事故报告",
+            score: 0.91,
+            snippet: "3 月 1 日事故现场记录",
+            matchedIn: "content",
+            path: "事故/报告.md",
+          },
+        ],
+        degraded: false,
+        nextCursor: null,
+      },
+    }),
+    indexStatus: vi.fn(),
+    nodeIndexStatus: vi.fn(),
+    nodeContent: vi.fn().mockResolvedValue({
+      state: "ready",
+      data: {
+        nodeId: "n1",
+        kind: "note",
+        chunks: [{ id: "c1", role: "body", text: "完整事故报告内容" }],
+        joined: "完整事故报告内容",
+        assets: {},
+      },
+    }),
+    modelsStatus: vi.fn(),
+    startModelDownload: vi.fn(),
+    settings: vi.fn(),
+    updateSettings: vi.fn(),
+    restartSidecar: vi.fn(),
+    readSettingsFallback: vi.fn(),
+    setProviderSecret: vi.fn(),
+    hasProviderSecret: vi.fn(),
+    deleteProviderSecret: vi.fn(),
+    testChatProvider: vi.fn(),
+  };
+}
+
+function makeExplorerClient(): ExplorerClient {
+  return {
+    getExplorerSnapshot: vi.fn().mockResolvedValue({ roots: [] }),
+    getMountSetupContext: vi.fn().mockResolvedValue({ suggestedFolders: [], existingMounts: [] }),
+    createFolder: vi.fn(),
+    createMount: vi.fn(),
+    createNote: vi.fn(),
+    createUrl: vi.fn(),
+    renameNode: vi.fn(),
+    deleteNode: vi.fn(),
+    reindexNode: vi.fn(),
+    retryUrl: vi.fn(),
+    getNodeThumbnail: vi.fn(),
+    getNoteContent: vi.fn(),
+    saveNoteContent: vi.fn(),
+    readFileContent: vi.fn(),
+    showNodeInFileManager: vi.fn(),
+    showNodeExtractArtifacts: vi.fn(),
+  };
+}
+
 describe("ChatLayout", () => {
   afterEach(() => {
     cleanup();
   });
 
-  it("shows source clusters before synthesis", async () => {
+  it("sends a prompt directly and shows the assistant response", async () => {
     const client = makeClient();
-    render(<ChatLayout client={client} />);
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
     fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
       target: { value: "整理事故时间线" },
     });
     expect(await screen.findByLabelText(/model/i)).toHaveValue("llama3.2");
-    fireEvent.click(screen.getByRole("button", { name: /^Search$/i }));
+    expect(screen.queryByRole("button", { name: /Synthesize/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
 
-    expect(await screen.findByText("事故/照片")).toBeInTheDocument();
+    expect(await screen.findByText(/3 月 1 日/)).toBeInTheDocument();
     expect(client.startTurn).toHaveBeenCalledWith({
       sessionId: "s1",
       query: "整理事故时间线",
       model: "llama3.2",
       includeWeb: true,
+      contextNodes: [],
     });
     expect(client.createSession).toHaveBeenCalledWith({ title: "整理事故时间线" });
   });
@@ -125,11 +196,11 @@ describe("ChatLayout", () => {
       clusters: [],
     });
 
-    render(<ChatLayout client={client} />);
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
     fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
       target: { value: "这次事故的费用和责任怎么判断？" },
     });
-    fireEvent.click(await screen.findByRole("button", { name: /^Search$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Send$/i }));
 
     await waitFor(() => {
       expect(client.updateSessionTitle).toHaveBeenCalledWith({
@@ -156,7 +227,7 @@ describe("ChatLayout", () => {
       clusters: [],
     });
 
-    render(<ChatLayout client={client} />);
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
     await waitFor(() => {
       expect(client.getSession).toHaveBeenCalledWith({ sessionId: "s1" });
@@ -166,7 +237,7 @@ describe("ChatLayout", () => {
     fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
       target: { value: "整理事故时间线" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^Search$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
 
     await waitFor(() => {
       expect(client.updateSessionTitle).toHaveBeenCalledWith({
@@ -179,7 +250,7 @@ describe("ChatLayout", () => {
 
   it("uses the model selected in chat for the next turn", async () => {
     const client = makeClient();
-    render(<ChatLayout client={client} />);
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
     fireEvent.change(await screen.findByLabelText(/model/i), {
       target: { value: "qwen2.5:7b" },
@@ -187,7 +258,7 @@ describe("ChatLayout", () => {
     fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
       target: { value: "整理事故时间线" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^Search$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
 
     await waitFor(() => {
       expect(client.startTurn).toHaveBeenCalledWith({
@@ -195,66 +266,53 @@ describe("ChatLayout", () => {
         query: "整理事故时间线",
         model: "qwen2.5:7b",
         includeWeb: true,
+        contextNodes: [],
       });
     });
   });
 
-  it("synthesizes with the accepted cluster set", async () => {
+  it("adds a searched node as context for the next message", async () => {
     const client = makeClient();
-    vi.mocked(client.startTurn)
-      .mockResolvedValueOnce({
-        turn: {
-          state: "ready",
-          data: {
-            state: "awaiting_source_confirmation",
-            clusters: [
-              {
-                clusterId: "workspace:事故/照片",
-                title: "事故/照片",
-                sourceKind: "workspace",
-                status: "candidate",
-                summary: "2 sources",
-                score: 0.9,
-                sources: [],
-              },
-            ],
-            answer: null,
-            citations: [],
-            warnings: [],
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        turn: {
-          state: "ready",
-          data: {
-            state: "ready",
-            clusters: [],
-            answer: "事故发生在 3 月 1 日。",
-            citations: [],
-            warnings: [],
-          },
-        },
-      });
+    const searchClient = makeSearchClient();
+    render(
+      <ExplorerStoreProvider client={makeExplorerClient()}>
+        <ChatLayout client={client} searchClient={searchClient} />
+      </ExplorerStoreProvider>
+    );
 
-    render(<ChatLayout client={client} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add context" }));
+    fireEvent.change(screen.getByPlaceholderText(/Search notes/i), {
+      target: { value: "事故报告" },
+    });
+    fireEvent.click(await screen.findByRole("option", { name: /事故报告/ }));
+    await waitFor(() => {
+      expect(searchClient.nodeContent).toHaveBeenCalledWith("n1");
+    });
+    expect(await screen.findByText(/1 context/)).toBeInTheDocument();
+
     fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
       target: { value: "整理事故时间线" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^Search$/i }));
-    fireEvent.click(await screen.findByText("事故/照片"));
-    fireEvent.click(screen.getByRole("button", { name: /Synthesize/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
 
     await waitFor(() => {
-      expect(client.startTurn).toHaveBeenLastCalledWith({
+      expect(client.startTurn).toHaveBeenCalledWith({
         sessionId: "s1",
         query: "整理事故时间线",
         model: "llama3.2",
-        acceptedClusterIds: ["workspace:事故/照片"],
         includeWeb: true,
+        contextNodes: [
+          {
+            nodeId: "n1",
+            title: "事故报告",
+            kind: "note",
+            path: "事故/报告.md",
+            snippet: "3 月 1 日事故现场记录",
+            content: "完整事故报告内容",
+          },
+        ],
       });
     });
-    expect(await screen.findByText(/3 月 1 日/)).toBeInTheDocument();
   });
 
   it("does not duplicate a freshly persisted assistant answer", async () => {
@@ -287,49 +345,24 @@ describe("ChatLayout", () => {
           },
         ],
       });
-    vi.mocked(client.startTurn)
-      .mockResolvedValueOnce({
-        turn: {
+    vi.mocked(client.startTurn).mockResolvedValueOnce({
+      turn: {
+        state: "ready",
+        data: {
           state: "ready",
-          data: {
-            state: "awaiting_source_confirmation",
-            clusters: [
-              {
-                clusterId: "workspace:事故/照片",
-                title: "事故/照片",
-                sourceKind: "workspace",
-                status: "candidate",
-                summary: "2 sources",
-                score: 0.9,
-                sources: [],
-              },
-            ],
-            answer: null,
-            citations: [],
-            warnings: [],
-          },
+          clusters: [],
+          answer: "事故发生在 3 月 1 日。",
+          citations: [],
+          warnings: [],
         },
-      })
-      .mockResolvedValueOnce({
-        turn: {
-          state: "ready",
-          data: {
-            state: "ready",
-            clusters: [],
-            answer: "事故发生在 3 月 1 日。",
-            citations: [],
-            warnings: [],
-          },
-        },
-      });
+      },
+    });
 
-    render(<ChatLayout client={client} />);
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
     fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
       target: { value: "整理事故时间线" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^Search$/i }));
-    fireEvent.click(await screen.findByText("事故/照片"));
-    fireEvent.click(screen.getByRole("button", { name: /Synthesize/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
 
     await waitFor(() => {
       expect(screen.getAllByText("事故发生在 3 月 1 日。")).toHaveLength(1);
@@ -354,7 +387,7 @@ describe("ChatLayout", () => {
       clusters: [],
     });
 
-    render(<ChatLayout client={client} />);
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
     expect(screen.queryByRole("button", { name: /Delete chat Research chat/i })).not.toBeInTheDocument();
     fireEvent.contextMenu(await screen.findByRole("button", { name: "Research chat" }), {
@@ -396,7 +429,7 @@ describe("ChatLayout", () => {
       clusters: [],
     }));
 
-    render(<ChatLayout client={client} />);
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
     fireEvent.contextMenu(await screen.findByRole("button", { name: "First chat" }), {
       clientX: 120,

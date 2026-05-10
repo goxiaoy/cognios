@@ -13,12 +13,23 @@ from ..web_search.brave import BraveWebSearchProvider
 
 
 @dataclass(frozen=True)
+class ChatContextNode:
+    node_id: str
+    title: str
+    kind: str | None = None
+    path: str | None = None
+    snippet: str | None = None
+    content: str | None = None
+
+
+@dataclass(frozen=True)
 class ChatTurnRequest:
     query: str
     messages: list[ChatMessage] = field(default_factory=list)
     accepted_cluster_ids: list[str] = field(default_factory=list)
     include_web: bool = True
     model: str | None = None
+    context_nodes: list[ChatContextNode] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -61,16 +72,13 @@ class ChatOrchestrator:
             include_web=request.include_web,
         )
         clusters = cluster_sources(sources)
-        if not request.accepted_cluster_ids:
-            return ChatTurnResponse(
-                state="awaiting_source_confirmation",
-                clusters=clusters,
-                warnings=warnings,
-            )
-        accepted = [
-            cluster for cluster in clusters if cluster.cluster_id in set(request.accepted_cluster_ids)
-        ]
-        if not accepted:
+        if request.accepted_cluster_ids:
+            accepted = [
+                cluster for cluster in clusters if cluster.cluster_id in set(request.accepted_cluster_ids)
+            ]
+        else:
+            accepted = clusters
+        if request.accepted_cluster_ids and not accepted:
             return ChatTurnResponse(
                 state="needs_redirect",
                 clusters=clusters,
@@ -82,7 +90,10 @@ class ChatOrchestrator:
                 clusters=clusters,
                 warnings=[*warnings, "chat provider unavailable"],
             )
-        context = [_cluster_context(cluster) for cluster in accepted]
+        context = [
+            *[_manual_context(node) for node in request.context_nodes],
+            *[_cluster_context(cluster) for cluster in accepted],
+        ]
         messages = request.messages or [ChatMessage(role="user", content=request.query)]
         try:
             generation = self._chat_provider.generate(
@@ -99,6 +110,13 @@ class ChatOrchestrator:
                 warnings=[*warnings, str(err)],
             )
         citations = [
+            {
+                "sourceKind": "workspace",
+                "title": node.title,
+                "citation": node.node_id,
+            }
+            for node in request.context_nodes
+        ] + [
             {
                 "sourceKind": source.source_kind,
                 "title": source.title,
@@ -130,6 +148,18 @@ def _cluster_context(cluster: SourceCluster) -> str:
     lines = [f"Cluster: {cluster.title}", cluster.summary]
     for source in cluster.sources:
         lines.append(f"- [{source.source_kind}] {source.title}: {source.snippet} ({source.citation})")
+    return "\n".join(lines)
+
+
+def _manual_context(node: ChatContextNode) -> str:
+    lines = [f"User-attached node: {node.title}"]
+    if node.kind:
+        lines.append(f"Kind: {node.kind}")
+    if node.path:
+        lines.append(f"Path: {node.path}")
+    body = (node.content or node.snippet or "").strip()
+    if body:
+        lines.append(body)
     return "\n".join(lines)
 
 

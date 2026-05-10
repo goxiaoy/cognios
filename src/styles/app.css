@@ -5604,15 +5604,14 @@ body.is-resizing-pane {
 
 .chat-layout {
   display: grid;
-  grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr) minmax(16rem, 22rem);
+  grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr);
   gap: 1rem;
   height: 100%;
   min-height: 0;
 }
 
 .chat-session-list,
-.chat-main,
-.chat-clusters {
+.chat-main {
   min-height: 0;
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--paper) 88%, white 12%);
@@ -5660,8 +5659,8 @@ body.is-resizing-pane {
 }
 
 .chat-session-empty,
-.chat-source-empty,
-.chat-composer-meta {
+.chat-composer-meta,
+.chat-context-status {
   margin: 0;
   color: var(--muted);
   font: 500 0.72rem var(--font-mono);
@@ -5883,84 +5882,6 @@ button.chat-session-item:not(:disabled):hover {
   text-transform: uppercase;
 }
 
-.chat-clusters {
-  overflow: auto;
-  padding: 0.75rem;
-}
-
-.chat-source-head span {
-  color: var(--muted);
-  font: 600 0.68rem var(--font-mono);
-}
-
-.chat-cluster-item {
-  display: grid;
-  gap: 0.35rem;
-  width: 100%;
-  margin-bottom: 0.45rem;
-  padding: 0.7rem;
-  border-color: var(--line);
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  border-radius: var(--radius-sm);
-}
-
-button.chat-cluster-item:not(:disabled):hover {
-  background: var(--paper-2);
-  border-color: var(--line-2);
-  box-shadow: none;
-}
-
-button.chat-cluster-item.is-accepted {
-  border-color: color-mix(in srgb, var(--accent) 72%, var(--line));
-  background: var(--paper);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-
-button.chat-cluster-item.is-accepted:not(:disabled):hover {
-  border-color: color-mix(in srgb, var(--accent) 72%, var(--line));
-  background: var(--paper);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-
-.chat-cluster-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 1rem;
-  align-items: start;
-  gap: 0.5rem;
-}
-
-.chat-cluster-title,
-.chat-cluster-kind,
-.chat-cluster-summary {
-  display: block;
-}
-
-.chat-cluster-title {
-  font-weight: 650;
-  line-height: 1.3;
-}
-
-.chat-cluster-check {
-  display: inline-grid;
-  place-items: center;
-  width: 1rem;
-  height: 1rem;
-  color: var(--accent-ink);
-}
-
-.chat-cluster-kind {
-  color: var(--accent-ink);
-  font: 600 0.68rem var(--font-mono);
-  text-transform: uppercase;
-}
-
-.chat-cluster-summary {
-  color: var(--ink-2);
-  font-size: 0.82rem;
-}
-
 .chat-composer {
   grid-row: 4;
   display: grid;
@@ -5970,6 +5891,58 @@ button.chat-cluster-item.is-accepted:not(:disabled):hover {
   border: 1px solid var(--line);
   background: var(--paper);
   border-radius: var(--radius-sm);
+}
+
+.chat-context-area {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.chat-context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.chat-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  min-height: 1.75rem;
+  padding: 0.25rem 0.35rem 0.25rem 0.5rem;
+  border: 1px solid var(--line);
+  background: var(--paper-2);
+  color: var(--ink);
+  border-radius: var(--radius-sm);
+  font: 500 0.76rem var(--font-mono);
+}
+
+.chat-context-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-context-chip button,
+.chat-context-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+
+.chat-context-chip button:not(:disabled):hover,
+button.chat-context-toggle:not(:disabled):hover {
+  background: var(--paper-2);
+  border-color: var(--line-2);
+  color: var(--ink);
+  box-shadow: none;
 }
 
 .chat-composer textarea {
@@ -6008,13 +5981,16 @@ button.chat-cluster-item.is-accepted:not(:disabled):hover {
   gap: 0.45rem;
 }
 
-.chat-secondary-action,
+.chat-context-toggle,
 .chat-primary-action {
   min-height: 2rem;
   border-radius: var(--radius-sm);
 }
 
 .chat-primary-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   border-color: var(--accent);
   background: var(--accent);
   color: white;
@@ -6039,8 +6015,7 @@ button.chat-cluster-item.is-accepted:not(:disabled):hover {
     min-height: 8rem;
   }
 
-  .chat-main,
-  .chat-clusters {
+  .chat-main {
     min-height: 20rem;
   }
 

@@ -12,8 +12,8 @@ use crate::infrastructure::db::chat_repository::{
 };
 use crate::services::chat::live_note::update_live_note;
 use crate::services::search::{
-    ChatModelsResponseDto, ChatProviderTestRequestDto, ChatTurnMessageDto, ChatTurnRequestDto,
-    ChatTurnResponseDto, SidecarEnvelope, SidecarEnvelopeState,
+    ChatContextNodeDto, ChatModelsResponseDto, ChatProviderTestRequestDto, ChatTurnMessageDto,
+    ChatTurnRequestDto, ChatTurnResponseDto, SidecarEnvelope, SidecarEnvelopeState,
 };
 use crate::AppState;
 
@@ -34,6 +34,8 @@ pub struct StartChatTurnInput {
     pub accepted_cluster_ids: Vec<String>,
     #[serde(default = "default_true")]
     pub include_web: bool,
+    #[serde(default)]
+    pub context_nodes: Vec<ChatContextNodeDto>,
 }
 
 #[derive(Debug, Serialize)]
@@ -170,29 +172,56 @@ pub async fn start_chat_turn(
     let user_content = input.query.clone();
     let should_persist_user_message = accepted_cluster_ids.is_empty();
     if should_persist_user_message {
+        let context_metadata: Vec<serde_json::Value> = input
+            .context_nodes
+            .iter()
+            .map(|node| {
+                serde_json::json!({
+                    "nodeId": node.node_id,
+                    "title": node.title,
+                    "kind": node.kind,
+                    "path": node.path,
+                })
+            })
+            .collect();
         append_message(
             &conn,
             &AppendChatMessageInput {
                 session_id: input.session_id.clone(),
                 role: "user".into(),
                 body: user_content.clone(),
-                metadata_json: Some(r#"{"stage":"submitted"}"#.into()),
+                metadata_json: Some(
+                    serde_json::json!({
+                        "stage": "submitted",
+                        "contextNodes": context_metadata,
+                    })
+                    .to_string(),
+                ),
             },
         )
         .map_err(|error| error.to_string())?;
     }
+    let detail = get_session_detail(&conn, &input.session_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "chat session does not exist".to_string())?;
+    let messages = detail
+        .messages
+        .into_iter()
+        .map(|message| ChatTurnMessageDto {
+            role: message.role,
+            content: message.body,
+        })
+        .collect();
 
     let turn = state
         .search_client
         .chat_turn(&ChatTurnRequestDto {
             query: input.query,
-            messages: vec![ChatTurnMessageDto {
-                role: "user".into(),
-                content: user_content,
-            }],
+            messages,
             accepted_cluster_ids,
             include_web: input.include_web,
             model: input.model,
+            context_nodes: input.context_nodes,
         })
         .await;
 
