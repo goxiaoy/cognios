@@ -103,6 +103,8 @@ describe("HomeDashboard", () => {
     expect(await screen.findByText("Indexed items")).toBeInTheDocument();
     expect(screen.getByText("1,234")).toBeInTheDocument();
     expect(screen.getByText("3 / 4")).toBeInTheDocument();
+    expect(screen.queryByText("Model roles")).not.toBeInTheDocument();
+    expect(screen.queryByText("Engines")).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText("Recent indexing")).toBeInTheDocument();
@@ -111,6 +113,7 @@ describe("HomeDashboard", () => {
       expect(screen.getByText("20")).toBeInTheDocument();
     });
     expect(client.observability).toHaveBeenCalledWith({ recentDays: 30 });
+    expect(client.settings).not.toHaveBeenCalled();
   });
 
   it("reloads recent indexing when the range changes", async () => {

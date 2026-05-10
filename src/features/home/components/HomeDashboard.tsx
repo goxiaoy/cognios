@@ -2,12 +2,10 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   Boxes,
-  Cpu,
   Database,
   Download,
   Gauge,
   Search,
-  Zap,
 } from "lucide-react";
 
 import type {
@@ -16,11 +14,9 @@ import type {
   ModelDownloadEvent,
   ModelsStatus,
   SearchObservability,
-  SearchSettings,
   SidecarEnvelope,
 } from "../../../lib/contracts/search";
 import type { SearchClient } from "../../search/types/search";
-import { PROVIDER_PRESETS } from "../../settings/data/providerPresets";
 import { useModelDownloadProgress } from "../../settings/hooks/useModelDownloadProgress";
 import { useSearchSubsystemStatus } from "../../settings/hooks/useSearchSubsystemStatus";
 
@@ -31,38 +27,10 @@ type RecentIndexWindow = (typeof RECENT_INDEX_WINDOWS)[number];
 export function HomeDashboard({ client }: { client: SearchClient }) {
   const { models, indexing } = useSearchSubsystemStatus(client);
   const progress = useModelDownloadProgress();
-  const [settings, setSettings] = useState<SearchSettings | null>(null);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [observability, setObservability] =
     useState<SidecarEnvelope<SearchObservability> | null>(null);
   const [recentIndexDays, setRecentIndexDays] =
     useState<RecentIndexWindow>(30);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadSettings() {
-      try {
-        const env = await client.settings();
-        if (cancelled) return;
-        if (env.state === "ready" && env.data) {
-          setSettings(env.data);
-          setSettingsError(null);
-          return;
-        }
-        if (env.state === "unavailable") {
-          setSettingsError(env.error ?? "Settings unavailable.");
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setSettingsError(err instanceof Error ? err.message : String(err));
-        }
-      }
-    }
-    void loadSettings();
-    return () => {
-      cancelled = true;
-    };
-  }, [client]);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,9 +61,6 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
   const indexData = readyData(indexing);
   const modelData = readyData(models);
   const observabilityData = readyData(observability);
-  const configuredProviders = settings ? countConfigured(settings) : null;
-  const totalProviders = PROVIDER_PRESETS.length;
-  const modelCounts = modelReadiness(modelData);
   const enhancement = enhancementDisplay(indexData, modelData);
   const activeDownloads = useMemo(
     () =>
@@ -126,26 +91,6 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
           value={enhancement.value}
           sub={enhancement.sub}
           tone={enhancement.tone}
-        />
-        <StatTile
-          icon={<Cpu size={17} aria-hidden="true" />}
-          label="Model roles"
-          value={
-            modelCounts.total === null
-              ? "—"
-              : `${modelCounts.ready} / ${modelCounts.total}`
-          }
-          sub={modelCounts.total === null ? statusCopy(models) : "ready"}
-        />
-        <StatTile
-          icon={<Zap size={17} aria-hidden="true" />}
-          label="Engines"
-          value={
-            configuredProviders === null
-              ? "—"
-              : `${configuredProviders} / ${totalProviders}`
-          }
-          sub={settingsError ?? "configured"}
         />
       </section>
 
@@ -349,25 +294,6 @@ function statusCopy<T>(env: SidecarEnvelope<T> | null): string {
   if (env.state === "initialising") return "starting";
   if (env.state === "unavailable") return env.error ?? "unavailable";
   return "loading";
-}
-
-function countConfigured(settings: SearchSettings): number {
-  return PROVIDER_PRESETS.reduce((count, preset) => {
-    if (preset.authKind === "none") return count + 1;
-    return settings.providers[preset.providerId] !== undefined ? count + 1 : count;
-  }, 0);
-}
-
-function modelReadiness(models: ModelsStatus | null): {
-  ready: number;
-  total: number | null;
-} {
-  if (!models) return { ready: 0, total: null };
-  const roles = Object.values(models.roles);
-  return {
-    ready: roles.filter((role) => role.state === "ready").length,
-    total: roles.length,
-  };
 }
 
 function activeIndexJobs(indexing: IndexStatus): number {
