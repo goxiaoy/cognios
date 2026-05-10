@@ -113,13 +113,36 @@ export interface ChatTurnResponse {
   provider?: unknown;
 }
 
+export interface ChatModel {
+  id: string;
+  name: string;
+}
+
+export interface ChatModelsResponse {
+  state:
+    | "ready"
+    | "provider_unavailable"
+    | "provider_error"
+    | string;
+  providerId?: string | null;
+  models: ChatModel[];
+  cached: boolean;
+  cacheExpiresAt?: number | null;
+  warnings: string[];
+}
+
 export interface StartChatTurnInput {
   sessionId: string;
   query: string;
+  model?: string | null;
   acceptedClusterIds?: string[];
   includeWeb?: boolean;
 }
 
 export interface StartChatTurnResult {
   turn: import("./search").SidecarEnvelope<ChatTurnResponse>;
+}
+
+export interface GetChatModelsResult {
+  models: import("./search").SidecarEnvelope<ChatModelsResponse>;
 }

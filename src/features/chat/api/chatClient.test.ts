@@ -108,4 +108,23 @@ describe("chatClient", () => {
       },
     });
   });
+
+  it("loads chat models through the Tauri command", async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      models: {
+        state: "ready",
+        data: {
+          state: "ready",
+          providerId: "local-ollama",
+          models: [{ id: "llama3.2", name: "llama3.2" }],
+          cached: false,
+          warnings: [],
+        },
+      },
+    });
+
+    await chatClient.getModels();
+
+    expect(mockedInvoke).toHaveBeenCalledWith("get_chat_models");
+  });
 });

@@ -9,6 +9,7 @@ import type {
   ChatSourceCluster,
   CreateChatSessionInput,
   DeleteChatSessionResult,
+  GetChatModelsResult,
   RecordChatClusterInput,
   StartChatTurnInput,
   StartChatTurnResult,
@@ -175,6 +176,10 @@ export async function startChatTurn(
   input: StartChatTurnInput
 ): Promise<StartChatTurnResult> {
   return invoke<StartChatTurnResult>("start_chat_turn", { input });
+}
+
+export async function getChatModels(): Promise<GetChatModelsResult> {
+  return invoke<GetChatModelsResult>("get_chat_models");
 }
 
 // ---- search-sidecar bridge ------------------------------------------------

@@ -408,6 +408,8 @@ pub struct ChatTurnRequestDto {
     pub accepted_cluster_ids: Vec<String>,
     #[serde(default = "default_true", alias = "includeWeb")]
     pub include_web: bool,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -458,6 +460,29 @@ pub struct ChatTurnResponseDto {
     pub warnings: Vec<String>,
     #[serde(default)]
     pub provider: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct ChatModelDto {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct ChatModelsResponseDto {
+    pub state: String,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub models: Vec<ChatModelDto>,
+    #[serde(default)]
+    pub cached: bool,
+    #[serde(default)]
+    pub cache_expires_at: Option<f64>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -690,6 +715,10 @@ impl SearchSidecarClient {
         body: &ChatTurnRequestDto,
     ) -> SidecarEnvelope<ChatTurnResponseDto> {
         self.post_envelope("/chat/turns", body).await
+    }
+
+    pub async fn chat_models(&self) -> SidecarEnvelope<ChatModelsResponseDto> {
+        self.get_envelope("/chat/models").await
     }
 
     /// Subscribe to the SSE stream from `POST /models/download/{role}`.

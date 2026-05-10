@@ -307,6 +307,7 @@ pub fn run() {
             commands::chat::record_chat_cluster,
             commands::chat::bind_chat_note,
             commands::chat::start_chat_turn,
+            commands::chat::get_chat_models,
             commands::search::search_query,
             commands::search::get_indexing_status,
             commands::search::get_node_indexing_status,

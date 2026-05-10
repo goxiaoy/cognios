@@ -3,6 +3,7 @@ import {
   bindChatNote,
   createChatSession,
   deleteChatSession,
+  getChatModels,
   getChatSession,
   listChatSessions,
   recordChatCluster,
@@ -16,6 +17,7 @@ import type {
   ChatSessionDetail,
   ChatSessionInput,
   ChatSourceCluster,
+  GetChatModelsResult,
   CreateChatSessionInput,
   DeleteChatSessionResult,
   RecordChatClusterInput,
@@ -32,6 +34,7 @@ export interface ChatClient {
   recordCluster(input: RecordChatClusterInput): Promise<ChatSourceCluster>;
   bindNote(input: BindChatNoteInput): Promise<ChatSession>;
   startTurn(input: StartChatTurnInput): Promise<StartChatTurnResult>;
+  getModels(): Promise<GetChatModelsResult>;
 }
 
 export const chatClient: ChatClient = {
@@ -43,4 +46,5 @@ export const chatClient: ChatClient = {
   recordCluster: recordChatCluster,
   bindNote: bindChatNote,
   startTurn: startChatTurn,
+  getModels: getChatModels,
 };

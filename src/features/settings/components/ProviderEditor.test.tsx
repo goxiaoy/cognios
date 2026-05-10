@@ -47,7 +47,7 @@ describe("ProviderEditor", () => {
     expect(screen.getByText(/no credentials required/i)).toBeInTheDocument();
   });
 
-  it("lets configurable local providers persist endpoint and model settings", async () => {
+  it("lets configurable local providers persist endpoint settings", async () => {
     const updateSettings = vi.fn().mockResolvedValue({
       state: "ready",
       data: baseSettings(),
@@ -67,9 +67,6 @@ describe("ProviderEditor", () => {
     fireEvent.change(screen.getByLabelText(/base url/i), {
       target: { value: "http://localhost:11435" },
     });
-    fireEvent.change(screen.getByLabelText(/chat model/i), {
-      target: { value: "qwen2.5:7b" },
-    });
     fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
@@ -81,7 +78,7 @@ describe("ProviderEditor", () => {
       enabled: true,
       apiKeyRef: null,
       baseUrl: "http://localhost:11435",
-      modelPerCapability: { chat: "qwen2.5:7b" },
+      modelPerCapability: {},
     });
     expect(onSettingsChange).toHaveBeenCalled();
   });

@@ -18,6 +18,7 @@ class ChatMessage:
 class ChatGenerationRequest:
     messages: list[ChatMessage]
     context: list[str] = field(default_factory=list)
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -30,3 +31,17 @@ class ChatGeneration:
 
 class ChatProviderError(RuntimeError):
     """Recoverable provider failure suitable for typed Chat status surfaces."""
+
+
+@dataclass(frozen=True)
+class ChatModel:
+    id: str
+    name: str
+
+
+@dataclass(frozen=True)
+class ChatModelList:
+    provider_id: str
+    models: list[ChatModel]
+    cached: bool
+    cache_expires_at: float | None = None

@@ -4,6 +4,7 @@ import { Check, CircleAlert, FileText, Globe, MessageSquare, Plus, Search } from
 import type {
   ChatSession,
   ChatSessionDetail,
+  ChatModel,
   ChatTurnCluster,
   ChatTurnResponse,
 } from "../../../lib/contracts/chat";
@@ -16,12 +17,27 @@ export function ChatLayout({ client }: { client: ChatClient }) {
   const [query, setQuery] = useState("");
   const [turn, setTurn] = useState<ChatTurnResponse | null>(null);
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
+  const [models, setModels] = useState<ChatModel[]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshSessions();
+    void refreshModels();
   }, []);
+
+  async function refreshModels() {
+    try {
+      const result = await client.getModels();
+      const data = unwrapEnvelope(result.models);
+      if (!data || data.state !== "ready") return;
+      setModels(data.models);
+      setSelectedModel((current) => current || data.models[0]?.id || "");
+    } catch {
+      setModels([]);
+    }
+  }
 
   async function refreshSessions(preferredId?: string) {
     const next = await client.listSessions();
@@ -59,6 +75,7 @@ export function ChatLayout({ client }: { client: ChatClient }) {
       const result = await client.startTurn({
         sessionId: session.session.id,
         query: query.trim(),
+        model: selectedModel || null,
         includeWeb: true,
       });
       const data = unwrapEnvelope(result.turn);
@@ -84,6 +101,7 @@ export function ChatLayout({ client }: { client: ChatClient }) {
       const result = await client.startTurn({
         sessionId: active.session.id,
         query: query.trim(),
+        model: selectedModel || null,
         acceptedClusterIds: [...accepted],
         includeWeb: true,
       });
@@ -135,6 +153,21 @@ export function ChatLayout({ client }: { client: ChatClient }) {
       <main className="chat-main">
         <div className="chat-status-row">
           <span className="chat-status-pill"><MessageSquare size={14} /> {active ? active.session.title : "New chat"}</span>
+          {models.length > 0 ? (
+            <label className="chat-model-picker">
+              Model
+              <select
+                value={selectedModel}
+                onChange={(event) => setSelectedModel(event.target.value)}
+              >
+                {models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <span className="chat-status-pill"><Globe size={14} /> Web sources stay session-scoped</span>
           {active?.session.boundNoteId ? (
             <span className="chat-status-pill"><FileText size={14} /> Live Note bound</span>

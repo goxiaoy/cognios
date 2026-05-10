@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .types import ChatGeneration, ChatGenerationRequest
+from .types import ChatGeneration, ChatGenerationRequest, ChatModelList
 
 
 class ChatProvider(Protocol):
@@ -13,3 +13,6 @@ class ChatProvider(Protocol):
 
     def generate(self, request: ChatGenerationRequest) -> ChatGeneration:
         """Generate one assistant response from normalized chat messages."""
+
+    def list_models(self) -> ChatModelList:
+        """Return provider-supported chat models, preferably cached."""

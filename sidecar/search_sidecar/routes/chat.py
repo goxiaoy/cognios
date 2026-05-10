@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..chat.orchestrator import ChatOrchestrator, ChatTurnRequest
-from ..chat.types import ChatMessage
+from ..chat.types import ChatMessage, ChatProviderError
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -21,6 +21,7 @@ class ChatTurnPayload(BaseModel):
     messages: list[ChatMessagePayload] = Field(default_factory=list)
     accepted_cluster_ids: list[str] = Field(default_factory=list)
     include_web: bool = True
+    model: str | None = None
 
 
 def _get_orchestrator(request: Request) -> ChatOrchestrator:
@@ -31,6 +32,37 @@ def _get_orchestrator(request: Request) -> ChatOrchestrator:
             detail="chat_orchestrator not configured on app.state",
         )
     return orchestrator
+
+
+@router.get("/models")
+def get_chat_models(request: Request) -> dict:
+    orchestrator = _get_orchestrator(request)
+    try:
+        result = orchestrator.list_models()
+    except ChatProviderError as err:
+        return {
+            "state": "provider_error",
+            "provider_id": None,
+            "models": [],
+            "cached": False,
+            "warnings": [str(err)],
+        }
+    if result is None:
+        return {
+            "state": "provider_unavailable",
+            "provider_id": None,
+            "models": [],
+            "cached": False,
+            "warnings": ["chat provider unavailable"],
+        }
+    return {
+        "state": "ready",
+        "provider_id": result.provider_id,
+        "models": [model.__dict__ for model in result.models],
+        "cached": result.cached,
+        "cache_expires_at": result.cache_expires_at,
+        "warnings": [],
+    }
 
 
 @router.post("/turns")
@@ -46,6 +78,7 @@ def post_chat_turn(body: ChatTurnPayload, request: Request) -> dict:
             messages=messages,
             accepted_cluster_ids=body.accepted_cluster_ids,
             include_web=body.include_web,
+            model=body.model,
         )
     )
     return response.to_dict()

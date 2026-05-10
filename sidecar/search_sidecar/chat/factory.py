@@ -20,13 +20,14 @@ def select_chat_provider(settings: SearchSettings) -> ChatProvider | None:
     preset = PRESETS.get(provider.provider_id)
     if preset is None or "chat" not in preset.capabilities:
         return None
+    base_url = provider.base_url or preset.base_url
+    if provider.provider_id == "local-ollama":
+        model = preset.default_model_per_capability["chat"]
+        return OllamaChatProvider(base_url=base_url or "http://127.0.0.1:11434", model=model)
     model = (
         provider.model_per_capability.get("chat")
         or preset.default_model_per_capability["chat"]
     )
-    base_url = provider.base_url or preset.base_url
-    if provider.provider_id == "local-ollama":
-        return OllamaChatProvider(base_url=base_url or "http://127.0.0.1:11434", model=model)
     if preset.auth_kind == "api-key" and base_url:
         return OpenAICompatChatProvider(
             provider_id=provider.provider_id,

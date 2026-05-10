@@ -45,12 +45,6 @@ export function ProviderEditor({
   const [secret, setSecret] = useState("");
   const [hasSecret, setHasSecret] = useState<boolean>(false);
   const [baseUrl, setBaseUrl] = useState(config?.baseUrl ?? preset.baseUrl ?? "");
-  const [modelPerCapability, setModelPerCapability] = useState<
-    Record<string, string>
-  >({
-    ...preset.defaultModelPerCapability,
-    ...(config?.modelPerCapability ?? {}),
-  });
   const [pendingSecretForConsent, setPendingSecretForConsent] = useState<
     string | null
   >(null);
@@ -170,12 +164,7 @@ export function ProviderEditor({
           enabled: true,
           apiKeyRef: config?.apiKeyRef ?? null,
           baseUrl: baseUrl.trim() || null,
-          modelPerCapability: Object.fromEntries(
-            Object.entries(modelPerCapability).map(([capability, model]) => [
-              capability,
-              model.trim(),
-            ])
-          ),
+          modelPerCapability: {},
         },
       };
       const env = await client.updateSettings({
@@ -242,23 +231,6 @@ export function ProviderEditor({
               placeholder={preset.baseUrl ?? "http://127.0.0.1:11434"}
             />
           </label>
-          {preset.capabilities.map((capability) => (
-            <label key={capability} className="provider-editor-key-label">
-              {capability} model
-              <input
-                type="text"
-                className="provider-editor-key-input"
-                value={modelPerCapability[capability] ?? ""}
-                onChange={(e) =>
-                  setModelPerCapability((current) => ({
-                    ...current,
-                    [capability]: e.target.value,
-                  }))
-                }
-                placeholder={preset.defaultModelPerCapability[capability] ?? ""}
-              />
-            </label>
-          ))}
         </section>
       ) : (
         <p className="provider-editor-info">

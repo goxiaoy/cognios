@@ -7,6 +7,7 @@ from search_sidecar.chat.orchestrator import ChatOrchestrator
 from search_sidecar.chat.retrieval import ChatRetrieval
 from search_sidecar.chat.sources import ChatSource
 from search_sidecar.chat.types import ChatGeneration, ChatGenerationRequest
+from search_sidecar.chat.types import ChatModel, ChatModelList
 
 TOKEN = "0123456789abcdef" * 4
 
@@ -35,10 +36,20 @@ class _Provider:
 
     def generate(self, request: ChatGenerationRequest) -> ChatGeneration:
         assert request.context
+        if request.model:
+            self.model = request.model
         return ChatGeneration(
             content="answer",
             provider_id=self.provider_id,
             model=self.model,
+        )
+
+    def list_models(self) -> ChatModelList:
+        return ChatModelList(
+            provider_id=self.provider_id,
+            models=[ChatModel(id="test-model", name="test-model")],
+            cached=False,
+            cache_expires_at=123.0,
         )
 
 
@@ -80,3 +91,41 @@ def test_chat_turn_route_generates_after_cluster_acceptance():
     assert body["state"] == "ready"
     assert body["answer"] == "answer"
     assert body["citations"][0]["sourceKind"] == "workspace"
+
+
+def test_chat_turn_route_passes_selected_model_to_provider():
+    app = build_app(
+        token=TOKEN,
+        chat_orchestrator=ChatOrchestrator(retrieval=_Retrieval(), chat_provider=_Provider()),
+    )
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/chat/turns",
+            json={
+                "query": "事故",
+                "accepted_cluster_ids": ["workspace:事故/照片"],
+                "model": "qwen2.5:7b",
+            },
+            headers=_auth(),
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["provider"]["model"] == "qwen2.5:7b"
+
+
+def test_chat_models_route_returns_cached_provider_models():
+    app = build_app(
+        token=TOKEN,
+        chat_orchestrator=ChatOrchestrator(retrieval=_Retrieval(), chat_provider=_Provider()),
+    )
+
+    with TestClient(app) as client:
+        resp = client.get("/chat/models", headers=_auth())
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "ready"
+    assert body["provider_id"] == "test-provider"
+    assert body["models"] == [{"id": "test-model", "name": "test-model"}]
+    assert body["cache_expires_at"] == 123.0

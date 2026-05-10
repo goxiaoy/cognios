@@ -209,7 +209,7 @@ describe("SettingsLayout", () => {
     expect(dialog).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Local Ollama" })).toBeNull();
     expect(await screen.findByLabelText(/base url/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/chat model/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/chat model/i)).toBeNull();
   });
 
   it("removes the Local prefix from local model stage details", async () => {

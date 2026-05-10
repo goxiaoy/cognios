@@ -61,6 +61,7 @@ def test_default_settings_seeds_local_gte_and_semantic_search():
     assert "local-ollama" in s.providers
     assert s.providers["local-ollama"].enabled is True
     assert s.providers["local-ollama"].base_url == "http://127.0.0.1:11434"
+    assert s.providers["local-ollama"].model_per_capability == {}
     assert s.features["chat"].enabled is True
     assert s.features["chat"].provider_id == "local-ollama"
     assert s.features["web-search"].enabled is False

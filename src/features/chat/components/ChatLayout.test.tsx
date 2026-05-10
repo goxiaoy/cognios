@@ -30,6 +30,21 @@ function makeClient(): ChatClient {
     appendMessage: vi.fn(),
     recordCluster: vi.fn(),
     bindNote: vi.fn(),
+    getModels: vi.fn().mockResolvedValue({
+      models: {
+        state: "ready",
+        data: {
+          state: "ready",
+          providerId: "local-ollama",
+          models: [
+            { id: "llama3.2", name: "llama3.2" },
+            { id: "qwen2.5:7b", name: "qwen2.5:7b" },
+          ],
+          cached: false,
+          warnings: [],
+        },
+      },
+    }),
     startTurn: vi.fn().mockResolvedValue({
       turn: {
         state: "ready",
@@ -67,13 +82,37 @@ describe("ChatLayout", () => {
     fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
       target: { value: "整理事故时间线" },
     });
+    expect(await screen.findByLabelText(/model/i)).toHaveValue("llama3.2");
     fireEvent.click(screen.getByRole("button", { name: /Search clusters/i }));
 
     expect(await screen.findByText("事故/照片")).toBeInTheDocument();
     expect(client.startTurn).toHaveBeenCalledWith({
       sessionId: "s1",
       query: "整理事故时间线",
+      model: "llama3.2",
       includeWeb: true,
+    });
+  });
+
+  it("uses the model selected in chat for the next turn", async () => {
+    const client = makeClient();
+    render(<ChatLayout client={client} />);
+
+    fireEvent.change(await screen.findByLabelText(/model/i), {
+      target: { value: "qwen2.5:7b" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+      target: { value: "整理事故时间线" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Search clusters/i }));
+
+    await waitFor(() => {
+      expect(client.startTurn).toHaveBeenCalledWith({
+        sessionId: "s1",
+        query: "整理事故时间线",
+        model: "qwen2.5:7b",
+        includeWeb: true,
+      });
     });
   });
 
@@ -127,6 +166,7 @@ describe("ChatLayout", () => {
       expect(client.startTurn).toHaveBeenLastCalledWith({
         sessionId: "s1",
         query: "整理事故时间线",
+        model: "llama3.2",
         acceptedClusterIds: ["workspace:事故/照片"],
         includeWeb: true,
       });

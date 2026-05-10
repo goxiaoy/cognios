@@ -11,8 +11,8 @@ use crate::infrastructure::db::chat_repository::{
 };
 use crate::services::chat::live_note::update_live_note;
 use crate::services::search::{
-    ChatTurnMessageDto, ChatTurnRequestDto, ChatTurnResponseDto, SidecarEnvelope,
-    SidecarEnvelopeState,
+    ChatModelsResponseDto, ChatTurnMessageDto, ChatTurnRequestDto, ChatTurnResponseDto,
+    SidecarEnvelope, SidecarEnvelopeState,
 };
 use crate::AppState;
 
@@ -28,6 +28,8 @@ pub struct StartChatTurnInput {
     pub session_id: String,
     pub query: String,
     #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
     pub accepted_cluster_ids: Vec<String>,
     #[serde(default = "default_true")]
     pub include_web: bool,
@@ -37,6 +39,12 @@ pub struct StartChatTurnInput {
 #[serde(rename_all = "camelCase")]
 pub struct StartChatTurnResult {
     pub turn: SidecarEnvelope<ChatTurnResponseDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetChatModelsResult {
+    pub models: SidecarEnvelope<ChatModelsResponseDto>,
 }
 
 #[tauri::command]
@@ -157,6 +165,7 @@ pub async fn start_chat_turn(
             }],
             accepted_cluster_ids,
             include_web: input.include_web,
+            model: input.model,
         })
         .await;
 
@@ -176,6 +185,13 @@ pub async fn start_chat_turn(
     }
 
     Ok(StartChatTurnResult { turn })
+}
+
+#[tauri::command]
+pub async fn get_chat_models(state: State<'_, AppState>) -> Result<GetChatModelsResult, String> {
+    Ok(GetChatModelsResult {
+        models: state.search_client.chat_models().await,
+    })
 }
 
 fn persist_turn_response(

@@ -192,7 +192,6 @@ def default_settings() -> SearchSettings:
                 provider_id="local-ollama",
                 enabled=True,
                 base_url="http://127.0.0.1:11434",
-                model_per_capability={"chat": "llama3.2"},
             ),
         },
         features={

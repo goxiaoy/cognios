@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 import httpx
 
-from .types import ChatGeneration, ChatGenerationRequest, ChatProviderError
+from .types import ChatGeneration, ChatGenerationRequest, ChatModel, ChatModelList, ChatProviderError
 
 _DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=30.0)
 
@@ -28,6 +28,7 @@ class OpenAICompatChatProvider:
         self._client = client or httpx.Client(timeout=_DEFAULT_TIMEOUT)
 
     def generate(self, request: ChatGenerationRequest) -> ChatGeneration:
+        model = request.model or self.model
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
         if request.context:
             messages.insert(
@@ -48,7 +49,7 @@ class OpenAICompatChatProvider:
                     "content": "Retrieved source context:\n\n" + "\n\n".join(request.context),
                 },
             )
-        payload: dict[str, Any] = {"model": self.model, "messages": messages}
+        payload: dict[str, Any] = {"model": model, "messages": messages}
         try:
             api_key = self._api_key_provider()
             response = self._client.post(
@@ -77,8 +78,16 @@ class OpenAICompatChatProvider:
         return ChatGeneration(
             content=content,
             provider_id=self.provider_id,
-            model=self.model,
+            model=model,
             usage=usage if isinstance(usage, dict) else None,
+        )
+
+    def list_models(self) -> ChatModelList:
+        return ChatModelList(
+            provider_id=self.provider_id,
+            models=[ChatModel(id=self.model, name=self.model)],
+            cached=True,
+            cache_expires_at=None,
         )
 
     def close(self) -> None:

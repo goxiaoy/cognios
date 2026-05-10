@@ -8,7 +8,7 @@ from .clustering import cluster_sources
 from .provider import ChatProvider
 from .retrieval import ChatRetrieval
 from .sources import SourceCluster
-from .types import ChatGenerationRequest, ChatMessage, ChatProviderError
+from .types import ChatGenerationRequest, ChatMessage, ChatModelList, ChatProviderError
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,7 @@ class ChatTurnRequest:
     messages: list[ChatMessage] = field(default_factory=list)
     accepted_cluster_ids: list[str] = field(default_factory=list)
     include_web: bool = True
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -75,7 +76,11 @@ class ChatOrchestrator:
         messages = request.messages or [ChatMessage(role="user", content=request.query)]
         try:
             generation = self._chat_provider.generate(
-                ChatGenerationRequest(messages=messages, context=context)
+                ChatGenerationRequest(
+                    messages=messages,
+                    context=context,
+                    model=request.model,
+                )
             )
         except ChatProviderError as err:
             return ChatTurnResponse(
@@ -104,6 +109,11 @@ class ChatOrchestrator:
                 "usage": generation.usage,
             },
         )
+
+    def list_models(self) -> ChatModelList | None:
+        if self._chat_provider is None:
+            return None
+        return self._chat_provider.list_models()
 
 
 def _cluster_context(cluster: SourceCluster) -> str:
