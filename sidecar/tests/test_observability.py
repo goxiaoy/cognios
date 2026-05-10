@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import sqlite3
 
 from fastapi.testclient import TestClient
 
@@ -120,6 +121,19 @@ def test_observability_store_persists_latency_samples(tmp_path: Path):
     assert summary["latency_trends"]["search"][-1]["p50_ms"] == 20
     assert summary["latency_trends"]["search"][-1]["p99_ms"] == 30
 
+    conn = sqlite3.connect(db_path)
+    try:
+        rollup = conn.execute(
+            """
+            SELECT count, sum, min, max
+            FROM observability_metric_rollups
+            WHERE metric = 'latency.search.duration_ms'
+            """
+        ).fetchone()
+    finally:
+        conn.close()
+    assert rollup == (2, 40, 10, 30)
+
 
 def test_observability_store_persists_windowed_token_usage(tmp_path: Path):
     db_path = tmp_path / "observability.db"
@@ -168,6 +182,99 @@ def test_observability_store_persists_windowed_token_usage(tmp_path: Path):
             "total_tokens": 25,
         }
     ]
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rollup = conn.execute(
+            """
+            SELECT SUM(count), SUM(sum)
+            FROM observability_metric_rollups
+            WHERE metric = 'llm.tokens.total'
+              AND provider_id = 'local-ollama'
+              AND model = 'llama3'
+            """
+        ).fetchone()
+    finally:
+        conn.close()
+    assert rollup == (2, 25)
+
+
+def test_observability_store_migrates_v1_samples_into_rollups(tmp_path: Path):
+    db_path = tmp_path / "observability.db"
+    occurred_at = datetime.now(timezone.utc).isoformat()
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE observability_samples (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              occurred_at TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              ok INTEGER NOT NULL DEFAULT 1,
+              duration_ms INTEGER,
+              provider_id TEXT,
+              model TEXT,
+              prompt_tokens INTEGER NOT NULL DEFAULT 0,
+              completion_tokens INTEGER NOT NULL DEFAULT 0,
+              total_tokens INTEGER NOT NULL DEFAULT 0
+            );
+            PRAGMA user_version = 1;
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO observability_samples (
+              occurred_at,
+              kind,
+              ok,
+              duration_ms,
+              provider_id,
+              model,
+              prompt_tokens,
+              completion_tokens,
+              total_tokens
+            )
+            VALUES (?, 'token_usage', 1, NULL, 'openai', 'gpt-test', 4, 6, 10)
+            """,
+            (occurred_at,),
+        )
+        conn.execute(
+            """
+            INSERT INTO observability_samples (
+              occurred_at,
+              kind,
+              ok,
+              duration_ms
+            )
+            VALUES (?, 'search', 1, 25)
+            """,
+            (occurred_at,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    store = open_observability_store(db_path)
+    try:
+        summary = store.summary(recent_days=7)
+    finally:
+        store.close()
+
+    assert summary["token_usage"][0]["total_tokens"] == 10
+    conn = sqlite3.connect(db_path)
+    try:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        duration_rollup = conn.execute(
+            """
+            SELECT count, sum, min, max
+            FROM observability_metric_rollups
+            WHERE metric = 'latency.search.duration_ms'
+            """
+        ).fetchone()
+    finally:
+        conn.close()
+    assert version == 2
+    assert duration_rollup == (1, 25, 25, 25)
 
 
 def test_observability_route_applies_recent_window_to_metrics(tmp_path: Path):

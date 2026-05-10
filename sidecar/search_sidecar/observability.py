@@ -22,9 +22,13 @@ from typing import Any
 
 MAX_DURATION_SAMPLES = 256
 OBSERVABILITY_RETENTION_DAYS = 90
-LATEST_OBSERVABILITY_SCHEMA_VERSION = 1
+LATEST_OBSERVABILITY_SCHEMA_VERSION = 2
 LATENCY_KINDS = ("search", "indexing", "enhancement", "model_download")
 TOKEN_USAGE_KIND = "token_usage"
+METRIC_LLM_REQUESTS = "llm.requests"
+METRIC_LLM_TOKENS_PROMPT = "llm.tokens.prompt"
+METRIC_LLM_TOKENS_COMPLETION = "llm.tokens.completion"
+METRIC_LLM_TOKENS_TOTAL = "llm.tokens.total"
 LOG = logging.getLogger("search_sidecar.observability")
 
 
@@ -95,6 +99,12 @@ class ObservabilityStore:
                     ok=ok,
                     duration_ms=int(elapsed_ms),
                 )
+                self._record_metric_rollup(
+                    occurred_at=occurred,
+                    metric=f"latency.{kind}.duration_ms",
+                    value=int(elapsed_ms),
+                    kind=kind,
+                )
                 self._prune_if_due()
 
     def record_usage(
@@ -144,6 +154,14 @@ class ObservabilityStore:
                     occurred_at=occurred,
                     kind=TOKEN_USAGE_KIND,
                     ok=True,
+                    provider_id=provider_id,
+                    model=model,
+                    prompt_tokens=prompt,
+                    completion_tokens=completion,
+                    total_tokens=total,
+                )
+                self._record_token_rollups(
+                    occurred_at=occurred,
                     provider_id=provider_id,
                     model=model,
                     prompt_tokens=prompt,
@@ -256,20 +274,26 @@ class ObservabilityStore:
             SELECT
               provider_id,
               model,
-              COUNT(*) AS requests,
-              SUM(prompt_tokens) AS prompt_tokens,
-              SUM(completion_tokens) AS completion_tokens,
-              SUM(total_tokens) AS total_tokens
-            FROM observability_samples
-            WHERE kind = ?
-              AND occurred_at >= ?
-              AND provider_id IS NOT NULL
-              AND model IS NOT NULL
+              SUM(CASE WHEN metric = ? THEN sum ELSE 0 END) AS requests,
+              SUM(CASE WHEN metric = ? THEN sum ELSE 0 END) AS prompt_tokens,
+              SUM(CASE WHEN metric = ? THEN sum ELSE 0 END) AS completion_tokens,
+              SUM(CASE WHEN metric = ? THEN sum ELSE 0 END) AS total_tokens
+            FROM observability_metric_rollups
+            WHERE bucket_size = 'day'
+              AND bucket_start >= ?
+              AND provider_id != ''
+              AND model != ''
             GROUP BY provider_id, model
             HAVING total_tokens > 0
             ORDER BY total_tokens DESC
             """,
-            (TOKEN_USAGE_KIND, _window_start_iso(recent_days)),
+            (
+                METRIC_LLM_REQUESTS,
+                METRIC_LLM_TOKENS_PROMPT,
+                METRIC_LLM_TOKENS_COMPLETION,
+                METRIC_LLM_TOKENS_TOTAL,
+                _window_start_iso(recent_days),
+            ),
         ).fetchall()
         return [
             {
@@ -325,6 +349,70 @@ class ObservabilityStore:
             ),
         )
 
+    def _record_token_rollups(
+        self,
+        *,
+        occurred_at: datetime,
+        provider_id: str,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+    ) -> None:
+        self._record_metric_rollup(
+            occurred_at=occurred_at,
+            metric=METRIC_LLM_REQUESTS,
+            value=1,
+            kind=TOKEN_USAGE_KIND,
+            provider_id=provider_id,
+            model=model,
+        )
+        self._record_metric_rollup(
+            occurred_at=occurred_at,
+            metric=METRIC_LLM_TOKENS_PROMPT,
+            value=prompt_tokens,
+            kind=TOKEN_USAGE_KIND,
+            provider_id=provider_id,
+            model=model,
+        )
+        self._record_metric_rollup(
+            occurred_at=occurred_at,
+            metric=METRIC_LLM_TOKENS_COMPLETION,
+            value=completion_tokens,
+            kind=TOKEN_USAGE_KIND,
+            provider_id=provider_id,
+            model=model,
+        )
+        self._record_metric_rollup(
+            occurred_at=occurred_at,
+            metric=METRIC_LLM_TOKENS_TOTAL,
+            value=total_tokens,
+            kind=TOKEN_USAGE_KIND,
+            provider_id=provider_id,
+            model=model,
+        )
+
+    def _record_metric_rollup(
+        self,
+        *,
+        occurred_at: datetime,
+        metric: str,
+        value: float,
+        kind: str = "",
+        provider_id: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        assert self._conn is not None
+        _upsert_metric_rollup(
+            self._conn,
+            occurred_at=occurred_at,
+            metric=metric,
+            value=value,
+            kind=kind,
+            provider_id=provider_id,
+            model=model,
+        )
+
     def _prune_if_due(self) -> None:
         if self._conn is None:
             return
@@ -353,6 +441,7 @@ def open_observability_store(path: Path) -> ObservabilityStore:
 
 def _open_or_create(path: Path) -> ObservabilityStore:
     conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
@@ -393,7 +482,169 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
               ON observability_samples(occurred_at);
             """
         )
+        conn.execute("PRAGMA user_version = 1")
+        current_version = 1
+    if current_version < 2:
+        _apply_metric_rollups_schema(conn)
+        _backfill_metric_rollups(conn)
         conn.execute(f"PRAGMA user_version = {LATEST_OBSERVABILITY_SCHEMA_VERSION}")
+
+
+def _apply_metric_rollups_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS observability_metric_rollups (
+          bucket_start TEXT NOT NULL,
+          bucket_size TEXT NOT NULL,
+          metric TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT '',
+          provider_id TEXT NOT NULL DEFAULT '',
+          model TEXT NOT NULL DEFAULT '',
+          count INTEGER NOT NULL DEFAULT 0,
+          sum REAL NOT NULL DEFAULT 0,
+          min REAL,
+          max REAL,
+          PRIMARY KEY (
+            bucket_start,
+            bucket_size,
+            metric,
+            kind,
+            provider_id,
+            model
+          )
+        );
+        CREATE INDEX IF NOT EXISTS idx_observability_metric_rollups_metric_bucket
+          ON observability_metric_rollups(metric, bucket_size, bucket_start);
+        CREATE INDEX IF NOT EXISTS idx_observability_metric_rollups_provider_model
+          ON observability_metric_rollups(provider_id, model, bucket_start);
+        """
+    )
+
+
+def _backfill_metric_rollups(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT
+          occurred_at,
+          kind,
+          duration_ms,
+          provider_id,
+          model,
+          prompt_tokens,
+          completion_tokens,
+          total_tokens
+        FROM observability_samples
+        ORDER BY occurred_at ASC, id ASC
+        """
+    ).fetchall()
+    for row in rows:
+        occurred_at = _parse_iso_datetime(str(row["occurred_at"]))
+        kind = str(row["kind"])
+        duration_ms = row["duration_ms"]
+        if duration_ms is not None:
+            _upsert_metric_rollup(
+                conn,
+                occurred_at=occurred_at,
+                metric=f"latency.{kind}.duration_ms",
+                value=int(duration_ms),
+                kind=kind,
+            )
+        if kind == TOKEN_USAGE_KIND and row["provider_id"] and row["model"]:
+            provider_id = str(row["provider_id"])
+            model = str(row["model"])
+            prompt_tokens = int(row["prompt_tokens"] or 0)
+            completion_tokens = int(row["completion_tokens"] or 0)
+            total_tokens = int(row["total_tokens"] or 0)
+            _upsert_metric_rollup(
+                conn,
+                occurred_at=occurred_at,
+                metric=METRIC_LLM_REQUESTS,
+                value=1,
+                kind=TOKEN_USAGE_KIND,
+                provider_id=provider_id,
+                model=model,
+            )
+            _upsert_metric_rollup(
+                conn,
+                occurred_at=occurred_at,
+                metric=METRIC_LLM_TOKENS_PROMPT,
+                value=prompt_tokens,
+                kind=TOKEN_USAGE_KIND,
+                provider_id=provider_id,
+                model=model,
+            )
+            _upsert_metric_rollup(
+                conn,
+                occurred_at=occurred_at,
+                metric=METRIC_LLM_TOKENS_COMPLETION,
+                value=completion_tokens,
+                kind=TOKEN_USAGE_KIND,
+                provider_id=provider_id,
+                model=model,
+            )
+            _upsert_metric_rollup(
+                conn,
+                occurred_at=occurred_at,
+                metric=METRIC_LLM_TOKENS_TOTAL,
+                value=total_tokens,
+                kind=TOKEN_USAGE_KIND,
+                provider_id=provider_id,
+                model=model,
+            )
+
+
+def _upsert_metric_rollup(
+    conn: sqlite3.Connection,
+    *,
+    occurred_at: datetime,
+    metric: str,
+    value: float,
+    kind: str = "",
+    provider_id: str | None = None,
+    model: str | None = None,
+) -> None:
+    bucket_start = _bucket_start_iso(occurred_at)
+    conn.execute(
+        """
+        INSERT INTO observability_metric_rollups (
+          bucket_start,
+          bucket_size,
+          metric,
+          kind,
+          provider_id,
+          model,
+          count,
+          sum,
+          min,
+          max
+        )
+        VALUES (?, 'day', ?, ?, ?, ?, 1, ?, ?, ?)
+        ON CONFLICT(bucket_start, bucket_size, metric, kind, provider_id, model)
+        DO UPDATE SET
+          count = count + 1,
+          sum = sum + excluded.sum,
+          min = CASE
+            WHEN min IS NULL THEN excluded.min
+            WHEN excluded.min < min THEN excluded.min
+            ELSE min
+          END,
+          max = CASE
+            WHEN max IS NULL THEN excluded.max
+            WHEN excluded.max > max THEN excluded.max
+            ELSE max
+          END
+        """,
+        (
+            bucket_start,
+            metric,
+            kind,
+            provider_id or "",
+            model or "",
+            value,
+            value,
+            value,
+        ),
+    )
 
 
 def _user_version(conn: sqlite3.Connection) -> int:
@@ -490,3 +741,16 @@ def _window_start(days: int) -> datetime:
         datetime.min.time(),
         tzinfo=timezone.utc,
     )
+
+
+def _bucket_start_iso(value: datetime) -> str:
+    occurred = _coerce_utc(value)
+    return datetime.combine(
+        occurred.date(),
+        datetime.min.time(),
+        tzinfo=timezone.utc,
+    ).isoformat()
+
+
+def _parse_iso_datetime(value: str) -> datetime:
+    return _coerce_utc(datetime.fromisoformat(value))
