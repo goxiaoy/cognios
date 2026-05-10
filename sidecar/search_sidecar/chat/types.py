@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 from typing import Literal
 
 ChatRole = Literal["system", "user", "assistant"]
@@ -27,6 +28,15 @@ class ChatGeneration:
     provider_id: str
     model: str
     usage: dict | None = None
+
+
+@dataclass(frozen=True)
+class ChatGenerationChunk:
+    content_delta: str = ""
+    done: bool = False
+    provider_id: str | None = None
+    model: str | None = None
+    usage: dict[str, Any] | None = None
 
 
 class ChatProviderError(RuntimeError):

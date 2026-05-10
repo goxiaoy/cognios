@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::domain::chat::{
     ChatMessageDto, ChatSessionDetailDto, ChatSessionDto, ChatSourceClusterDto,
@@ -13,9 +13,12 @@ use crate::infrastructure::db::chat_repository::{
 use crate::services::chat::live_note::update_live_note;
 use crate::services::search::{
     ChatContextNodeDto, ChatModelsResponseDto, ChatProviderTestRequestDto, ChatTurnMessageDto,
-    ChatTurnRequestDto, ChatTurnResponseDto, SidecarEnvelope, SidecarEnvelopeState,
+    ChatTurnRequestDto, ChatTurnResponseDto, ChatTurnStreamEventDto, SidecarEnvelope,
+    SidecarEnvelopeState,
 };
 use crate::AppState;
+
+pub const CHAT_TURN_EVENT: &str = "chat/turn";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +31,8 @@ pub struct ChatSessionInput {
 pub struct StartChatTurnInput {
     pub session_id: String,
     pub query: String,
+    #[serde(default)]
+    pub turn_event_id: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
@@ -42,6 +47,13 @@ pub struct StartChatTurnInput {
 #[serde(rename_all = "camelCase")]
 pub struct StartChatTurnResult {
     pub turn: SidecarEnvelope<ChatTurnResponseDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatTurnStreamPayload {
+    pub turn_event_id: String,
+    pub event: ChatTurnStreamEventDto,
 }
 
 #[derive(Debug, Serialize)]
@@ -161,6 +173,7 @@ pub fn bind_chat_note(
 
 #[tauri::command]
 pub async fn start_chat_turn(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     input: StartChatTurnInput,
 ) -> Result<StartChatTurnResult, String> {
@@ -213,15 +226,32 @@ pub async fn start_chat_turn(
         })
         .collect();
 
+    let turn_request = ChatTurnRequestDto {
+        query: input.query,
+        messages,
+        accepted_cluster_ids,
+        include_web: input.include_web,
+        model: input.model,
+        context_nodes: input.context_nodes,
+    };
+    let turn_event_id = input
+        .turn_event_id
+        .unwrap_or_else(|| format!("legacy-{}", input.session_id));
+    let emit_turn_event_id = turn_event_id.clone();
+    let emit_app = app.clone();
+
     let turn = state
         .search_client
-        .chat_turn(&ChatTurnRequestDto {
-            query: input.query,
-            messages,
-            accepted_cluster_ids,
-            include_web: input.include_web,
-            model: input.model,
-            context_nodes: input.context_nodes,
+        .chat_turn_stream(&turn_request, move |event| {
+            if let Err(err) = emit_app.emit(
+                CHAT_TURN_EVENT,
+                ChatTurnStreamPayload {
+                    turn_event_id: emit_turn_event_id.clone(),
+                    event,
+                },
+            ) {
+                log::warn!("failed to emit {CHAT_TURN_EVENT}: {err}");
+            }
         })
         .await;
 

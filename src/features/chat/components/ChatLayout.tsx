@@ -2,8 +2,10 @@ import {
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   useEffect,
+  useRef,
   useState,
 } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   CircleAlert,
   File,
@@ -25,6 +27,7 @@ import type {
   ChatSessionDetail,
   ChatModel,
   ChatTurnResponse,
+  ChatTurnStreamPayload,
 } from "../../../lib/contracts/chat";
 import { unwrapEnvelope } from "../../../lib/contracts/search";
 import { SearchPalette, type SearchPaletteSelection } from "../../search/components/SearchPalette";
@@ -32,6 +35,7 @@ import type { SearchClient } from "../../search/types/search";
 import type { ChatClient } from "../api/chatClient";
 
 const CONTEXT_CONTENT_LIMIT = 8_000;
+const CHAT_TURN_EVENT = "chat/turn";
 
 interface OptimisticUserMessage {
   id: string;
@@ -56,10 +60,56 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
   const [deleteTarget, setDeleteTarget] = useState<ChatSession | null>(null);
   const [sessionMenu, setSessionMenu] = useState<{ session: ChatSession; x: number; y: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const activeTurnEventIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     void refreshSessions();
     void refreshModels();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const unlistenPromise = listen<ChatTurnStreamPayload>(CHAT_TURN_EVENT, (event) => {
+      if (cancelled) return;
+      const payload = event.payload;
+      if (payload.turnEventId !== activeTurnEventIdRef.current) return;
+      const streamEvent = payload.event;
+      if (streamEvent.event === "metadata") {
+        setTurn((current) => ({
+          state: "ready",
+          clusters: streamEvent.clusters ?? current?.clusters ?? [],
+          answer: current?.answer ?? "",
+          citations: streamEvent.citations ?? current?.citations ?? [],
+          warnings: streamEvent.warnings ?? current?.warnings ?? [],
+          provider: current?.provider,
+        }));
+        return;
+      }
+      if (streamEvent.event === "delta" && streamEvent.delta) {
+        setTurn((current) => ({
+          state: current?.state ?? "ready",
+          clusters: current?.clusters ?? [],
+          answer: `${current?.answer ?? ""}${streamEvent.delta}`,
+          citations: current?.citations ?? [],
+          warnings: current?.warnings ?? [],
+          provider: current?.provider,
+        }));
+        return;
+      }
+      if (streamEvent.event === "final") {
+        if (streamEvent.turn) {
+          setTurn(streamEvent.turn);
+        }
+        if (streamEvent.error) {
+          setError(streamEvent.error);
+        }
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+    };
   }, []);
 
   useEffect(() => {
@@ -156,11 +206,15 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
         body: trimmedQuery,
         persistedBodyCountAtCreation: persistedUserBodyCount(session, trimmedQuery),
       };
+      const turnEventId = createTurnEventId();
+      activeTurnEventIdRef.current = turnEventId;
       setOptimisticUserMessages((messages) => [...messages, optimisticMessage]);
       setQuery("");
+      setTurn(null);
       const result = await client.startTurn({
         sessionId: session.session.id,
         query: trimmedQuery,
+        turnEventId,
         model: selectedModel || null,
         includeWeb: true,
         contextNodes,
@@ -179,6 +233,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      activeTurnEventIdRef.current = null;
       setBusy(false);
     }
   }
@@ -621,4 +676,11 @@ function sessionTitleFromQuery(query: string): string {
 
 function containsCjk(value: string): boolean {
   return /[\u3400-\u9fff]/.test(value);
+}
+
+function createTurnEventId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `turn-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

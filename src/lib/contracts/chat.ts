@@ -126,6 +126,21 @@ export interface ChatTurnResponse {
   provider?: unknown;
 }
 
+export interface ChatTurnStreamEvent {
+  event: "metadata" | "delta" | "final" | string;
+  delta?: string | null;
+  turn?: ChatTurnResponse | null;
+  clusters?: ChatTurnCluster[];
+  citations?: unknown[];
+  warnings?: string[];
+  error?: string | null;
+}
+
+export interface ChatTurnStreamPayload {
+  turnEventId: string;
+  event: ChatTurnStreamEvent;
+}
+
 export interface ChatModel {
   id: string;
   name: string;
@@ -147,6 +162,7 @@ export interface ChatModelsResponse {
 export interface StartChatTurnInput {
   sessionId: string;
   query: string;
+  turnEventId?: string | null;
   model?: string | null;
   acceptedClusterIds?: string[];
   includeWeb?: boolean;

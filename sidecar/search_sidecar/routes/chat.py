@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..chat.orchestrator import ChatContextNode, ChatOrchestrator, ChatTurnRequest
@@ -118,32 +121,51 @@ def post_chat_provider_test(body: ChatProviderTestPayload) -> dict:
 
 @router.post("/turns")
 def post_chat_turn(body: ChatTurnPayload, request: Request) -> dict:
+    response = _get_orchestrator(request).run_turn(_turn_request(body))
+    return response.to_dict()
+
+
+@router.post("/turns/stream")
+def post_chat_turn_stream(body: ChatTurnPayload, request: Request):
+    orchestrator = _get_orchestrator(request)
+    turn_request = _turn_request(body)
+
+    def stream():
+        for event in orchestrator.stream_turn(turn_request):
+            yield _sse_event(event.to_dict())
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+def _turn_request(body: ChatTurnPayload) -> ChatTurnRequest:
     messages = [
         ChatMessage(role=_role(message.role), content=message.content)
         for message in body.messages
         if message.content.strip()
     ]
-    response = _get_orchestrator(request).run_turn(
-        ChatTurnRequest(
-            query=body.query,
-            messages=messages,
-            accepted_cluster_ids=body.accepted_cluster_ids,
-            include_web=body.include_web,
-            model=body.model,
-            context_nodes=[
-                ChatContextNode(
-                    node_id=node.node_id,
-                    title=node.title,
-                    kind=node.kind,
-                    path=node.path,
-                    snippet=node.snippet,
-                    content=node.content,
-                )
-                for node in body.context_nodes
-            ],
-        )
+    return ChatTurnRequest(
+        query=body.query,
+        messages=messages,
+        accepted_cluster_ids=body.accepted_cluster_ids,
+        include_web=body.include_web,
+        model=body.model,
+        context_nodes=[
+            ChatContextNode(
+                node_id=node.node_id,
+                title=node.title,
+                kind=node.kind,
+                path=node.path,
+                snippet=node.snippet,
+                content=node.content,
+            )
+            for node in body.context_nodes
+        ],
     )
-    return response.to_dict()
+
+
+def _sse_event(event: dict) -> str:
+    payload = json.dumps(event, separators=(",", ":"))
+    return f"data: {payload}\n\n"
 
 
 def _role(value: str):

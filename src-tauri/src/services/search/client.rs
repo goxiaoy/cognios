@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
 use super::supervisor::{SearchSidecarSupervisor, SupervisorState};
@@ -416,6 +416,24 @@ pub struct ChatTurnRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct ChatTurnStreamEventDto {
+    pub event: String,
+    #[serde(default)]
+    pub delta: Option<String>,
+    #[serde(default)]
+    pub turn: Option<ChatTurnResponseDto>,
+    #[serde(default)]
+    pub clusters: Vec<ChatTurnClusterDto>,
+    #[serde(default)]
+    pub citations: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct ChatTurnMessageDto {
     pub role: String,
     pub content: String,
@@ -742,6 +760,84 @@ impl SearchSidecarClient {
         self.post_envelope("/chat/turns", body).await
     }
 
+    pub async fn chat_turn_stream<F>(
+        &self,
+        body: &ChatTurnRequestDto,
+        mut on_event: F,
+    ) -> SidecarEnvelope<ChatTurnResponseDto>
+    where
+        F: FnMut(ChatTurnStreamEventDto) + Send,
+    {
+        const CHAT_STREAM_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+        let (base, token) = match self.rendezvous() {
+            Ok(v) => v,
+            Err(SidecarEnvelopeState::Initialising) => {
+                return SidecarEnvelope::initialising();
+            }
+            Err(_) => {
+                let reason = self.supervisor_failure_reason();
+                return SidecarEnvelope::unavailable(reason);
+            }
+        };
+        let url = format!("{base}/chat/turns/stream");
+        let resp = match self
+            .http
+            .post(&url)
+            .bearer_auth(&token)
+            .timeout(CHAT_STREAM_TIMEOUT)
+            .header("accept", "text/event-stream")
+            .json(body)
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(err) => return SidecarEnvelope::unavailable(format!("network: {err}")),
+        };
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            let trimmed: String = body.chars().take(200).collect();
+            return SidecarEnvelope::unavailable(format!("HTTP {status}: {trimmed}"));
+        }
+
+        let mut final_turn: Option<ChatTurnResponseDto> = None;
+        let mut resp = resp;
+        let mut buf: Vec<u8> = Vec::new();
+        loop {
+            match resp.chunk().await {
+                Ok(Some(chunk)) => {
+                    buf.extend_from_slice(&chunk);
+                    drain_sse_frames_as::<ChatTurnStreamEventDto, _>(
+                        &mut buf,
+                        "chat/turn",
+                        &mut |event| {
+                            if event.event == "final" {
+                                final_turn = event.turn.clone();
+                            }
+                            on_event(event);
+                        },
+                    );
+                }
+                Ok(None) => break,
+                Err(err) => return SidecarEnvelope::unavailable(format!("stream: {err}")),
+            }
+        }
+        if !buf.is_empty() {
+            buf.extend_from_slice(b"\n\n");
+            drain_sse_frames_as::<ChatTurnStreamEventDto, _>(&mut buf, "chat/turn", &mut |event| {
+                if event.event == "final" {
+                    final_turn = event.turn.clone();
+                }
+                on_event(event);
+            });
+        }
+        match final_turn {
+            Some(turn) => SidecarEnvelope::ready(turn),
+            None => SidecarEnvelope::unavailable("chat stream ended without final response"),
+        }
+    }
+
     pub async fn chat_models(&self) -> SidecarEnvelope<ChatModelsResponseDto> {
         self.get_envelope("/chat/models").await
     }
@@ -765,9 +861,9 @@ impl SearchSidecarClient {
     /// The download timeout is intentionally long — multi-GB models
     /// over a slow connection can run for many minutes. The supervisor
     /// is the backstop for a stuck sidecar; this client just streams.
-    pub async fn start_model_download<F>(&self, role: &str, on_event: F) -> Result<(), String>
+    pub async fn start_model_download<F>(&self, role: &str, mut on_event: F) -> Result<(), String>
     where
-        F: Fn(ModelDownloadEvent) + Send + Sync + 'static,
+        F: FnMut(ModelDownloadEvent) + Send + 'static,
     {
         const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
@@ -801,7 +897,7 @@ impl SearchSidecarClient {
             match resp.chunk().await {
                 Ok(Some(chunk)) => {
                     buf.extend_from_slice(&chunk);
-                    drain_sse_frames(&mut buf, &on_event);
+                    drain_sse_frames(&mut buf, &mut on_event);
                 }
                 Ok(None) => break,
                 Err(err) => return Err(format!("stream: {err}")),
@@ -812,7 +908,7 @@ impl SearchSidecarClient {
         // appends one, but be defensive.
         if !buf.is_empty() {
             buf.extend_from_slice(b"\n\n");
-            drain_sse_frames(&mut buf, &on_event);
+            drain_sse_frames(&mut buf, &mut on_event);
         }
         Ok(())
     }
@@ -821,9 +917,17 @@ impl SearchSidecarClient {
 /// Pull every complete ``data: {...}\n\n`` frame out of `buf`, parse
 /// each as a `ModelDownloadEvent`, and invoke `on_event`. Leaves any
 /// partial trailing frame in place for the next chunk.
-fn drain_sse_frames<F>(buf: &mut Vec<u8>, on_event: &F)
+fn drain_sse_frames<F>(buf: &mut Vec<u8>, on_event: &mut F)
 where
-    F: Fn(ModelDownloadEvent),
+    F: FnMut(ModelDownloadEvent),
+{
+    drain_sse_frames_as::<ModelDownloadEvent, _>(buf, "models/progress", on_event);
+}
+
+fn drain_sse_frames_as<T, F>(buf: &mut Vec<u8>, label: &str, on_event: &mut F)
+where
+    T: DeserializeOwned,
+    F: FnMut(T),
 {
     while let Some(end) = find_double_newline(buf) {
         let frame = buf[..end].to_vec();
@@ -838,12 +942,10 @@ where
                 Some(rest) => rest.trim_start(),
                 None => continue,
             };
-            match serde_json::from_str::<ModelDownloadEvent>(payload) {
+            match serde_json::from_str::<T>(payload) {
                 Ok(event) => on_event(event),
                 Err(err) => {
-                    log::warn!(
-                        "models/progress: dropping malformed SSE frame: {err}; payload={payload:?}"
-                    );
+                    log::warn!("{label}: dropping malformed SSE frame: {err}; payload={payload:?}");
                 }
             }
         }
@@ -1120,7 +1222,7 @@ mod tests {
         let collected =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::<ModelDownloadEvent>::new()));
         let store = std::sync::Arc::clone(&collected);
-        let on_event = move |ev: ModelDownloadEvent| {
+        let mut on_event = move |ev: ModelDownloadEvent| {
             store.lock().unwrap().push(ev);
         };
         let mut buf: Vec<u8> = Vec::new();
@@ -1138,7 +1240,7 @@ mod tests {
         // A partial trailing frame — must remain in the buffer.
         buf.extend_from_slice(b"data: {\"role\":\"embedding");
 
-        drain_sse_frames(&mut buf, &on_event);
+        drain_sse_frames(&mut buf, &mut on_event);
 
         let collected = collected.lock().unwrap();
         assert_eq!(collected.len(), 2);
@@ -1154,7 +1256,7 @@ mod tests {
     fn drain_sse_frames_skips_malformed_payloads() {
         let count = std::sync::Arc::new(std::sync::Mutex::new(0u32));
         let n = std::sync::Arc::clone(&count);
-        let on_event = move |_ev: ModelDownloadEvent| {
+        let mut on_event = move |_ev: ModelDownloadEvent| {
             *n.lock().unwrap() += 1;
         };
         let mut buf = Vec::new();
@@ -1164,9 +1266,35 @@ mod tests {
 "#,
         );
         buf.push(b'\n');
-        drain_sse_frames(&mut buf, &on_event);
+        drain_sse_frames(&mut buf, &mut on_event);
         // Only the well-formed frame counts; the bad one is dropped.
         assert_eq!(*count.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn drain_sse_frames_parses_chat_turn_events() {
+        let collected =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::<ChatTurnStreamEventDto>::new()));
+        let store = std::sync::Arc::clone(&collected);
+        let mut on_event = move |ev: ChatTurnStreamEventDto| {
+            store.lock().unwrap().push(ev);
+        };
+        let mut buf = br#"data: {"event":"delta","delta":"hello"}
+
+data: {"event":"final","turn":{"state":"ready","clusters":[],"answer":"hello","citations":[],"warnings":[]}}
+
+"#
+        .to_vec();
+        drain_sse_frames_as::<ChatTurnStreamEventDto, _>(&mut buf, "chat/turn", &mut on_event);
+
+        let collected = collected.lock().unwrap();
+        assert_eq!(collected.len(), 2);
+        assert_eq!(collected[0].event, "delta");
+        assert_eq!(collected[0].delta.as_deref(), Some("hello"));
+        assert_eq!(
+            collected[1].turn.as_ref().unwrap().answer.as_deref(),
+            Some("hello")
+        );
     }
 
     #[test]

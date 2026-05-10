@@ -1,12 +1,26 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ChatSessionDetail } from "../../../lib/contracts/chat";
+import type { ChatSessionDetail, ChatTurnStreamPayload } from "../../../lib/contracts/chat";
 import { ExplorerStoreProvider } from "../../explorer/store/ExplorerStoreContext";
 import type { ExplorerClient } from "../../explorer/types/explorer";
 import type { SearchClient } from "../../search/types/search";
 import type { ChatClient } from "../api/chatClient";
 import { ChatLayout } from "./ChatLayout";
+
+type ChatTurnListener = (event: { payload: ChatTurnStreamPayload }) => void;
+
+const eventMock = vi.hoisted(() => ({
+  chatTurnListener: null as ChatTurnListener | null,
+  unlisten: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (name: string, cb: ChatTurnListener) => {
+    if (name === "chat/turn") eventMock.chatTurnListener = cb;
+    return eventMock.unlisten;
+  }),
+}));
 
 function makeClient(): ChatClient {
   let sessionTitle = "New chat";
@@ -156,6 +170,8 @@ function makeExplorerClient(): ExplorerClient {
 describe("ChatLayout", () => {
   afterEach(() => {
     cleanup();
+    eventMock.chatTurnListener = null;
+    eventMock.unlisten.mockReset();
   });
 
   it("sends a prompt with Enter and shows the submitted prompt in the transcript", async () => {
@@ -174,6 +190,7 @@ describe("ChatLayout", () => {
       expect(client.startTurn).toHaveBeenCalledWith({
         sessionId: "s1",
         query: "整理事故时间线",
+        turnEventId: expect.any(String),
         model: "llama3.2",
         includeWeb: true,
         contextNodes: [],
@@ -204,6 +221,68 @@ describe("ChatLayout", () => {
 
     expect(client.startTurn).not.toHaveBeenCalled();
     expect(composer).toHaveValue("第一行");
+  });
+
+  it("updates the assistant answer from chat stream events", async () => {
+    const client = makeClient();
+    let resolveTurn: ((value: Awaited<ReturnType<ChatClient["startTurn"]>>) => void) | null = null;
+    vi.mocked(client.startTurn).mockImplementationOnce(
+      async () =>
+        new Promise((resolve) => {
+          resolveTurn = resolve;
+        })
+    );
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    const composer = screen.getByPlaceholderText(/timeline/i);
+    fireEvent.change(composer, {
+      target: { value: "整理事故时间线" },
+    });
+    fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(client.startTurn).toHaveBeenCalled();
+      expect(eventMock.chatTurnListener).not.toBeNull();
+    });
+    const turnEventId = vi.mocked(client.startTurn).mock.calls[0][0].turnEventId!;
+
+    act(() => {
+      eventMock.chatTurnListener!({
+        payload: {
+          turnEventId,
+          event: { event: "delta", delta: "事故发生在 " },
+        },
+      });
+    });
+    expect(screen.getByText("事故发生在")).toBeInTheDocument();
+
+    act(() => {
+      eventMock.chatTurnListener!({
+        payload: {
+          turnEventId,
+          event: { event: "delta", delta: "3 月 1 日。" },
+        },
+      });
+    });
+    expect(screen.getByText("事故发生在 3 月 1 日。")).toBeInTheDocument();
+
+    act(() => {
+      resolveTurn!({
+        turn: {
+          state: "ready",
+          data: {
+            state: "ready",
+            clusters: [],
+            answer: "事故发生在 3 月 1 日。",
+            citations: [],
+            warnings: [],
+          },
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(client.listSessions).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("retitles an empty default session from the first question", async () => {
@@ -290,6 +369,7 @@ describe("ChatLayout", () => {
       expect(client.startTurn).toHaveBeenCalledWith({
         sessionId: "s1",
         query: "整理事故时间线",
+        turnEventId: expect.any(String),
         model: "qwen2.5:7b",
         includeWeb: true,
         contextNodes: [],
@@ -325,6 +405,7 @@ describe("ChatLayout", () => {
       expect(client.startTurn).toHaveBeenCalledWith({
         sessionId: "s1",
         query: "整理事故时间线",
+        turnEventId: expect.any(String),
         model: "llama3.2",
         includeWeb: true,
         contextNodes: [

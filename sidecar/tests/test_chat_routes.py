@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
 from search_sidecar.app import build_app
 from search_sidecar.chat.orchestrator import ChatOrchestrator
 from search_sidecar.chat.retrieval import ChatRetrieval
 from search_sidecar.chat.sources import ChatSource
-from search_sidecar.chat.types import ChatGeneration, ChatGenerationRequest
+from search_sidecar.chat.types import ChatGeneration, ChatGenerationChunk, ChatGenerationRequest
 from search_sidecar.chat.types import ChatModel, ChatModelList
 from search_sidecar.chat.types import ChatProviderError
 
@@ -43,6 +45,19 @@ class _Provider:
             content="answer",
             provider_id=self.provider_id,
             model=self.model,
+        )
+
+    def generate_stream(self, request: ChatGenerationRequest):
+        assert request.context
+        if request.model:
+            self.model = request.model
+        yield ChatGenerationChunk(content_delta="ans")
+        yield ChatGenerationChunk(content_delta="wer")
+        yield ChatGenerationChunk(
+            done=True,
+            provider_id=self.provider_id,
+            model=self.model,
+            usage={"eval_count": 2},
         )
 
     def list_models(self) -> ChatModelList:
@@ -150,6 +165,36 @@ def test_chat_turn_route_includes_manual_context_nodes():
     assert resp.json()["citations"][0]["citation"] == "n-manual"
     assert "User-attached node: 事故报告" in captured["context"][0]
     assert "完整事故报告内容" in captured["context"][0]
+
+
+def test_chat_turn_stream_route_emits_metadata_deltas_and_final_response():
+    app = build_app(
+        token=TOKEN,
+        chat_orchestrator=ChatOrchestrator(retrieval=_Retrieval(), chat_provider=_Provider()),
+    )
+
+    with TestClient(app) as client:
+        with client.stream(
+            "POST",
+            "/chat/turns/stream",
+            json={"query": "事故"},
+            headers=_auth(),
+        ) as resp:
+            assert resp.status_code == 200
+            assert resp.headers["content-type"].startswith("text/event-stream")
+            events = [
+                json.loads(line.removeprefix("data: "))
+                for line in resp.iter_lines()
+                if line.startswith("data: ")
+            ]
+
+    assert [event["event"] for event in events] == ["metadata", "delta", "delta", "final"]
+    assert events[0]["clusters"][0]["source_kind"] == "workspace"
+    assert events[1]["delta"] == "ans"
+    assert events[2]["delta"] == "wer"
+    assert events[-1]["turn"]["state"] == "ready"
+    assert events[-1]["turn"]["answer"] == "answer"
+    assert events[-1]["turn"]["provider"]["usage"] == {"eval_count": 2}
 
 
 def test_chat_models_route_returns_cached_provider_models():
