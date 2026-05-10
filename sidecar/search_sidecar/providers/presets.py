@@ -6,10 +6,7 @@ Each preset declares:
   keychain account names (``provider:<id>``), and Tauri IPC commands.
 - ``provider_type`` — ``"local"`` (downloadable, lifecycle managed by
   :class:`ModelManager`) or ``"cloud"`` (HTTP API, key in keychain).
-- ``capabilities`` — the typed slots this provider can fill. v1
-  capabilities are ``embedding``, ``reranking``, ``vision``, ``ocr``;
-  ``chat`` is intentionally absent until the chat feature ships
-  (see brainstorm scope decision).
+- ``capabilities`` — the typed slots this provider can fill.
 - ``default_model_per_capability`` — the model to use for each
   capability the provider serves, unless the user overrides it. For
   cloud providers, these are model names sent in the request body.
@@ -38,7 +35,15 @@ from typing import Literal
 # local, structured-prompted vision for cloud) that produces markdown
 # with embedded tables and LaTeX formulas — distinct from the basic
 # ``ocr`` capability which only returns flat detected text.
-Capability = Literal["embedding", "reranking", "vision", "ocr", "advanced-ocr"]
+Capability = Literal[
+    "embedding",
+    "reranking",
+    "vision",
+    "ocr",
+    "advanced-ocr",
+    "chat",
+    "web-search",
+]
 ProviderType = Literal["local", "cloud"]
 AuthKind = Literal["none", "api-key"]
 
@@ -64,12 +69,14 @@ class ProviderPreset:
 
 # v1 preset table. Capability/provider matrix:
 #
-#                   embedding  reranking  vision  ocr
+#                   embedding  reranking  vision  ocr  chat  web-search
 #   local-gte           ✓
 #   local-gte-reranker             ✓
 #   local-paddleocr                                  ✓
-#   openai              ✓                    ✓     ✓
+#   local-ollama                                           ✓
+#   openai              ✓                    ✓     ✓       ✓
 #   qwen-dashscope                           ✓     ✓
+#   brave-search                                                   ✓
 #
 # Cloud "vision" providers also serve OCR — same chat-completions
 # endpoint with a transcribe-only prompt; see
@@ -134,11 +141,24 @@ PRESETS: dict[str, ProviderPreset] = {
         },
         auth_kind="none",
     ),
+    "local-ollama": ProviderPreset(
+        provider_id="local-ollama",
+        display_name="Local Ollama",
+        provider_type="local",
+        capabilities=frozenset({"chat"}),
+        default_model_per_capability={
+            "chat": "llama3.2",
+        },
+        auth_kind="none",
+        base_url="http://127.0.0.1:11434",
+    ),
     "openai": ProviderPreset(
         provider_id="openai",
         display_name="OpenAI",
         provider_type="cloud",
-        capabilities=frozenset({"embedding", "vision", "ocr", "advanced-ocr"}),
+        capabilities=frozenset(
+            {"embedding", "vision", "ocr", "advanced-ocr", "chat"}
+        ),
         default_model_per_capability={
             # 3-small natively returns 1536-dim; the cloud Embedder
             # always passes ``dimensions=768`` to coerce via Matryoshka.
@@ -149,6 +169,7 @@ PRESETS: dict[str, ProviderPreset] = {
             # the entry tier; users can override per-feature in
             # Settings if they want 4o or a beefier upgrade path.
             "advanced-ocr": "gpt-4o-mini",
+            "chat": "gpt-4o-mini",
         },
         auth_kind="api-key",
         base_url="https://api.openai.com/v1",
@@ -175,6 +196,18 @@ PRESETS: dict[str, ProviderPreset] = {
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         validation_endpoint="/models",
         api_key_prefix="sk-",
+    ),
+    "brave-search": ProviderPreset(
+        provider_id="brave-search",
+        display_name="Brave Search",
+        provider_type="cloud",
+        capabilities=frozenset({"web-search"}),
+        default_model_per_capability={
+            "web-search": "brave-web",
+        },
+        auth_kind="api-key",
+        base_url="https://api.search.brave.com/res/v1",
+        validation_endpoint="/web/search",
     ),
 }
 

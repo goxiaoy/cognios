@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from .auth import BearerAuthMiddleware
 from .routes import events as events_routes
+from .routes import chat as chat_routes
 from .routes import index as index_routes
 from .routes import models as models_routes
 from .routes import search as search_routes
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from .index.queue import IndexingQueue
     from .index.runner import IndexingRunner
     from .models.manager import ModelManager
+    from .chat.orchestrator import ChatOrchestrator
     from .retrieval import SearchOrchestrator
     from .storage import LanceDBStore
 
@@ -37,6 +39,7 @@ def build_app(
     indexing_runner: "IndexingRunner | None" = None,
     lancedb_store: "LanceDBStore | None" = None,
     search_orchestrator: "SearchOrchestrator | None" = None,
+    chat_orchestrator: "ChatOrchestrator | None" = None,
     settings_path: Path | None = None,
     boot_settings_signature: str | None = None,
     extract_dir: Path | None = None,
@@ -72,6 +75,7 @@ def build_app(
     app.include_router(events_routes.router)
     app.include_router(index_routes.router)
     app.include_router(search_routes.router)
+    app.include_router(chat_routes.router)
     app.include_router(settings_routes.router)
 
     if model_manager is not None:
@@ -84,6 +88,8 @@ def build_app(
         app.state.lancedb_store = lancedb_store
     if search_orchestrator is not None:
         app.state.search_orchestrator = search_orchestrator
+    if chat_orchestrator is not None:
+        app.state.chat_orchestrator = chat_orchestrator
     if settings_path is not None:
         app.state.settings_path = settings_path
     if boot_settings_signature is not None:

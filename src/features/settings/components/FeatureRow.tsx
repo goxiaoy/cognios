@@ -2,8 +2,10 @@ import { useState } from "react";
 import {
   ChevronDown,
   FileSearch,
+  Globe,
   Image as ImageIcon,
   Layers,
+  MessageCircle,
   Plus,
   Search,
   Sparkles,
@@ -30,6 +32,8 @@ const FEATURE_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
   "image-ocr": ImageIcon,
   "image-captioning": Sparkles,
   "advanced-ocr": FileSearch,
+  chat: MessageCircle,
+  "web-search": Globe,
 };
 
 /**

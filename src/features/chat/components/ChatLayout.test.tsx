@@ -1,0 +1,215 @@
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { ChatSessionDetail } from "../../../lib/contracts/chat";
+import type { ChatClient } from "../api/chatClient";
+import { ChatLayout } from "./ChatLayout";
+
+function makeClient(): ChatClient {
+  return {
+    createSession: vi.fn().mockResolvedValue({
+      id: "s1",
+      title: "Research chat",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    }),
+    listSessions: vi.fn().mockResolvedValue([]),
+    getSession: vi.fn().mockResolvedValue({
+      session: {
+        id: "s1",
+        title: "Research chat",
+        boundNoteId: null,
+        createdAt: "now",
+        updatedAt: "now",
+      },
+      messages: [],
+      clusters: [],
+    }),
+    deleteSession: vi.fn(),
+    appendMessage: vi.fn(),
+    recordCluster: vi.fn(),
+    bindNote: vi.fn(),
+    startTurn: vi.fn().mockResolvedValue({
+      turn: {
+        state: "ready",
+        data: {
+          state: "awaiting_source_confirmation",
+          clusters: [
+            {
+              clusterId: "workspace:事故/照片",
+              title: "事故/照片",
+              sourceKind: "workspace",
+              status: "candidate",
+              summary: "2 workspace source(s) clustered by path and relevance.",
+              score: 0.9,
+              sources: [],
+            },
+          ],
+          answer: null,
+          citations: [],
+          warnings: [],
+        },
+      },
+    }),
+  };
+}
+
+describe("ChatLayout", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("shows source clusters before synthesis", async () => {
+    const client = makeClient();
+    render(<ChatLayout client={client} />);
+
+    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+      target: { value: "整理事故时间线" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Search clusters/i }));
+
+    expect(await screen.findByText("事故/照片")).toBeInTheDocument();
+    expect(client.startTurn).toHaveBeenCalledWith({
+      sessionId: "s1",
+      query: "整理事故时间线",
+      includeWeb: true,
+    });
+  });
+
+  it("synthesizes with the accepted cluster set", async () => {
+    const client = makeClient();
+    vi.mocked(client.startTurn)
+      .mockResolvedValueOnce({
+        turn: {
+          state: "ready",
+          data: {
+            state: "awaiting_source_confirmation",
+            clusters: [
+              {
+                clusterId: "workspace:事故/照片",
+                title: "事故/照片",
+                sourceKind: "workspace",
+                status: "candidate",
+                summary: "2 sources",
+                score: 0.9,
+                sources: [],
+              },
+            ],
+            answer: null,
+            citations: [],
+            warnings: [],
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        turn: {
+          state: "ready",
+          data: {
+            state: "ready",
+            clusters: [],
+            answer: "事故发生在 3 月 1 日。",
+            citations: [],
+            warnings: [],
+          },
+        },
+      });
+
+    render(<ChatLayout client={client} />);
+    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+      target: { value: "整理事故时间线" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Search clusters/i }));
+    fireEvent.click(await screen.findByText("事故/照片"));
+    fireEvent.click(screen.getByRole("button", { name: /Synthesize/i }));
+
+    await waitFor(() => {
+      expect(client.startTurn).toHaveBeenLastCalledWith({
+        sessionId: "s1",
+        query: "整理事故时间线",
+        acceptedClusterIds: ["workspace:事故/照片"],
+        includeWeb: true,
+      });
+    });
+    expect(await screen.findByText(/3 月 1 日/)).toBeInTheDocument();
+  });
+
+  it("does not duplicate a freshly persisted assistant answer", async () => {
+    const client = makeClient();
+    const emptyDetail: ChatSessionDetail = {
+      session: {
+        id: "s1",
+        title: "Research chat",
+        boundNoteId: null,
+        createdAt: "now",
+        updatedAt: "now",
+      },
+      messages: [],
+      clusters: [],
+    };
+    vi.mocked(client.getSession)
+      .mockResolvedValueOnce(emptyDetail)
+      .mockResolvedValueOnce(emptyDetail)
+      .mockResolvedValueOnce({
+        ...emptyDetail,
+        messages: [
+          {
+            id: "m2",
+            sessionId: "s1",
+            role: "assistant",
+            body: "事故发生在 3 月 1 日。",
+            ordinal: 1,
+            metadataJson: "{}",
+            createdAt: "now",
+          },
+        ],
+      });
+    vi.mocked(client.startTurn)
+      .mockResolvedValueOnce({
+        turn: {
+          state: "ready",
+          data: {
+            state: "awaiting_source_confirmation",
+            clusters: [
+              {
+                clusterId: "workspace:事故/照片",
+                title: "事故/照片",
+                sourceKind: "workspace",
+                status: "candidate",
+                summary: "2 sources",
+                score: 0.9,
+                sources: [],
+              },
+            ],
+            answer: null,
+            citations: [],
+            warnings: [],
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        turn: {
+          state: "ready",
+          data: {
+            state: "ready",
+            clusters: [],
+            answer: "事故发生在 3 月 1 日。",
+            citations: [],
+            warnings: [],
+          },
+        },
+      });
+
+    render(<ChatLayout client={client} />);
+    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+      target: { value: "整理事故时间线" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Search clusters/i }));
+    fireEvent.click(await screen.findByText("事故/照片"));
+    fireEvent.click(screen.getByRole("button", { name: /Synthesize/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("事故发生在 3 月 1 日。")).toHaveLength(1);
+    });
+  });
+});

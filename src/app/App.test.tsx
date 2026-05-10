@@ -50,6 +50,30 @@ vi.mock("../lib/tauri/ipc", () => ({
   setProviderSecret: vi.fn().mockResolvedValue(undefined),
   getProviderSecretPresent: vi.fn().mockResolvedValue(false),
   deleteProviderSecret: vi.fn().mockResolvedValue(undefined),
+  createChatSession: vi.fn().mockResolvedValue({
+    id: "s1",
+    title: "Research chat",
+    boundNoteId: null,
+    createdAt: "now",
+    updatedAt: "now",
+  }),
+  listChatSessions: vi.fn().mockResolvedValue([]),
+  getChatSession: vi.fn().mockResolvedValue({
+    session: {
+      id: "s1",
+      title: "Research chat",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    },
+    messages: [],
+    clusters: [],
+  }),
+  deleteChatSession: vi.fn().mockResolvedValue({ deleted: true }),
+  appendChatMessage: vi.fn(),
+  recordChatCluster: vi.fn(),
+  bindChatNote: vi.fn(),
+  startChatTurn: vi.fn().mockResolvedValue({ turn: { state: "initialising" } }),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({

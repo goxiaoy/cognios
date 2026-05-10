@@ -398,6 +398,72 @@ pub struct NodeContentDto {
     pub assets: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct ChatTurnRequestDto {
+    pub query: String,
+    #[serde(default)]
+    pub messages: Vec<ChatTurnMessageDto>,
+    #[serde(default, alias = "acceptedClusterIds")]
+    pub accepted_cluster_ids: Vec<String>,
+    #[serde(default = "default_true", alias = "includeWeb")]
+    pub include_web: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct ChatTurnMessageDto {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct ChatTurnSourceDto {
+    pub source_id: String,
+    pub source_kind: String,
+    pub title: String,
+    pub snippet: String,
+    pub citation: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct ChatTurnClusterDto {
+    pub cluster_id: String,
+    pub title: String,
+    pub source_kind: String,
+    pub status: String,
+    pub summary: String,
+    pub score: f64,
+    #[serde(default)]
+    pub sources: Vec<ChatTurnSourceDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct ChatTurnResponseDto {
+    pub state: String,
+    #[serde(default)]
+    pub clusters: Vec<ChatTurnClusterDto>,
+    #[serde(default)]
+    pub answer: Option<String>,
+    #[serde(default)]
+    pub citations: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub provider: Option<serde_json::Value>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// One frame of the ``POST /models/download/{role}`` SSE stream.
 ///
 /// The sidecar emits these as ``data: {json}\n\n`` lines; the client
@@ -617,6 +683,13 @@ impl SearchSidecarClient {
     pub async fn node_content(&self, node_id: &str) -> SidecarEnvelope<NodeContentDto> {
         let path = format!("/index/node/{}/content", urlencoded(node_id));
         self.get_envelope(&path).await
+    }
+
+    pub async fn chat_turn(
+        &self,
+        body: &ChatTurnRequestDto,
+    ) -> SidecarEnvelope<ChatTurnResponseDto> {
+        self.post_envelope("/chat/turns", body).await
     }
 
     /// Subscribe to the SSE stream from `POST /models/download/{role}`.

@@ -4,6 +4,7 @@ const INITIAL_SCHEMA: &str = include_str!("../../../migrations/0001_initial.sql"
 const MOUNT_SCHEMA: &str = include_str!("../../../migrations/0002_mounts.sql");
 const URL_SCHEMA: &str = include_str!("../../../migrations/0003_urls.sql");
 const NODE_METADATA_SCHEMA: &str = include_str!("../../../migrations/0004_node_metadata.sql");
+const CHAT_SESSIONS_SCHEMA: &str = include_str!("../../../migrations/0005_chat_sessions.sql");
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     let current_version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -26,6 +27,11 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if current_version < 4 {
         conn.execute_batch(NODE_METADATA_SCHEMA)?;
         conn.pragma_update(None, "user_version", 4)?;
+    }
+
+    if current_version < 5 {
+        conn.execute_batch(CHAT_SESSIONS_SCHEMA)?;
+        conn.pragma_update(None, "user_version", 5)?;
     }
 
     Ok(())

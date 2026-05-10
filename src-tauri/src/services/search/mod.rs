@@ -21,11 +21,11 @@ pub mod settings_fallback;
 pub mod supervisor;
 
 pub use client::{
-    FeatureConfigDto, IndexSnapshotDto, IndexSnapshotEntry, IndexStatusDto, ModelDownloadEvent,
-    ModelRoleStatusDto, ModelsStatusDto, NodeContentChunkDto, NodeContentDto, NodeEvent,
-    NodeEventAck, NodeEventKind, NodeIndexStatusDto, ProviderConfigDto, SearchInput,
-    SearchResponseDto, SearchResultDto, SearchSettingsDto, SearchSidecarClient, SidecarEnvelope,
-    SidecarEnvelopeState,
+    ChatTurnMessageDto, ChatTurnRequestDto, ChatTurnResponseDto, FeatureConfigDto,
+    IndexSnapshotDto, IndexSnapshotEntry, IndexStatusDto, ModelDownloadEvent, ModelRoleStatusDto,
+    ModelsStatusDto, NodeContentChunkDto, NodeContentDto, NodeEvent, NodeEventAck, NodeEventKind,
+    NodeIndexStatusDto, ProviderConfigDto, SearchInput, SearchResponseDto, SearchResultDto,
+    SearchSettingsDto, SearchSidecarClient, SidecarEnvelope, SidecarEnvelopeState,
 };
 pub use runtime_file::{read_runtime_file, RuntimeFile, RuntimeFileError};
 pub use settings_fallback::read_settings_file_fallback;

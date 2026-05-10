@@ -25,6 +25,8 @@ const CAPABILITY_LABEL: Record<Capability, string> = {
   vision: "Vision",
   ocr: "OCR",
   "advanced-ocr": "Advanced OCR",
+  chat: "Chat",
+  "web-search": "Web Search",
 };
 
 /** Capability → ModelRoleName. Capabilities are the user-facing
@@ -40,6 +42,8 @@ const CAPABILITY_TO_ROLE: Record<Capability, string> = {
   vision: "captioner",
   ocr: "ocr",
   "advanced-ocr": "advanced-ocr",
+  chat: "chat",
+  "web-search": "web-search",
 };
 
 type FilterId =

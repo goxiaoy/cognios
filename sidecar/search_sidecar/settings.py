@@ -188,6 +188,12 @@ def default_settings() -> SearchSettings:
                 provider_id="local-paddleocr",
                 enabled=True,
             ),
+            "local-ollama": ProviderConfig(
+                provider_id="local-ollama",
+                enabled=True,
+                base_url="http://127.0.0.1:11434",
+                model_per_capability={"chat": "llama3.2"},
+            ),
         },
         features={
             "semantic-search": FeatureConfig(
@@ -209,6 +215,8 @@ def default_settings() -> SearchSettings:
             # When enabled and bound, ImageProcessor routes through the
             # advanced extractor; basic image-ocr stays as the fallback.
             "advanced-ocr": FeatureConfig(enabled=False, provider_id=None),
+            "chat": FeatureConfig(enabled=True, provider_id="local-ollama"),
+            "web-search": FeatureConfig(enabled=False, provider_id=None),
         },
     )
 

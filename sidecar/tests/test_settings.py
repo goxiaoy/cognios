@@ -55,6 +55,16 @@ def test_default_settings_seeds_local_gte_and_semantic_search():
     # and cloud incurs per-image API cost. Off + unbound by default.
     assert s.features["advanced-ocr"].enabled is False
     assert s.features["advanced-ocr"].provider_id is None
+    # Chat defaults to local Ollama so the app can expose a local-first
+    # provider state without requiring a cloud key. Web search remains
+    # opt-in and unbound until the user configures a search provider.
+    assert "local-ollama" in s.providers
+    assert s.providers["local-ollama"].enabled is True
+    assert s.providers["local-ollama"].base_url == "http://127.0.0.1:11434"
+    assert s.features["chat"].enabled is True
+    assert s.features["chat"].provider_id == "local-ollama"
+    assert s.features["web-search"].enabled is False
+    assert s.features["web-search"].provider_id is None
     # No cloud providers consented to on first install.
     assert s.cloud_consent_acked == []
     assert s.first_run_skipped is False

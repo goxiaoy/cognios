@@ -30,6 +30,9 @@ import uvicorn
 
 from .app import build_app
 from .auth import generate_token
+from .chat.factory import select_chat_provider
+from .chat.orchestrator import ChatOrchestrator
+from .chat.retrieval import ChatRetrieval
 from .embeddings import reembed_stale_chunks, select_embedder
 from .extract import (
     select_advanced_ocr_extractor,
@@ -56,6 +59,7 @@ from .settings import (
     save_settings,
 )
 from .storage import open_store
+from .web_search.factory import select_web_search_provider
 
 LOG = logging.getLogger("search_sidecar.lifecycle")
 
@@ -165,6 +169,13 @@ def serve(storage_dir: Path) -> int:
     search_orchestrator = SearchOrchestrator(
         store=lancedb_store, embedder=embedder, reranker=reranker
     )
+    chat_orchestrator = ChatOrchestrator(
+        retrieval=ChatRetrieval(
+            search_orchestrator=search_orchestrator,
+            web_search_provider=select_web_search_provider(settings),
+        ),
+        chat_provider=select_chat_provider(settings),
+    )
 
     app = build_app(
         token=token,
@@ -173,6 +184,7 @@ def serve(storage_dir: Path) -> int:
         indexing_runner=indexing_runner,
         lancedb_store=lancedb_store,
         search_orchestrator=search_orchestrator,
+        chat_orchestrator=chat_orchestrator,
         settings_path=settings_path,
         boot_settings_signature=boot_signature(settings),
         extract_dir=search_dir / "extract",

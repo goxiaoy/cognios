@@ -6,8 +6,7 @@
  * values to the sidecar's response would catch drift in CI.
  *
  * Capability vocabulary v1: ``embedding`` / ``reranking`` / ``vision``
- * / ``ocr``. ``chat`` is intentionally absent until the chat feature
- * ships.
+ * / ``ocr`` / ``advanced-ocr`` / ``chat`` / ``web-search``.
  */
 
 export type ProviderType = "local" | "cloud";
@@ -17,7 +16,9 @@ export type Capability =
   | "reranking"
   | "vision"
   | "ocr"
-  | "advanced-ocr";
+  | "advanced-ocr"
+  | "chat"
+  | "web-search";
 
 export interface ProviderPreset {
   providerId: string;
@@ -94,15 +95,25 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     localRoleId: "advanced-ocr-",
   },
   {
+    providerId: "local-ollama",
+    displayName: "Local Ollama",
+    providerType: "local",
+    capabilities: ["chat"],
+    defaultModelPerCapability: { chat: "llama3.2" },
+    authKind: "none",
+    baseUrl: "http://127.0.0.1:11434",
+  },
+  {
     providerId: "openai",
     displayName: "OpenAI",
     providerType: "cloud",
-    capabilities: ["embedding", "vision", "ocr", "advanced-ocr"],
+    capabilities: ["embedding", "vision", "ocr", "advanced-ocr", "chat"],
     defaultModelPerCapability: {
       embedding: "text-embedding-3-small",
       vision: "gpt-4o-mini",
       ocr: "gpt-4o-mini",
       "advanced-ocr": "gpt-4o-mini",
+      chat: "gpt-4o-mini",
     },
     authKind: "api-key",
     baseUrl: "https://api.openai.com/v1",
@@ -123,6 +134,16 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     validationEndpoint: "/models",
     apiKeyPrefix: "sk-",
+  },
+  {
+    providerId: "brave-search",
+    displayName: "Brave Search",
+    providerType: "cloud",
+    capabilities: ["web-search"],
+    defaultModelPerCapability: { "web-search": "brave-web" },
+    authKind: "api-key",
+    baseUrl: "https://api.search.brave.com/res/v1",
+    validationEndpoint: "/web/search",
   },
 ];
 
@@ -214,6 +235,24 @@ export const FEATURE_CATALOG: readonly FeatureMeta[] = [
       "downloads a 13-model bundle (~600MB) on enable, then " +
       "auto-reindexes existing images.",
     capability: "advanced-ocr",
+    mandatory: false,
+    comingSoon: false,
+  },
+  {
+    featureId: "chat",
+    displayName: "Chat",
+    description:
+      "Answers questions from selected workspace and web sources. Local Ollama stays on-device; cloud providers send prompt context off-device.",
+    capability: "chat",
+    mandatory: false,
+    comingSoon: false,
+  },
+  {
+    featureId: "web-search",
+    displayName: "Web search",
+    description:
+      "Adds current web sources to Chat research. Results are cited in-session and are not saved as Cognios URL nodes by default.",
+    capability: "web-search",
     mandatory: false,
     comingSoon: false,
   },
