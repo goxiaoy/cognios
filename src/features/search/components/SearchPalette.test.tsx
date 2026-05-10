@@ -296,7 +296,7 @@ describe("SearchPalette", () => {
     expect(lastCall.query).toBe("kind:note");
   });
 
-  it("renders the Load more button when nextCursor is present and appends results on click", async () => {
+  it("loads the next page when the result list is scrolled near the end", async () => {
     let call = 0;
     const search = vi.fn().mockImplementation(() => {
       call += 1;
@@ -348,13 +348,26 @@ describe("SearchPalette", () => {
     await waitFor(() => {
       expect(screen.getByText("A.md")).toBeInTheDocument();
     });
-    const loadMore = screen.getByRole("button", { name: /^Load more$/ });
-    fireEvent.click(loadMore);
+
+    const scroller = screen.getByRole("listbox").parentElement!;
+    Object.defineProperties(scroller, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 1000 },
+      scrollTop: { configurable: true, value: 680 },
+    });
+    fireEvent.scroll(scroller);
+    fireEvent.scroll(scroller);
+
     await waitFor(() => {
       expect(screen.getByText("B.md")).toBeInTheDocument();
     });
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(search).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: "offset:25" })
+    );
     expect(
       screen.queryByRole("button", { name: /^Load more$/ })
     ).toBeNull();
+    expect(screen.getByText("No more results.")).toBeInTheDocument();
   });
 });

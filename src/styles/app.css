@@ -1017,6 +1017,11 @@ button:disabled {
   list-style: none;
   margin: 0;
   padding: 0.2rem 0.4rem 0.4rem;
+}
+
+.search-palette-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -1030,9 +1035,12 @@ button:disabled {
 }
 
 .search-palette-more {
+  margin: 0;
   padding: 0.5rem 0.85rem;
   border-top: 1px solid var(--line);
   font-size: 0.78rem;
+  color: var(--muted);
+  text-align: center;
 }
 
 .search-palette-filter-toggle {
@@ -3140,24 +3148,6 @@ body.is-resizing-pane {
 }
 
 /* ---- Dedicated search view (Cmd+Shift+F) ------------------------------- */
-
-.search-palette-more-button {
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: none;
-  border-top: 1px solid var(--line);
-  font: inherit;
-  font-size: 0.78rem;
-  color: var(--muted);
-  cursor: pointer;
-}
-.search-palette-more-button:hover,
-.search-palette-more-button:focus-visible {
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 8%, transparent 92%);
-  outline: none;
-}
 
 .search-view {
   display: flex;

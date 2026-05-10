@@ -22,7 +22,7 @@ const ROW_ID = (idx: number) => `search-palette-row-${idx}`;
  * The Cmd+K palette — the only search surface in the app. Holds the
  * free-text query, the structured filter bar (kind chips, mount
  * picker, modified-date inputs, sort dropdown), and the result list
- * with cursor-based "Load more" pagination.
+ * with cursor-based infinite scroll pagination.
  *
  * Filters and free text both flow into the same composed query
  * string via :func:`buildQueryString`, so the sidecar parses one
@@ -335,32 +335,40 @@ function PaletteBody({
     return (
       <>
         <p className="search-palette-list-eyebrow">Recently modified</p>
-        <ul
-          id={LIST_ID}
-          role="listbox"
-          className="search-palette-list"
-          aria-label="Recently modified"
-          onMouseLeave={onListMouseLeave}
-        >
-          {recentNodes.map((node, idx) => (
-            <li
-              key={node.id}
-              id={ROW_ID(idx)}
-              role="option"
-              aria-selected={idx === activeIndex}
-              className={`search-result-row${idx === activeIndex ? " is-active" : ""}`}
-              onMouseEnter={() => onRowHover(idx)}
-              onClick={() => activate({ kind: "recent", nodeId: node.id, label: node.name })}
-            >
-              <span className="search-result-body">
-                <span className="search-result-title">
-                  <span className="search-result-name">{node.name}</span>
-                  <span className="search-result-kind">{node.kind}</span>
+        <div className="search-palette-scroll">
+          <ul
+            id={LIST_ID}
+            role="listbox"
+            className="search-palette-list"
+            aria-label="Recently modified"
+            onMouseLeave={onListMouseLeave}
+          >
+            {recentNodes.map((node, idx) => (
+              <li
+                key={node.id}
+                id={ROW_ID(idx)}
+                role="option"
+                aria-selected={idx === activeIndex}
+                className={`search-result-row${idx === activeIndex ? " is-active" : ""}`}
+                onMouseEnter={() => onRowHover(idx)}
+                onClick={() =>
+                  activate({
+                    kind: "recent",
+                    nodeId: node.id,
+                    label: node.name,
+                  })
+                }
+              >
+                <span className="search-result-body">
+                  <span className="search-result-title">
+                    <span className="search-result-name">{node.name}</span>
+                    <span className="search-result-kind">{node.kind}</span>
+                  </span>
                 </span>
-              </span>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        </div>
       </>
     );
   }
@@ -397,7 +405,16 @@ function PaletteBody({
   }
 
   return (
-    <>
+    <div
+      className="search-palette-scroll"
+      onScroll={(event) => {
+        if (!hasMore || state === "loadingMore") return;
+        const target = event.currentTarget;
+        const remaining =
+          target.scrollHeight - target.scrollTop - target.clientHeight;
+        if (remaining <= 48) onLoadMore();
+      }}
+    >
       <ul
         id={LIST_ID}
         role="listbox"
@@ -411,22 +428,24 @@ function PaletteBody({
             result={result}
             active={idx === activeIndex}
             rowId={ROW_ID(idx)}
-            onActivate={() => activate({ kind: "result", nodeId: result.nodeId, label: result.name, result })}
+            onActivate={() =>
+              activate({
+                kind: "result",
+                nodeId: result.nodeId,
+                label: result.name,
+                result,
+              })
+            }
             onHover={() => onRowHover(idx)}
           />
         ))}
       </ul>
-      {hasMore ? (
-        <button
-          type="button"
-          className="search-palette-more search-palette-more-button"
-          disabled={state === "loadingMore"}
-          onClick={onLoadMore}
-        >
-          {state === "loadingMore" ? "Loading…" : "Load more"}
-        </button>
+      {state === "loadingMore" || !hasMore ? (
+        <p className="search-palette-more" role="status">
+          {state === "loadingMore" ? "Loading more..." : "No more results."}
+        </p>
       ) : null}
-    </>
+    </div>
   );
 }
 
