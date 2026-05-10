@@ -1,4 +1,9 @@
-import { FormEvent, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  useEffect,
+  useState,
+} from "react";
 import {
   CircleAlert,
   File,
@@ -28,11 +33,19 @@ import type { ChatClient } from "../api/chatClient";
 
 const CONTEXT_CONTENT_LIMIT = 8_000;
 
+interface OptimisticUserMessage {
+  id: string;
+  sessionId: string;
+  body: string;
+  persistedBodyCountAtCreation: number;
+}
+
 export function ChatLayout({ client, searchClient }: { client: ChatClient; searchClient: SearchClient }) {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [active, setActive] = useState<ChatSessionDetail | null>(null);
   const [query, setQuery] = useState("");
   const [turn, setTurn] = useState<ChatTurnResponse | null>(null);
+  const [optimisticUserMessages, setOptimisticUserMessages] = useState<OptimisticUserMessage[]>([]);
   const [contextOpen, setContextOpen] = useState(false);
   const [contextNodes, setContextNodes] = useState<ChatContextNode[]>([]);
   const [contextError, setContextError] = useState<string | null>(null);
@@ -89,6 +102,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
     if (target) {
       const detail = await client.getSession({ sessionId: target });
       setActive(detail);
+      reconcileOptimisticMessages(detail);
     } else {
       setActive(null);
     }
@@ -103,6 +117,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
         });
         const detail = { ...active, session: updated };
         setActive(detail);
+        reconcileOptimisticMessages(detail);
         setSessions((items) => items.map((item) => (item.id === updated.id ? updated : item)));
         return detail;
       }
@@ -112,12 +127,13 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
     const session = await client.createSession({ title });
     const detail = await client.getSession({ sessionId: session.id });
     setActive(detail);
+    reconcileOptimisticMessages(detail);
     setSessions((items) => [session, ...items]);
     return detail;
   }
 
   async function createNewSession() {
-    if (isCurrentChatEmpty(active, turn)) return;
+    if (isCurrentChatEmpty(active, turn, optimisticTranscript.length)) return;
     setActive(null);
     setTurn(null);
     clearContextDraft();
@@ -127,12 +143,21 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (busy) return;
     const trimmedQuery = query.trim();
     if (!trimmedQuery) return;
     setBusy(true);
     setError(null);
     try {
       const session = await ensureSession(sessionTitleFromQuery(trimmedQuery));
+      const optimisticMessage = {
+        id: `optimistic-${session.session.id}-${Date.now()}`,
+        sessionId: session.session.id,
+        body: trimmedQuery,
+        persistedBodyCountAtCreation: persistedUserBodyCount(session, trimmedQuery),
+      };
+      setOptimisticUserMessages((messages) => [...messages, optimisticMessage]);
+      setQuery("");
       const result = await client.startTurn({
         sessionId: session.session.id,
         query: trimmedQuery,
@@ -149,7 +174,6 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
         setError(data.warnings[0] ?? chatStatusMessage(data.state));
       }
       setTurn(data);
-      setQuery("");
       clearContextDraft();
       await refreshSessions(session.session.id);
     } catch (err) {
@@ -157,6 +181,13 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter") return;
+    if (event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
   }
 
   async function deleteSession(session: ChatSession) {
@@ -172,6 +203,9 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
       const next = await client.listSessions();
       setSessions(next);
       setSessionMenu(null);
+      setOptimisticUserMessages((messages) =>
+        messages.filter((message) => message.sessionId !== session.id)
+      );
 
       if (active?.session.id === session.id) {
         const fallback = next[0];
@@ -227,8 +261,23 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
     setContextError(null);
   }
 
+  function reconcileOptimisticMessages(detail: ChatSessionDetail) {
+    setOptimisticUserMessages((messages) => {
+      const unrelatedMessages = messages.filter((message) => message.sessionId !== detail.session.id);
+      const unpersistedMessages = optimisticMessagesForSession(messages, detail);
+      if (unrelatedMessages.length + unpersistedMessages.length === messages.length) return messages;
+
+      return [...unrelatedMessages, ...unpersistedMessages];
+    });
+  }
+
   const transcript = active?.messages ?? [];
-  const currentChatIsEmpty = isCurrentChatEmpty(active, turn);
+  const optimisticTranscript = active ? optimisticMessagesForSession(optimisticUserMessages, active) : [];
+  const currentChatIsEmpty = isCurrentChatEmpty(
+    active,
+    turn,
+    optimisticTranscript.length
+  );
   const showTransientAnswer = Boolean(
     turn?.answer &&
       !transcript.some((message) => message.role === "assistant" && message.body === turn.answer),
@@ -332,8 +381,8 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
           <p className="chat-error" role="status"><CircleAlert size={15} aria-hidden="true" /> {error}</p>
         ) : null}
 
-        <section className={`chat-transcript${transcript.length === 0 && !turn ? " is-empty" : ""}`} aria-label="Transcript">
-          {transcript.length === 0 && !turn ? (
+        <section className={`chat-transcript${transcript.length === 0 && optimisticTranscript.length === 0 && !turn ? " is-empty" : ""}`} aria-label="Transcript">
+          {transcript.length === 0 && optimisticTranscript.length === 0 && !turn ? (
             <div className="chat-empty">
               <Search size={24} aria-hidden="true" />
               <h3>Ask CogniOS</h3>
@@ -343,6 +392,12 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
           {transcript.map((message) => (
             <article key={message.id} className={`chat-message is-${message.role}`}>
               <p className="chat-message-role">{message.role}</p>
+              <p>{message.body}</p>
+            </article>
+          ))}
+          {optimisticTranscript.map((message) => (
+            <article key={message.id} className="chat-message is-user">
+              <p className="chat-message-role">user</p>
               <p>{message.body}</p>
             </article>
           ))}
@@ -380,6 +435,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
           <textarea
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={handleComposerKeyDown}
             placeholder="Ask about a timeline, cost, cause, evidence gaps..."
             aria-label="Chat message"
           />
@@ -488,8 +544,33 @@ function shouldRetitleSession(detail: ChatSessionDetail): boolean {
   return detail.messages.length === 0 && (title === "new chat" || title === "research chat");
 }
 
-function isCurrentChatEmpty(detail: ChatSessionDetail | null, turn: ChatTurnResponse | null): boolean {
-  return !turn && (!detail || detail.messages.length === 0);
+function isCurrentChatEmpty(
+  detail: ChatSessionDetail | null,
+  turn: ChatTurnResponse | null,
+  optimisticCount = 0
+): boolean {
+  return !turn && optimisticCount === 0 && (!detail || detail.messages.length === 0);
+}
+
+function optimisticMessagesForSession(
+  messages: OptimisticUserMessage[],
+  detail: ChatSessionDetail
+): OptimisticUserMessage[] {
+  const persistedUserBodyCounts = new Map<string, number>();
+  for (const message of detail.messages) {
+    if (message.role !== "user") continue;
+    persistedUserBodyCounts.set(message.body, (persistedUserBodyCounts.get(message.body) ?? 0) + 1);
+  }
+
+  return messages.filter((message) => {
+    if (message.sessionId !== detail.session.id) return false;
+    const persistedCount = persistedUserBodyCounts.get(message.body) ?? 0;
+    return persistedCount <= message.persistedBodyCountAtCreation;
+  });
+}
+
+function persistedUserBodyCount(detail: ChatSessionDetail, body: string): number {
+  return detail.messages.filter((message) => message.role === "user" && message.body === body).length;
 }
 
 function ContextNodeIcon({ node }: { node: ChatContextNode }) {

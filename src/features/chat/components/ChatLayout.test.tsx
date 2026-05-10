@@ -158,26 +158,50 @@ describe("ChatLayout", () => {
     cleanup();
   });
 
-  it("sends a prompt directly and shows the assistant response", async () => {
+  it("sends a prompt with Enter and shows the submitted prompt in the transcript", async () => {
     const client = makeClient();
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
-    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+    const composer = screen.getByPlaceholderText(/timeline/i);
+    fireEvent.change(composer, {
       target: { value: "整理事故时间线" },
     });
     expect(await screen.findByLabelText(/model/i)).toHaveValue("llama3.2");
     expect(screen.queryByRole("button", { name: /Synthesize/i })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
+    fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
 
-    expect(await screen.findByText(/3 月 1 日/)).toBeInTheDocument();
-    expect(client.startTurn).toHaveBeenCalledWith({
-      sessionId: "s1",
-      query: "整理事故时间线",
-      model: "llama3.2",
-      includeWeb: true,
-      contextNodes: [],
+    await waitFor(() => {
+      expect(client.startTurn).toHaveBeenCalledWith({
+        sessionId: "s1",
+        query: "整理事故时间线",
+        model: "llama3.2",
+        includeWeb: true,
+        contextNodes: [],
+      });
     });
+    await waitFor(() => {
+      expect(composer).toHaveValue("");
+    });
+    const sentMessage = screen
+      .getAllByText("整理事故时间线")
+      .find((node) => node.closest(".chat-message.is-user"));
+    expect(sentMessage).toBeTruthy();
+    expect(await screen.findByText(/3 月 1 日/)).toBeInTheDocument();
     expect(client.createSession).toHaveBeenCalledWith({ title: "整理事故时间线" });
+  });
+
+  it("keeps Shift Enter available for multiline drafting", () => {
+    const client = makeClient();
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    const composer = screen.getByPlaceholderText(/timeline/i);
+    fireEvent.change(composer, {
+      target: { value: "第一行" },
+    });
+    fireEvent.keyDown(composer, { key: "Enter", code: "Enter", shiftKey: true });
+
+    expect(client.startTurn).not.toHaveBeenCalled();
+    expect(composer).toHaveValue("第一行");
   });
 
   it("retitles an empty default session from the first question", async () => {
@@ -415,6 +439,53 @@ describe("ChatLayout", () => {
 
     await waitFor(() => {
       expect(screen.getAllByText("事故发生在 3 月 1 日。")).toHaveLength(1);
+    });
+  });
+
+  it("does not duplicate a freshly persisted user prompt", async () => {
+    const client = makeClient();
+    const emptyDetail: ChatSessionDetail = {
+      session: {
+        id: "s1",
+        title: "Research chat",
+        boundNoteId: null,
+        createdAt: "now",
+        updatedAt: "now",
+      },
+      messages: [],
+      clusters: [],
+    };
+    vi.mocked(client.getSession)
+      .mockResolvedValueOnce(emptyDetail)
+      .mockResolvedValueOnce({
+        ...emptyDetail,
+        messages: [
+          {
+            id: "m1",
+            sessionId: "s1",
+            role: "user",
+            body: "整理事故时间线",
+            ordinal: 0,
+            metadataJson: "{}",
+            createdAt: "now",
+          },
+        ],
+      });
+
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+      target: { value: "整理事故时间线" },
+    });
+    fireEvent.keyDown(screen.getByPlaceholderText(/timeline/i), { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(client.getSession).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      const userMessages = screen
+        .getAllByText("整理事故时间线")
+        .filter((node) => node.closest(".chat-message.is-user"));
+      expect(userMessages).toHaveLength(1);
     });
   });
 
