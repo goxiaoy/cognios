@@ -44,9 +44,17 @@ export function ProviderEditor({
   const [state, setState] = useState<EditorState>({ kind: "idle" });
   const [secret, setSecret] = useState("");
   const [hasSecret, setHasSecret] = useState<boolean>(false);
+  const [baseUrl, setBaseUrl] = useState(config?.baseUrl ?? preset.baseUrl ?? "");
+  const [modelPerCapability, setModelPerCapability] = useState<
+    Record<string, string>
+  >({
+    ...preset.defaultModelPerCapability,
+    ...(config?.modelPerCapability ?? {}),
+  });
   const [pendingSecretForConsent, setPendingSecretForConsent] = useState<
     string | null
   >(null);
+  const canEditConfig = preset.authKind === "none" && Boolean(preset.baseUrl);
 
   useEffect(() => {
     if (preset.authKind !== "api-key") {
@@ -152,6 +160,45 @@ export function ProviderEditor({
     }
   }
 
+  async function handleSaveConfig() {
+    setState({ kind: "validating" });
+    try {
+      const nextProviders: SearchSettings["providers"] = {
+        ...settings.providers,
+        [preset.providerId]: {
+          providerId: preset.providerId,
+          enabled: true,
+          apiKeyRef: config?.apiKeyRef ?? null,
+          baseUrl: baseUrl.trim() || null,
+          modelPerCapability: Object.fromEntries(
+            Object.entries(modelPerCapability).map(([capability, model]) => [
+              capability,
+              model.trim(),
+            ])
+          ),
+        },
+      };
+      const env = await client.updateSettings({
+        ...settings,
+        providers: nextProviders,
+      });
+      if (env.state !== "ready" || !env.data) {
+        setState({
+          kind: "error",
+          message: env.error ?? "Failed to persist settings.",
+        });
+        return;
+      }
+      onSettingsChange(env.data);
+      setState({ kind: "saved" });
+    } catch (err) {
+      setState({
+        kind: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   return (
     <div className="provider-editor" role="region" aria-label={preset.displayName}>
       {preset.authKind === "api-key" ? (
@@ -183,6 +230,36 @@ export function ProviderEditor({
             </p>
           )}
         </section>
+      ) : canEditConfig ? (
+        <section className="provider-editor-section">
+          <label className="provider-editor-key-label">
+            Base URL
+            <input
+              type="url"
+              className="provider-editor-key-input"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder={preset.baseUrl ?? "http://127.0.0.1:11434"}
+            />
+          </label>
+          {preset.capabilities.map((capability) => (
+            <label key={capability} className="provider-editor-key-label">
+              {capability} model
+              <input
+                type="text"
+                className="provider-editor-key-input"
+                value={modelPerCapability[capability] ?? ""}
+                onChange={(e) =>
+                  setModelPerCapability((current) => ({
+                    ...current,
+                    [capability]: e.target.value,
+                  }))
+                }
+                placeholder={preset.defaultModelPerCapability[capability] ?? ""}
+              />
+            </label>
+          ))}
+        </section>
       ) : (
         <p className="provider-editor-info">
           No credentials required.
@@ -209,6 +286,16 @@ export function ProviderEditor({
             className="settings-action is-primary"
             disabled={!secret.trim()}
             onClick={() => void handleSave()}
+          >
+            Save
+          </button>
+        ) : null}
+        {canEditConfig ? (
+          <button
+            type="button"
+            className="settings-action is-primary"
+            disabled={state.kind === "validating" || !baseUrl.trim()}
+            onClick={() => void handleSaveConfig()}
           >
             Save
           </button>

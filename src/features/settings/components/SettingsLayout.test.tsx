@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   within,
@@ -8,6 +9,7 @@ import {
 } from "@testing-library/react";
 
 import { SettingsLayout } from "./SettingsLayout";
+import type { SearchSettings } from "../../../lib/contracts/search";
 import type { SearchClient } from "../../search/types/search";
 
 // SettingsLayout subscribes to Tauri's models/progress event via
@@ -67,7 +69,7 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
 
 afterEach(() => cleanup());
 
-function readySettings() {
+function readySettings(): { state: "ready"; data: SearchSettings } {
   return {
     state: "ready" as const,
     data: {
@@ -186,6 +188,23 @@ describe("SettingsLayout", () => {
     expect(
       within(openaiRow as HTMLElement).queryByRole("button", { name: /Edit/i })
     ).toBeNull();
+  });
+
+  it("opens basic configuration fields for the Ollama provider", async () => {
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(readySettings()),
+    });
+    render(<SettingsLayout client={client} />);
+
+    const ollamaName = await screen.findByText("Ollama");
+    const ollamaRow = ollamaName.closest("li");
+    expect(ollamaRow).not.toBeNull();
+    fireEvent.click(
+      within(ollamaRow as HTMLElement).getByRole("button", { name: /Details/i })
+    );
+
+    expect(await screen.findByLabelText(/base url/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/chat model/i)).toBeInTheDocument();
   });
 
   it("renders OCR enhancement diagnostics when advanced OCR is ready", async () => {

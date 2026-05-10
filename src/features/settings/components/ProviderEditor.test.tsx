@@ -16,6 +16,7 @@ afterEach(() => cleanup());
 
 const OPENAI = presetById("openai")!;
 const LOCAL_GTE = presetById("local-gte")!;
+const LOCAL_OLLAMA = presetById("local-ollama")!;
 
 function baseSettings(): SearchSettings {
   return {
@@ -44,6 +45,45 @@ describe("ProviderEditor", () => {
       />
     );
     expect(screen.getByText(/no credentials required/i)).toBeInTheDocument();
+  });
+
+  it("lets configurable local providers persist endpoint and model settings", async () => {
+    const updateSettings = vi.fn().mockResolvedValue({
+      state: "ready",
+      data: baseSettings(),
+    });
+    const onSettingsChange = vi.fn();
+    render(
+      <ProviderEditor
+        preset={LOCAL_OLLAMA}
+        config={null}
+        settings={baseSettings()}
+        client={makeStubSearchClient({ updateSettings })}
+        onSettingsChange={onSettingsChange}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText(/base url/i), {
+      target: { value: "http://localhost:11435" },
+    });
+    fireEvent.change(screen.getByLabelText(/chat model/i), {
+      target: { value: "qwen2.5:7b" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(updateSettings).toHaveBeenCalled();
+    });
+    const arg = updateSettings.mock.calls[0][0];
+    expect(arg.providers["local-ollama"]).toMatchObject({
+      providerId: "local-ollama",
+      enabled: true,
+      apiKeyRef: null,
+      baseUrl: "http://localhost:11435",
+      modelPerCapability: { chat: "qwen2.5:7b" },
+    });
+    expect(onSettingsChange).toHaveBeenCalled();
   });
 
   it("shows API key input when cloud provider has no key configured", async () => {

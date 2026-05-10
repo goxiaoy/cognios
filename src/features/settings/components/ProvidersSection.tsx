@@ -249,11 +249,10 @@ export function ProvidersSection({
               (p) => p.providerId === openId
             );
             if (!preset) return null;
-            // Local providers open the stages modal — they have
-            // no credentials to edit, only per-stage download
-            // state to surface. Cloud providers route through the
-            // credentials editor.
-            if (preset.providerType === "local") {
+            // Download-only local providers open the stages modal.
+            // Configurable locals such as Ollama route through the
+            // editor so users can change endpoint/model settings.
+            if (preset.providerType === "local" && !usesProviderEditor(preset)) {
               const owned = Object.values(rolesByName).filter((role) =>
                 presetOwnsRole(preset, role.role)
               );
@@ -313,6 +312,10 @@ function isProviderConfigured(
     return keyPresence[preset.providerId] ?? false;
   }
   return settings.providers[preset.providerId] !== undefined;
+}
+
+function usesProviderEditor(preset: ProviderPreset): boolean {
+  return preset.providerType === "cloud" || Boolean(preset.baseUrl);
 }
 
 function primaryRoleFor(
