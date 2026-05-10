@@ -188,11 +188,6 @@ def default_settings() -> SearchSettings:
                 provider_id="local-paddleocr",
                 enabled=True,
             ),
-            "local-ollama": ProviderConfig(
-                provider_id="local-ollama",
-                enabled=True,
-                base_url="http://127.0.0.1:11434",
-            ),
         },
         features={
             "semantic-search": FeatureConfig(

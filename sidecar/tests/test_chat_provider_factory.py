@@ -5,8 +5,19 @@ from search_sidecar.chat.ollama import OllamaChatProvider
 from search_sidecar.settings import FeatureConfig, ProviderConfig, SearchSettings, default_settings
 
 
-def test_default_settings_select_local_ollama_chat_provider():
+def test_default_settings_wait_for_saved_ollama_provider():
     provider = select_chat_provider(default_settings())
+
+    assert provider is None
+
+
+def test_saved_ollama_config_selects_local_chat_provider():
+    settings = default_settings()
+    settings.providers["local-ollama"] = ProviderConfig(
+        provider_id="local-ollama",
+        base_url="http://127.0.0.1:11434",
+    )
+    provider = select_chat_provider(settings)
 
     assert isinstance(provider, OllamaChatProvider)
     assert provider.model == "llama3.2"

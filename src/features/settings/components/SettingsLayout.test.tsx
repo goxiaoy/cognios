@@ -192,7 +192,7 @@ describe("SettingsLayout", () => {
     ).toBeNull();
   });
 
-  it("opens basic configuration fields for the Ollama provider", async () => {
+  it("opens default Ollama configuration from Add", async () => {
     const client = makeClient({
       settings: vi.fn().mockResolvedValue(readySettings()),
     });
@@ -201,8 +201,11 @@ describe("SettingsLayout", () => {
     const ollamaName = await screen.findByText("Ollama");
     const ollamaRow = ollamaName.closest("li");
     expect(ollamaRow).not.toBeNull();
+    expect(
+      within(ollamaRow as HTMLElement).getByText(/not set up/i)
+    ).toBeInTheDocument();
     fireEvent.click(
-      within(ollamaRow as HTMLElement).getByRole("button", { name: /Details/i })
+      within(ollamaRow as HTMLElement).getByRole("button", { name: /Add/i })
     );
 
     const dialog = await screen.findByRole("dialog", { name: "Ollama" });
@@ -210,6 +213,28 @@ describe("SettingsLayout", () => {
     expect(screen.queryByRole("dialog", { name: "Local Ollama" })).toBeNull();
     expect(await screen.findByLabelText(/base url/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/chat model/i)).toBeNull();
+  });
+
+  it("marks Ollama ready after its default configuration is saved", async () => {
+    const ready = readySettings();
+    ready.data.providers["local-ollama"] = {
+      providerId: "local-ollama",
+      enabled: true,
+      apiKeyRef: null,
+      baseUrl: "http://127.0.0.1:11434",
+      modelPerCapability: {},
+    };
+    const client = makeClient({
+      settings: vi.fn().mockResolvedValue(ready),
+    });
+    render(<SettingsLayout client={client} />);
+
+    const ollamaName = await screen.findByText("Ollama");
+    const ollamaRow = ollamaName.closest("li");
+    expect(ollamaRow).not.toBeNull();
+    expect(
+      within(ollamaRow as HTMLElement).getByRole("button", { name: /Details/i })
+    ).toBeInTheDocument();
   });
 
   it("removes the Local prefix from local model stage details", async () => {

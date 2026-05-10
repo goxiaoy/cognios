@@ -292,6 +292,9 @@ function isProviderConfigured(
   rolesByName: Record<string, ModelRoleStatus>
 ): boolean {
   if (preset.providerType === "local") {
+    if (usesProviderEditor(preset)) {
+      return settings.providers[preset.providerId]?.enabled === true;
+    }
     // For locals "configured" means every underlying model role is
     // ready. ``primaryRoleFor`` returns the full set so a multi-
     // stage provider (PP-StructureV3 owns 13 ``advanced-ocr-*``
