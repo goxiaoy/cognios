@@ -5861,8 +5861,16 @@ button.chat-session-item:not(:disabled):hover {
   background: color-mix(in srgb, var(--accent) 7%, var(--paper));
 }
 
-.chat-message p:last-child {
-  margin-bottom: 0;
+.chat-message.is-assistant {
+  padding: 0.15rem 0 0.95rem;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+}
+
+.chat-message-body {
+  margin: 0;
+  white-space: pre-wrap;
 }
 
 .chat-message-role {

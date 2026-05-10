@@ -391,20 +391,18 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
           ) : null}
           {transcript.map((message) => (
             <article key={message.id} className={`chat-message is-${message.role}`}>
-              <p className="chat-message-role">{message.role}</p>
-              <p>{message.body}</p>
+              {message.role === "system" ? <p className="chat-message-role">{message.role}</p> : null}
+              <p className="chat-message-body">{message.body}</p>
             </article>
           ))}
           {optimisticTranscript.map((message) => (
             <article key={message.id} className="chat-message is-user">
-              <p className="chat-message-role">user</p>
-              <p>{message.body}</p>
+              <p className="chat-message-body">{message.body}</p>
             </article>
           ))}
           {showTransientAnswer ? (
             <article className="chat-message is-assistant">
-              <p className="chat-message-role">assistant</p>
-              <p>{turn?.answer}</p>
+              <p className="chat-message-body">{turn?.answer}</p>
             </article>
           ) : null}
         </section>

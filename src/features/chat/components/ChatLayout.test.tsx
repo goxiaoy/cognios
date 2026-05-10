@@ -187,6 +187,8 @@ describe("ChatLayout", () => {
       .find((node) => node.closest(".chat-message.is-user"));
     expect(sentMessage).toBeTruthy();
     expect(await screen.findByText(/3 月 1 日/)).toBeInTheDocument();
+    expect(sentMessage?.closest(".chat-message.is-user")?.querySelector(".chat-message-role")).toBeNull();
+    expect(screen.getByText(/3 月 1 日/).closest(".chat-message.is-assistant")?.querySelector(".chat-message-role")).toBeNull();
     expect(client.createSession).toHaveBeenCalledWith({ title: "整理事故时间线" });
   });
 
