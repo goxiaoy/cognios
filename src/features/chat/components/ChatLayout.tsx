@@ -340,11 +340,12 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
     turn?.answer &&
       !transcript.some((message) => message.role === "assistant" && message.body === turn.answer),
   );
+  const showAssistantLoading = Boolean(busy && optimisticTranscript.length > 0 && !turn?.answer && !error);
   const title = active?.session.title ?? "New chat";
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ block: "end", inline: "nearest" });
-  }, [active?.session.id, transcript.length, optimisticTranscript.length, turn?.answer]);
+  }, [active?.session.id, transcript.length, optimisticTranscript.length, showAssistantLoading, turn?.answer]);
 
   return (
     <section className="chat-layout" aria-label="Chat">
@@ -465,6 +466,11 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
           {showTransientAnswer ? (
             <article className="chat-message is-assistant">
               <ChatMessageBody role="assistant" body={turn?.answer ?? ""} />
+            </article>
+          ) : null}
+          {showAssistantLoading ? (
+            <article className="chat-message is-assistant is-loading">
+              <AssistantLoading />
             </article>
           ) : null}
           <div ref={transcriptEndRef} className="chat-transcript-end" aria-hidden="true" />
@@ -597,6 +603,19 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
         </div>
       ) : null}
     </section>
+  );
+}
+
+function AssistantLoading() {
+  return (
+    <div className="chat-message-loading" role="status" aria-live="polite">
+      <span>Thinking</span>
+      <span className="chat-loading-dots" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+    </div>
   );
 }
 

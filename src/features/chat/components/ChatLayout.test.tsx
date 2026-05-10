@@ -254,6 +254,7 @@ describe("ChatLayout", () => {
       expect(eventMock.chatTurnListener).not.toBeNull();
     });
     const turnEventId = vi.mocked(client.startTurn).mock.calls[0][0].turnEventId!;
+    expect(await screen.findByText("Thinking")).toBeInTheDocument();
 
     act(() => {
       eventMock.chatTurnListener!({
@@ -264,6 +265,7 @@ describe("ChatLayout", () => {
       });
     });
     expect(screen.getByText("事故发生在")).toBeInTheDocument();
+    expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
 
     act(() => {
       eventMock.chatTurnListener!({

@@ -5868,9 +5868,58 @@ button.chat-session-item:not(:disabled):hover {
   border-radius: 0;
 }
 
+.chat-message.is-loading {
+  color: var(--muted);
+}
+
 .chat-message-body {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.chat-message-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 1.65rem;
+  color: var(--muted);
+  font: 500 0.82rem var(--font-mono);
+}
+
+.chat-loading-dots {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+
+.chat-loading-dots span {
+  width: 0.32rem;
+  height: 0.32rem;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.35;
+  animation: chat-loading-dot 1s ease-in-out infinite;
+}
+
+.chat-loading-dots span:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.chat-loading-dots span:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@keyframes chat-loading-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+
+  40% {
+    opacity: 0.85;
+    transform: translateY(-2px);
+  }
 }
 
 .chat-message-markdown {
