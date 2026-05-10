@@ -125,6 +125,29 @@ describe("MarkdownPreview", () => {
     });
   });
 
+  it("renders inline and block math formulas", async () => {
+    const client = makeClient({
+      readFileContent: vi
+        .fn()
+        .mockResolvedValue(
+          "Inline $E = mc^2$.\n\n$$\n\\int_0^1 x^2 dx\n$$"
+        ),
+    });
+
+    const { container } = render(
+      <MarkdownPreview
+        client={client}
+        name="math.md"
+        nodeId="n"
+      />
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".katex")).toBeInTheDocument();
+      expect(container.querySelector(".katex-display")).toBeInTheDocument();
+    });
+  });
+
   it("shows file-too-large error for that error category", async () => {
     const client = makeClient({
       readFileContent: vi.fn().mockRejectedValue(new Error("file too large")),
