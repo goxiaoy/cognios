@@ -15,6 +15,7 @@ const STATUS_DELETED: &str = "deleted";
 const ROUND_THRESHOLD: i64 = 3;
 const TOKEN_THRESHOLD: i64 = 3_000;
 const RECENT_MESSAGE_LIMIT: usize = 6;
+const STALE_RUNNING_AFTER_SECONDS: i64 = 5 * 60;
 
 #[derive(Debug, Clone)]
 pub struct MemoryRefreshJob {
@@ -63,6 +64,7 @@ pub fn record_successful_turn(
     estimated_tokens: i64,
 ) -> Result<bool, String> {
     ensure_session_exists(conn, session_id).map_err(|error| error.to_string())?;
+    recover_stale_refresh(conn, session_id).map_err(|error| error.to_string())?;
     conn.execute(
         "
         INSERT INTO chat_session_memories (
@@ -99,6 +101,7 @@ pub fn should_schedule_refresh(
     session_id: &str,
     reason: RefreshReason,
 ) -> Result<bool, String> {
+    recover_stale_refresh(conn, session_id).map_err(|error| error.to_string())?;
     let Some(row) = load_memory_row(conn, session_id).map_err(|error| error.to_string())? else {
         return Ok(false);
     };
@@ -375,21 +378,53 @@ pub fn sanitize_generated_markdown(body: &str) -> String {
     body.replace('<', "&lt;").replace('>', "&gt;")
 }
 
-#[allow(dead_code)]
-pub fn recover_orphaned_refreshes(conn: &Connection, session_id: &str) -> rusqlite::Result<()> {
+pub fn recover_orphaned_refreshes(conn: &Connection) -> rusqlite::Result<usize> {
     conn.execute(
         "
         UPDATE chat_session_memories
         SET status = 'dirty',
             job_id = NULL,
+            last_error = 'recovered interrupted session memory refresh',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE status = 'running'
+          AND deleted_at IS NULL
+        ",
+        [],
+    )
+}
+
+pub fn pending_refresh_session_ids(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "
+        SELECT session_id
+        FROM chat_session_memories
+        WHERE status = 'dirty'
+          AND deleted_at IS NULL
+          AND (dirty_round_count > 0 OR dirty_token_count > 0)
+        ORDER BY updated_at ASC
+        ",
+    )?;
+    let ids = stmt
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(ids)
+}
+
+fn recover_stale_refresh(conn: &Connection, session_id: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "
+        UPDATE chat_session_memories
+        SET status = 'dirty',
+            job_id = NULL,
+            last_error = 'recovered stale session memory refresh',
             updated_at = CURRENT_TIMESTAMP
         WHERE session_id = ?1
           AND status = 'running'
           AND deleted_at IS NULL
+          AND CAST(strftime('%s', 'now') AS INTEGER) - CAST(strftime('%s', updated_at) AS INTEGER) >= ?2
         ",
-        [session_id],
-    )?;
-    Ok(())
+        params![session_id, STALE_RUNNING_AFTER_SECONDS],
+    )
 }
 
 fn read_verified_body_for_row(

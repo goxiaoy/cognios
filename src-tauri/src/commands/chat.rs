@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
@@ -30,6 +31,7 @@ use crate::AppState;
 
 pub const CHAT_TURN_EVENT: &str = "chat/turn";
 pub const CHAT_MEMORY_EVENT: &str = "chat/session-memory";
+const MEMORY_REFRESH_TIMEOUT: Duration = Duration::from_secs(4 * 60 + 10);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -375,6 +377,12 @@ pub async fn start_chat_turn(
                     estimate_text_tokens(&assistant.body),
                 )?;
                 if should_refresh {
+                    log::info!(
+                        "session memory refresh scheduled after successful turn: session_id={} provider_id={:?} model_id={:?}",
+                        input.session_id,
+                        provider_id,
+                        model_id
+                    );
                     spawn_memory_refresh(
                         app.clone(),
                         state.db.clone(),
@@ -406,6 +414,11 @@ pub fn trigger_chat_session_memory_opportunity(
         _ => RefreshReason::Idle,
     };
     if should_schedule_refresh(&conn, &input.session_id, reason)? {
+        log::info!(
+            "session memory refresh scheduled by opportunity: session_id={} reason={:?}",
+            input.session_id,
+            reason
+        );
         spawn_memory_refresh(
             app,
             state.db.clone(),
@@ -489,7 +502,7 @@ fn persist_turn_response(
     Ok(None)
 }
 
-fn spawn_memory_refresh(
+pub(crate) fn spawn_memory_refresh(
     app: tauri::AppHandle,
     db: Database,
     storage_dir: std::path::PathBuf,
@@ -520,46 +533,95 @@ async fn run_memory_refresh(
         begin_refresh(&conn, &root, &session_id)?
     };
     let Some(job) = job else {
+        log::info!("session memory refresh skipped: session_id={session_id} reason=no_job");
         return Ok(());
     };
+    log::info!(
+        "session memory refresh started: session_id={} revision={} messages={} dirty_round_count={} dirty_token_count={} provider_id={:?} model_id={:?}",
+        job.session_id,
+        job.revision,
+        job.messages.len(),
+        job.dirty_round_count,
+        job.dirty_token_count,
+        job.provider_id,
+        job.model_id
+    );
 
     let request = memory_refresh_request(&job);
-    let envelope: SidecarEnvelope<ChatMemoryRefreshResponseDto> =
-        search_client.chat_memory_refresh(&request).await;
     let conn = db
         .connect()
         .map_err(|error: rusqlite::Error| error.to_string())?;
+    let envelope: SidecarEnvelope<ChatMemoryRefreshResponseDto> = match tokio::time::timeout(
+        MEMORY_REFRESH_TIMEOUT,
+        search_client.chat_memory_refresh(&request),
+    )
+    .await
+    {
+        Ok(envelope) => envelope,
+        Err(_) => {
+            log::warn!(
+                "session memory refresh timed out: session_id={} revision={} timeout_seconds={}",
+                job.session_id,
+                job.revision,
+                MEMORY_REFRESH_TIMEOUT.as_secs()
+            );
+            fail_refresh(&conn, &job, "session memory refresh timed out")?;
+            return Ok(());
+        }
+    };
     let data = match envelope.state {
         SidecarEnvelopeState::Ready => envelope.data,
         SidecarEnvelopeState::Initialising => {
+            log::warn!(
+                "session memory refresh failed: session_id={} revision={} reason=sidecar_initialising",
+                job.session_id,
+                job.revision
+            );
             fail_refresh(&conn, &job, "sidecar initialising")?;
             return Ok(());
         }
         SidecarEnvelopeState::Unavailable => {
-            fail_refresh(
-                &conn,
-                &job,
-                envelope.error.as_deref().unwrap_or("sidecar unavailable"),
-            )?;
+            let reason = envelope.error.as_deref().unwrap_or("sidecar unavailable");
+            log::warn!(
+                "session memory refresh failed: session_id={} revision={} reason={}",
+                job.session_id,
+                job.revision,
+                reason
+            );
+            fail_refresh(&conn, &job, reason)?;
             return Ok(());
         }
     };
     let Some(data) = data else {
+        log::warn!(
+            "session memory refresh failed: session_id={} revision={} reason=empty_response",
+            job.session_id,
+            job.revision
+        );
         fail_refresh(&conn, &job, "empty session memory response")?;
         return Ok(());
     };
     if data.state != "ready" {
-        fail_refresh(
-            &conn,
-            &job,
-            data.warnings
-                .first()
-                .map(String::as_str)
-                .unwrap_or("session memory refresh failed"),
-        )?;
+        let reason = data
+            .warnings
+            .first()
+            .map(String::as_str)
+            .unwrap_or("session memory refresh failed");
+        log::warn!(
+            "session memory refresh failed: session_id={} revision={} reason={}",
+            job.session_id,
+            job.revision,
+            reason
+        );
+        fail_refresh(&conn, &job, reason)?;
         return Ok(());
     }
     let Some(body) = data.body.as_deref() else {
+        log::warn!(
+            "session memory refresh failed: session_id={} revision={} reason=missing_body",
+            job.session_id,
+            job.revision
+        );
         fail_refresh(&conn, &job, "session memory body missing")?;
         return Ok(());
     };
@@ -573,7 +635,7 @@ async fn run_memory_refresh(
         .as_ref()
         .and_then(|provider| provider.get("model"))
         .and_then(|value| value.as_str());
-    let revision = complete_refresh(
+    let revision = match complete_refresh(
         &conn,
         &root,
         &job,
@@ -582,7 +644,20 @@ async fn run_memory_refresh(
             .unwrap_or(job.last_message_ordinal),
         provider_id,
         model_id,
-    )?;
+    ) {
+        Ok(revision) => revision,
+        Err(error) => {
+            let _ = fail_refresh(&conn, &job, &error);
+            return Err(error);
+        }
+    };
+    log::info!(
+        "session memory refresh completed: session_id={} revision={} included_message_ordinal={}",
+        job.session_id,
+        revision,
+        data.last_included_message_ordinal
+            .unwrap_or(job.last_message_ordinal)
+    );
     let _ = app.emit(
         CHAT_MEMORY_EVENT,
         ChatSessionMemoryEventPayload {

@@ -6,8 +6,9 @@ use cognios_lib::infrastructure::db::chat_repository::{
 };
 use cognios_lib::infrastructure::db::connection::open_database;
 use cognios_lib::services::chat::session_memory::{
-    begin_refresh, complete_refresh, delete_session_memory, memory_root, read_verified_body,
-    record_successful_turn,
+    begin_refresh, complete_refresh, delete_session_memory, memory_root,
+    pending_refresh_session_ids, read_verified_body, record_successful_turn,
+    recover_orphaned_refreshes,
 };
 
 #[test]
@@ -188,4 +189,41 @@ fn dirty_turns_during_refresh_are_preserved_for_follow_up_compaction() {
         .expect("follow-up job");
     assert_eq!(follow_up.messages.len(), 1);
     assert_eq!(follow_up.messages[0].content, "第二次总结。");
+}
+
+#[test]
+fn startup_recovery_demotes_interrupted_running_refreshes_to_dirty() {
+    let tempdir = tempdir().expect("tempdir");
+    let db_path = tempdir.path().join("cognios.db");
+    let conn = open_database(&db_path).expect("database");
+    let session = create_session(&conn, &CreateChatSessionInput { title: None }).expect("session");
+    append_message(
+        &conn,
+        &AppendChatMessageInput {
+            session_id: session.id.clone(),
+            role: "assistant".into(),
+            body: "第一次总结。".into(),
+            metadata_json: None,
+        },
+    )
+    .expect("assistant message");
+    record_successful_turn(&conn, &session.id, None, None, 16).expect("dirty memory");
+
+    let root = memory_root(tempdir.path());
+    assert!(begin_refresh(&conn, &root, &session.id)
+        .expect("begin refresh")
+        .is_some());
+
+    let recovered = recover_orphaned_refreshes(&conn).expect("recover interrupted refreshes");
+    assert_eq!(recovered, 1);
+    assert_eq!(
+        pending_refresh_session_ids(&conn).expect("pending refresh ids"),
+        vec![session.id.clone()]
+    );
+
+    let recovered_job = begin_refresh(&conn, &root, &session.id)
+        .expect("begin recovered refresh")
+        .expect("recovered job");
+    assert_eq!(recovered_job.messages.len(), 1);
+    assert_eq!(recovered_job.messages[0].content, "第一次总结。");
 }

@@ -31,6 +31,7 @@ use serde_json::Value;
 use super::supervisor::{SearchSidecarSupervisor, SupervisorState};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const CHAT_MEMORY_REFRESH_TIMEOUT: Duration = Duration::from_secs(4 * 60);
 
 /// All Tauri-facing sidecar commands return one of these envelopes.
 ///
@@ -659,6 +660,20 @@ impl SearchSidecarClient {
         B: Serialize + ?Sized,
         T: for<'de> Deserialize<'de>,
     {
+        self.post_envelope_with_timeout(path, body, REQUEST_TIMEOUT)
+            .await
+    }
+
+    async fn post_envelope_with_timeout<B, T>(
+        &self,
+        path: &str,
+        body: &B,
+        timeout: Duration,
+    ) -> SidecarEnvelope<T>
+    where
+        B: Serialize + ?Sized,
+        T: for<'de> Deserialize<'de>,
+    {
         let (base, token) = match self.rendezvous() {
             Ok(v) => v,
             Err(SidecarEnvelopeState::Initialising) => return SidecarEnvelope::initialising(),
@@ -672,6 +687,7 @@ impl SearchSidecarClient {
             .http
             .post(&url)
             .bearer_auth(&token)
+            .timeout(timeout)
             .json(body)
             .send()
             .await
@@ -809,7 +825,8 @@ impl SearchSidecarClient {
         &self,
         body: &ChatMemoryRefreshRequestDto,
     ) -> SidecarEnvelope<ChatMemoryRefreshResponseDto> {
-        self.post_envelope("/chat/memory/refresh", body).await
+        self.post_envelope_with_timeout("/chat/memory/refresh", body, CHAT_MEMORY_REFRESH_TIMEOUT)
+            .await
     }
 
     pub async fn chat_turn_stream<F>(
