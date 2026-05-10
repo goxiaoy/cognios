@@ -107,6 +107,15 @@ export interface SearchObservability {
     completionTokens: number;
     totalTokens: number;
   }>;
+  tokenUsageByDay?: Array<{
+    date: string;
+    totalTokens: number;
+    segments: Array<{
+      providerId: string;
+      model: string;
+      totalTokens: number;
+    }>;
+  }>;
 }
 
 export interface SearchObservabilityInput {

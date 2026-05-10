@@ -29,6 +29,7 @@ def test_observability_summary_starts_empty():
     assert body["latency"]["search"]["p90_ms"] is None
     assert body["latency_trends"]["search"] == []
     assert body["token_usage"] == []
+    assert body["token_usage_by_day"] == []
 
 
 def test_observability_summary_reports_percentiles_and_usage():
@@ -63,6 +64,7 @@ def test_observability_summary_reports_percentiles_and_usage():
             "total_tokens": 20,
         }
     ]
+    assert body["token_usage_by_day"] == []
 
 
 def test_observability_summary_supports_recent_day_windows(tmp_path: Path):
@@ -172,6 +174,18 @@ def test_observability_store_persists_windowed_token_usage(tmp_path: Path):
             "total_tokens": 10,
         }
     ]
+    assert len(seven["token_usage_by_day"]) == 7
+    assert seven["token_usage_by_day"][-1] == {
+        "date": now.date().isoformat(),
+        "total_tokens": 10,
+        "segments": [
+            {
+                "provider_id": "local-ollama",
+                "model": "llama3",
+                "total_tokens": 10,
+            }
+        ],
+    }
     assert thirty["token_usage"] == [
         {
             "provider_id": "local-ollama",
@@ -181,6 +195,35 @@ def test_observability_store_persists_windowed_token_usage(tmp_path: Path):
             "completion_tokens": 8,
             "total_tokens": 25,
         }
+    ]
+    assert len(thirty["token_usage_by_day"]) == 30
+    assert [
+        point
+        for point in thirty["token_usage_by_day"]
+        if point["total_tokens"] > 0
+    ] == [
+        {
+            "date": (now - timedelta(days=10)).date().isoformat(),
+            "total_tokens": 15,
+            "segments": [
+                {
+                    "provider_id": "local-ollama",
+                    "model": "llama3",
+                    "total_tokens": 15,
+                }
+            ],
+        },
+        {
+            "date": now.date().isoformat(),
+            "total_tokens": 10,
+            "segments": [
+                {
+                    "provider_id": "local-ollama",
+                    "model": "llama3",
+                    "total_tokens": 10,
+                }
+            ],
+        },
     ]
 
     conn = sqlite3.connect(db_path)
@@ -261,6 +304,7 @@ def test_observability_store_migrates_v1_samples_into_rollups(tmp_path: Path):
         store.close()
 
     assert summary["token_usage"][0]["total_tokens"] == 10
+    assert summary["token_usage_by_day"][-1]["total_tokens"] == 10
     conn = sqlite3.connect(db_path)
     try:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
@@ -310,5 +354,11 @@ def test_observability_route_applies_recent_window_to_metrics(tmp_path: Path):
     assert seven["latency"]["search"]["sample_count"] == 1
     assert seven["latency"]["search"]["latest_ms"] == 40
     assert seven["token_usage"][0]["total_tokens"] == 5
+    assert seven["token_usage_by_day"][-1]["total_tokens"] == 5
     assert thirty["latency"]["search"]["sample_count"] == 2
     assert thirty["token_usage"][0]["total_tokens"] == 20
+    assert [
+        point["total_tokens"]
+        for point in thirty["token_usage_by_day"]
+        if point["total_tokens"] > 0
+    ] == [15, 5]

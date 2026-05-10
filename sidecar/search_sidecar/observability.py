@@ -183,6 +183,9 @@ class ObservabilityStore:
                     for kind in LATENCY_KINDS
                 }
                 token_usage = self._token_usage_from_db(recent_days=recent_days)
+                token_usage_by_day = self._token_usage_by_day_from_db(
+                    recent_days=recent_days
+                )
                 latency_trends = {
                     kind: self._latency_trend_from_db(kind, recent_days=recent_days)
                     for kind in LATENCY_KINDS
@@ -199,11 +202,13 @@ class ObservabilityStore:
                         reverse=True,
                     )
                 ]
+                token_usage_by_day = []
                 latency_trends = {kind: [] for kind in LATENCY_KINDS}
         return {
             "recent_indexed_nodes": recent_indexed_nodes or [],
             "latency": latency,
             "token_usage": token_usage,
+            "token_usage_by_day": token_usage_by_day,
             "latency_trends": latency_trends,
         }
 
@@ -305,6 +310,49 @@ class ObservabilityStore:
                 "total_tokens": int(row["total_tokens"] or 0),
             }
             for row in rows
+        ]
+
+    def _token_usage_by_day_from_db(self, *, recent_days: int) -> list[dict]:
+        assert self._conn is not None
+        days = _recent_day_strings(recent_days)
+        buckets: dict[str, list[dict]] = {day: [] for day in days}
+        rows = self._conn.execute(
+            """
+            SELECT
+              substr(bucket_start, 1, 10) AS day,
+              provider_id,
+              model,
+              SUM(sum) AS total_tokens
+            FROM observability_metric_rollups
+            WHERE metric = ?
+              AND bucket_size = 'day'
+              AND bucket_start >= ?
+              AND provider_id != ''
+              AND model != ''
+            GROUP BY day, provider_id, model
+            HAVING total_tokens > 0
+            ORDER BY day ASC, total_tokens DESC
+            """,
+            (METRIC_LLM_TOKENS_TOTAL, _window_start_iso(recent_days)),
+        ).fetchall()
+        for row in rows:
+            day = str(row["day"])
+            if day not in buckets:
+                continue
+            buckets[day].append(
+                {
+                    "provider_id": row["provider_id"],
+                    "model": row["model"],
+                    "total_tokens": int(row["total_tokens"] or 0),
+                }
+            )
+        return [
+            {
+                "date": day,
+                "total_tokens": sum(segment["total_tokens"] for segment in segments),
+                "segments": segments,
+            }
+            for day, segments in buckets.items()
         ]
 
     def _insert_sample(

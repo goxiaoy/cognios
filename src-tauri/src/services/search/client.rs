@@ -271,6 +271,23 @@ pub struct TokenUsageSummaryDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct TokenUsageDailySegmentDto {
+    pub provider_id: String,
+    pub model: String,
+    pub total_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct TokenUsageDailyDto {
+    pub date: String,
+    pub total_tokens: u64,
+    #[serde(default)]
+    pub segments: Vec<TokenUsageDailySegmentDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct SearchObservabilityDto {
     #[serde(default)]
     pub recent_indexed_nodes: Vec<RecentIndexedNodeCountDto>,
@@ -279,6 +296,8 @@ pub struct SearchObservabilityDto {
     pub latency_trends: LatencyTrendsDto,
     #[serde(default)]
     pub token_usage: Vec<TokenUsageSummaryDto>,
+    #[serde(default)]
+    pub token_usage_by_day: Vec<TokenUsageDailyDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1284,12 +1303,22 @@ mod tests {
                 "prompt_tokens": 10,
                 "completion_tokens": 8,
                 "total_tokens": 18
+            }],
+            "token_usage_by_day": [{
+                "date": "2026-05-10",
+                "total_tokens": 18,
+                "segments": [{
+                    "provider_id": "local-ollama",
+                    "model": "llama3",
+                    "total_tokens": 18
+                }]
             }]
         }"#;
         let parsed: SearchObservabilityDto = serde_json::from_str(from_python).expect("decode");
         assert_eq!(parsed.recent_indexed_nodes[0].count, 4);
         assert_eq!(parsed.latency.search.p90_ms, Some(20));
         assert_eq!(parsed.token_usage[0].provider_id, "local-ollama");
+        assert_eq!(parsed.token_usage_by_day[0].segments[0].total_tokens, 18);
 
         let to_ts = serde_json::to_value(&parsed).unwrap();
         assert_eq!(to_ts["recentIndexedNodes"][0]["count"], 4);
@@ -1297,6 +1326,11 @@ mod tests {
         assert_eq!(to_ts["latencyTrends"]["search"][0]["p50Ms"], 10);
         assert_eq!(to_ts["latencyTrends"]["search"][0]["bucket"], "2026-05-10");
         assert_eq!(to_ts["tokenUsage"][0]["providerId"], "local-ollama");
+        assert_eq!(to_ts["tokenUsageByDay"][0]["totalTokens"], 18);
+        assert_eq!(
+            to_ts["tokenUsageByDay"][0]["segments"][0]["providerId"],
+            "local-ollama"
+        );
         assert!(to_ts.get("recent_indexed_nodes").is_none());
     }
 

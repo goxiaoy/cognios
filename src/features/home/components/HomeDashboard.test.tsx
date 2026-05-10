@@ -67,6 +67,24 @@ function makeClient(): SearchClient {
             totalTokens: 20,
           },
         ],
+        tokenUsageByDay: [
+          {
+            date: "2026-05-09",
+            totalTokens: 0,
+            segments: [],
+          },
+          {
+            date: "2026-05-10",
+            totalTokens: 20,
+            segments: [
+              {
+                providerId: "local-ollama",
+                model: "llama3",
+                totalTokens: 20,
+              },
+            ],
+          },
+        ],
       },
     }),
     nodeIndexStatus: vi.fn(),
@@ -121,8 +139,9 @@ describe("HomeDashboard", () => {
       expect(screen.getByText("Recent indexing")).toBeInTheDocument();
       expect(screen.getByLabelText("Recent indexed nodes bar chart")).toBeInTheDocument();
       expect(screen.getByLabelText("P99 latency line chart")).toBeInTheDocument();
-      expect(screen.getByLabelText("Token usage bar chart")).toBeInTheDocument();
+      expect(screen.getByLabelText("Token usage daily stacked bar chart")).toBeInTheDocument();
     });
+    expect(screen.getByText("llama3 · local-ollama")).toBeInTheDocument();
     expect(screen.queryByText("Downloads")).not.toBeInTheDocument();
     expect(client.observability).toHaveBeenCalledWith({ recentDays: 30 });
     expect(client.settings).not.toHaveBeenCalled();

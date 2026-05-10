@@ -41,6 +41,14 @@ const LATENCY_CATEGORIES = [
   { key: "enhancement", label: "OCR", color: "#9a5a00" },
 ] as const;
 type LatencyCategoryKey = (typeof LATENCY_CATEGORIES)[number]["key"];
+const TOKEN_SERIES_COLORS = [
+  "#16794f",
+  "#3867b7",
+  "#9a5a00",
+  "#7c3aed",
+  "#be123c",
+  "#0f766e",
+];
 const CHART_ACCENT = "var(--accent)";
 const CHART_MUTED = "var(--muted)";
 const CHART_LINE = "var(--line)";
@@ -363,51 +371,135 @@ function TokenUsage({
 }: {
   observability: SearchObservability | null;
 }) {
-  const usage = observability?.tokenUsage ?? [];
-  if (usage.length === 0) {
+  const usage = observability?.tokenUsageByDay ?? [];
+  const hasUsage = usage.some((day) => day.totalTokens > 0);
+  if (!hasUsage) {
     return <p className="home-empty">No token usage reported.</p>;
   }
-  const rows = usage.slice(0, 6).map((row) => ({
-    name: row.model,
-    provider: row.providerId,
-    totalTokens: row.totalTokens,
-    label: `${row.model} · ${row.providerId}`,
+  const series = visibleTokenUsageSeries(tokenUsageSeries(usage));
+  const visibleKeys = new Set(
+    series.filter((item) => item.key !== "other").map((item) => item.key)
+  );
+  const rows = usage.map((day) => ({
+    date: day.date,
+    label: compactDate(day.date),
+    totalTokens: day.totalTokens,
+    ...Object.fromEntries(
+      series.map((item) => [
+        item.dataKey,
+        day.segments.find((segment) => tokenSegmentKey(segment) === item.key)
+          ?.totalTokens ?? 0,
+      ])
+    ),
+    other: day.segments
+      .filter((segment) => !visibleKeys.has(tokenSegmentKey(segment)))
+      .reduce((total, segment) => total + segment.totalTokens, 0),
   }));
-  const height = Math.max(150, rows.length * 34 + 32);
   return (
-    <div className="home-chart" role="img" aria-label="Token usage bar chart">
-      <ResponsiveContainer width="100%" height={height}>
-        <BarChart
-          data={rows}
-          layout="vertical"
-          margin={{ top: 4, right: 18, bottom: 0, left: 8 }}
-        >
-          <CartesianGrid stroke={CHART_LINE} strokeDasharray="3 3" horizontal={false} />
-          <XAxis
-            type="number"
-            axisLine={false}
-            tickLine={false}
-            tick={{ fill: CHART_MUTED, fontSize: 10 }}
-            tickFormatter={(value) => compactNumber(Number(value))}
-          />
-          <YAxis
-            type="category"
-            dataKey="name"
-            axisLine={false}
-            tickLine={false}
-            tick={{ fill: CHART_MUTED, fontSize: 10 }}
-            width={82}
-          />
-          <Tooltip
-            contentStyle={tooltipStyle()}
-            labelFormatter={(_label, payload) => payload?.[0]?.payload?.label ?? ""}
-            formatter={(value) => [`${Number(value).toLocaleString()} tokens`, "Usage"]}
-          />
-          <Bar dataKey="totalTokens" fill={CHART_ACCENT} radius={[0, 3, 3, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
+    <div className="home-token-panel">
+      <div className="home-chart" role="img" aria-label="Token usage daily stacked bar chart">
+        <ResponsiveContainer width="100%" height={170}>
+          <BarChart data={rows} margin={{ top: 6, right: 4, bottom: 0, left: -18 }}>
+            <CartesianGrid stroke={CHART_LINE} strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              dataKey="label"
+              axisLine={false}
+              tickLine={false}
+              tick={{ fill: CHART_MUTED, fontSize: 10 }}
+              interval={usage.length <= 7 ? 0 : 4}
+            />
+            <YAxis
+              allowDecimals={false}
+              axisLine={false}
+              tickLine={false}
+              tick={{ fill: CHART_MUTED, fontSize: 10 }}
+              tickFormatter={(value) => compactNumber(Number(value))}
+              width={40}
+            />
+            <Tooltip
+              contentStyle={tooltipStyle()}
+              labelFormatter={(_label, payload) => payload?.[0]?.payload?.date ?? ""}
+              formatter={(value, name) => [
+                `${Number(value).toLocaleString()} tokens`,
+                tokenSeriesLabel(String(name), series),
+              ]}
+            />
+            {series.map((item, index) => (
+              <Bar
+                key={item.key}
+                dataKey={item.dataKey}
+                stackId="tokens"
+                fill={TOKEN_SERIES_COLORS[index % TOKEN_SERIES_COLORS.length]}
+                radius={index === series.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
+              />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="home-token-legend" aria-label="Token usage model proportions">
+        {series.map((item, index) => (
+          <span key={item.key}>
+            <i style={{ background: TOKEN_SERIES_COLORS[index % TOKEN_SERIES_COLORS.length] }} />
+            {item.label}
+          </span>
+        ))}
+      </div>
     </div>
   );
+}
+
+type TokenUsageDay = NonNullable<SearchObservability["tokenUsageByDay"]>[number];
+type TokenUsageSegment = TokenUsageDay["segments"][number];
+
+function tokenUsageSeries(days: TokenUsageDay[]) {
+  const totals = new Map<string, { key: string; label: string; totalTokens: number }>();
+  for (const day of days) {
+    for (const segment of day.segments) {
+      const key = tokenSegmentKey(segment);
+      const current = totals.get(key) ?? {
+        key,
+        label: tokenSegmentLabel(segment),
+        totalTokens: 0,
+      };
+      current.totalTokens += segment.totalTokens;
+      totals.set(key, current);
+    }
+  }
+  return Array.from(totals.values())
+    .sort((a, b) => b.totalTokens - a.totalTokens)
+    .map((item, index) => ({ ...item, dataKey: `model${index}` }));
+}
+
+function visibleTokenUsageSeries(
+  series: Array<{ key: string; label: string; totalTokens: number; dataKey: string }>
+) {
+  const visible = series.slice(0, TOKEN_SERIES_COLORS.length - 1);
+  const hidden = series.slice(TOKEN_SERIES_COLORS.length - 1);
+  if (hidden.length === 0) return visible;
+  return [
+    ...visible,
+    {
+      key: "other",
+      label: "Other",
+      totalTokens: hidden.reduce((total, item) => total + item.totalTokens, 0),
+      dataKey: "other",
+    },
+  ];
+}
+
+function tokenSegmentKey(segment: TokenUsageSegment): string {
+  return `${segment.providerId}::${segment.model}`;
+}
+
+function tokenSegmentLabel(segment: TokenUsageSegment): string {
+  return `${segment.model} · ${segment.providerId}`;
+}
+
+function tokenSeriesLabel(
+  key: string,
+  series: Array<{ dataKey: string; label: string }>
+): string {
+  return series.find((item) => item.dataKey === key)?.label ?? key;
 }
 
 function latencyChartData(
