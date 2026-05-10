@@ -5731,6 +5731,7 @@ button.chat-session-item:not(:disabled):hover {
 .chat-topbar,
 .chat-topbar-actions,
 .chat-composer-actions,
+.chat-composer-meta-group,
 .chat-runtime-pill,
 .chat-kicker,
 .chat-composer-meta {
@@ -5812,8 +5813,8 @@ button.chat-runtime-pill:not(:disabled):hover {
 }
 
 .chat-model-picker select {
-  min-width: 9rem;
-  max-width: 14rem;
+  min-width: 8rem;
+  max-width: 13rem;
   border: 0;
   background: transparent;
   color: var(--ink);
@@ -6151,6 +6152,12 @@ button.chat-context-toggle:not(:disabled):hover {
 
 .chat-composer-meta {
   gap: 0.35rem;
+}
+
+.chat-composer-meta-group {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 
 .chat-composer-actions {

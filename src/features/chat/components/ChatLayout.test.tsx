@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -205,6 +205,9 @@ describe("ChatLayout", () => {
       target: { value: "整理事故时间线" },
     });
     expect(await screen.findByLabelText(/model/i)).toHaveValue("llama3.2");
+    expect(
+      within(screen.getByRole("form", { name: /chat composer/i })).getByLabelText(/model/i)
+    ).toHaveValue("llama3.2");
     expect(screen.queryByRole("button", { name: /Synthesize/i })).not.toBeInTheDocument();
     fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
 

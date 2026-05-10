@@ -556,18 +556,6 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
               <BookOpen size={14} aria-hidden="true" />
               Memory
             </button>
-            {models.length > 0 ? (
-              <label className="chat-model-picker">
-                Model
-                <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
-                  {models.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
           </div>
         </header>
 
@@ -607,7 +595,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
           <div ref={transcriptEndRef} className="chat-transcript-end" aria-hidden="true" />
         </section>
 
-        <form className="chat-composer" onSubmit={submit}>
+        <form className="chat-composer" aria-label="Chat composer" onSubmit={submit}>
           {contextNodes.length > 0 || contextError ? (
             <div className="chat-context-area">
               {contextNodes.length > 0 ? (
@@ -638,10 +626,24 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
             aria-label="Chat message"
           />
           <div className="chat-composer-footer">
-            <span className="chat-composer-meta">
-              <Globe size={14} aria-hidden="true" />
-              Workspace + web{contextNodes.length > 0 ? ` + ${contextNodes.length} context` : ""}
-            </span>
+            <div className="chat-composer-meta-group">
+              {models.length > 0 ? (
+                <label className="chat-model-picker">
+                  Model
+                  <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
+                    {models.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <span className="chat-composer-meta">
+                <Globe size={14} aria-hidden="true" />
+                Workspace + web{contextNodes.length > 0 ? ` + ${contextNodes.length} context` : ""}
+              </span>
+            </div>
             <div className="chat-composer-actions">
               <button
                 className="chat-context-toggle"
