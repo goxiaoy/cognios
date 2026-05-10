@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type { NodeContentChunk } from "../../../lib/contracts/search";
 import { VFS_EVENT_NAME, type VfsChangeEvent } from "../../../lib/tauri/events";
 import type { SearchClient } from "../../search/types/search";
+import { rewriteAssetReferences } from "../utils/assetReferences";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { MarkdownView } from "./MarkdownView";
 
@@ -255,24 +255,4 @@ function ImagePreviewEmptyState({
       </p>
     </div>
   );
-}
-
-function rewriteAssetReferences(
-  text: string,
-  assets: Record<string, string>
-): string {
-  let rendered = text;
-  for (const [source, filePath] of Object.entries(assets)) {
-    if (!source || !filePath) continue;
-    rendered = rendered.split(source).join(toAssetUrl(filePath));
-  }
-  return rendered;
-}
-
-function toAssetUrl(filePath: string): string {
-  try {
-    return convertFileSrc(filePath);
-  } catch {
-    return filePath;
-  }
 }

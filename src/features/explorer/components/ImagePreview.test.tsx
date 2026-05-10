@@ -253,6 +253,44 @@ describe("ImagePreview", () => {
     });
   });
 
+  it("rewrites advanced OCR jpg references to extracted png assets", async () => {
+    const source = "imgs/img_in_chart_box_50_39_1204_423.jpg";
+    const assetPath =
+      "/Users/test/.cogios/search/extract/1bf3e220-234d-4e0f-a59d-0595e2d17f2e/assets/advanced/imgs/img_in_chart_box_50_39_1204_423.png";
+    const client = clientWithChunks(
+      [
+        {
+          id: "pdf-1:0",
+          role: "body",
+          text: `<div style="text-align: center;"><img src="${source}" alt="Image" width="94%" /></div>`,
+        },
+      ],
+      { [source]: assetPath }
+    );
+    const { container } = render(
+      <ImagePreview
+        contentKind="pdf"
+        searchClient={client}
+        nodeId="pdf-1"
+        name="advanced.pdf"
+      />
+    );
+
+    await waitFor(() => {
+      expect(
+        container.querySelector("img[alt='Image']")?.getAttribute("src")
+      ).toBe(`http://asset.localhost${assetPath}`);
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: /^source$/i }));
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-content")?.textContent).toContain(
+        `src="${source}"`
+      );
+    });
+  });
+
   it("renders the explanatory empty state when no chunks have been indexed", async () => {
     const client = clientWithChunks([]);
     render(
