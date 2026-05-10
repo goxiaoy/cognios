@@ -31,6 +31,13 @@ pub struct BindChatNoteInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpdateChatSessionTitleInput {
+    pub session_id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RecordChatClusterInput {
     pub session_id: String,
     #[serde(default)]
@@ -231,6 +238,31 @@ pub fn delete_session(
 ) -> rusqlite::Result<DeleteChatSessionResult> {
     let rows = conn.execute("DELETE FROM chat_sessions WHERE id = ?1", [session_id])?;
     Ok(DeleteChatSessionResult { deleted: rows > 0 })
+}
+
+pub fn update_session_title(
+    conn: &Connection,
+    input: &UpdateChatSessionTitleInput,
+) -> rusqlite::Result<ChatSessionDto> {
+    ensure_session_exists(conn, &input.session_id)?;
+    let title = input.title.trim();
+    if title.is_empty() {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "chat session title must not be empty".into(),
+        ));
+    }
+
+    conn.execute(
+        "
+        UPDATE chat_sessions
+        SET title = ?2, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?1
+        ",
+        params![input.session_id, title],
+    )?;
+
+    get_session(conn, &input.session_id)?
+        .ok_or_else(|| rusqlite::Error::InvalidParameterName("updated chat session missing".into()))
 }
 
 fn list_messages(conn: &Connection, session_id: &str) -> rusqlite::Result<Vec<ChatMessageDto>> {

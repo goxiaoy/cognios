@@ -6,27 +6,41 @@ import type { ChatClient } from "../api/chatClient";
 import { ChatLayout } from "./ChatLayout";
 
 function makeClient(): ChatClient {
+  let sessionTitle = "New chat";
   return {
-    createSession: vi.fn().mockResolvedValue({
-      id: "s1",
-      title: "Research chat",
-      boundNoteId: null,
-      createdAt: "now",
-      updatedAt: "now",
+    createSession: vi.fn().mockImplementation(async (input) => {
+      sessionTitle = input?.title ?? "New chat";
+      return {
+        id: "s1",
+        title: sessionTitle,
+        boundNoteId: null,
+        createdAt: "now",
+        updatedAt: "now",
+      };
     }),
     listSessions: vi.fn().mockResolvedValue([]),
-    getSession: vi.fn().mockResolvedValue({
+    getSession: vi.fn().mockImplementation(async ({ sessionId }) => ({
       session: {
-        id: "s1",
-        title: "Research chat",
+        id: sessionId,
+        title: sessionTitle,
         boundNoteId: null,
         createdAt: "now",
         updatedAt: "now",
       },
       messages: [],
       clusters: [],
-    }),
+    })),
     deleteSession: vi.fn().mockResolvedValue({ deleted: true }),
+    updateSessionTitle: vi.fn().mockImplementation(async ({ sessionId, title }) => {
+      sessionTitle = title;
+      return {
+        id: sessionId,
+        title,
+        boundNoteId: null,
+        createdAt: "now",
+        updatedAt: "now",
+      };
+    }),
     appendMessage: vi.fn(),
     recordCluster: vi.fn(),
     bindNote: vi.fn(),
@@ -92,6 +106,38 @@ describe("ChatLayout", () => {
       model: "llama3.2",
       includeWeb: true,
     });
+    expect(client.createSession).toHaveBeenCalledWith({ title: "整理事故时间线" });
+  });
+
+  it("retitles an empty default session from the first question", async () => {
+    const client = makeClient();
+    const session = {
+      id: "s1",
+      title: "New chat",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    vi.mocked(client.listSessions).mockResolvedValue([session]);
+    vi.mocked(client.getSession).mockResolvedValue({
+      session,
+      messages: [],
+      clusters: [],
+    });
+
+    render(<ChatLayout client={client} />);
+    fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
+      target: { value: "这次事故的费用和责任怎么判断？" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /^Search$/i }));
+
+    await waitFor(() => {
+      expect(client.updateSessionTitle).toHaveBeenCalledWith({
+        sessionId: "s1",
+        title: "这次事故的费用和责任怎么判断",
+      });
+    });
+    expect(client.createSession).not.toHaveBeenCalled();
   });
 
   it("uses the model selected in chat for the next turn", async () => {

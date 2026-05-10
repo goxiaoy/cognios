@@ -303,6 +303,7 @@ pub fn run() {
             commands::chat::list_chat_sessions,
             commands::chat::get_chat_session,
             commands::chat::delete_chat_session,
+            commands::chat::update_chat_session_title,
             commands::chat::append_chat_message,
             commands::chat::record_chat_cluster,
             commands::chat::bind_chat_note,

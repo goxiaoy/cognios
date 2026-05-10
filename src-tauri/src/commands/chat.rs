@@ -6,8 +6,9 @@ use crate::domain::chat::{
 };
 use crate::infrastructure::db::chat_repository::{
     append_message, bind_note, create_session, delete_session, get_session_detail, list_sessions,
-    record_cluster, AppendChatMessageInput, BindChatNoteInput, CreateChatSessionInput,
-    DeleteChatSessionResult, RecordChatClusterInput,
+    record_cluster, update_session_title, AppendChatMessageInput, BindChatNoteInput,
+    CreateChatSessionInput, DeleteChatSessionResult, RecordChatClusterInput,
+    UpdateChatSessionTitleInput,
 };
 use crate::services::chat::live_note::update_live_note;
 use crate::services::search::{
@@ -106,6 +107,18 @@ pub fn delete_chat_session(
         .connect()
         .map_err(|error: rusqlite::Error| error.to_string())?;
     delete_session(&conn, &input.session_id).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn update_chat_session_title(
+    state: State<'_, AppState>,
+    input: UpdateChatSessionTitleInput,
+) -> Result<ChatSessionDto, String> {
+    let conn = state
+        .db
+        .connect()
+        .map_err(|error: rusqlite::Error| error.to_string())?;
+    update_session_title(&conn, &input).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

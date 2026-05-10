@@ -2,7 +2,8 @@ use tempfile::tempdir;
 
 use cognios_lib::infrastructure::db::chat_repository::{
     append_message, bind_note, create_session, get_session_detail, list_sessions, record_cluster,
-    AppendChatMessageInput, BindChatNoteInput, CreateChatSessionInput, RecordChatClusterInput,
+    update_session_title, AppendChatMessageInput, BindChatNoteInput, CreateChatSessionInput,
+    RecordChatClusterInput, UpdateChatSessionTitleInput,
 };
 use cognios_lib::infrastructure::db::connection::open_database;
 use cognios_lib::services::notes::create_note::{create_note, CreateNoteInput};
@@ -115,6 +116,33 @@ fn opening_session_history_does_not_enqueue_external_work() {
     assert!(detail.messages.is_empty());
     assert!(detail.clusters.is_empty());
     assert!(list_sessions(&conn).expect("sessions").len() == 1);
+}
+
+#[test]
+fn updates_chat_session_title_after_first_prompt() {
+    let tempdir = tempdir().expect("tempdir");
+    let db_path = tempdir.path().join("cognios.db");
+    let conn = open_database(&db_path).expect("database");
+    let session = create_session(&conn, &CreateChatSessionInput { title: None }).expect("session");
+
+    let updated = update_session_title(
+        &conn,
+        &UpdateChatSessionTitleInput {
+            session_id: session.id.clone(),
+            title: "整理事故时间线".into(),
+        },
+    )
+    .expect("title update");
+
+    assert_eq!(updated.title, "整理事故时间线");
+    assert_eq!(
+        get_session_detail(&conn, &session.id)
+            .expect("detail query")
+            .expect("detail exists")
+            .session
+            .title,
+        "整理事故时间线"
+    );
 }
 
 #[test]

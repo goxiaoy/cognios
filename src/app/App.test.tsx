@@ -70,6 +70,13 @@ vi.mock("../lib/tauri/ipc", () => ({
     clusters: [],
   }),
   deleteChatSession: vi.fn().mockResolvedValue({ deleted: true }),
+  updateChatSessionTitle: vi.fn().mockImplementation(async (input: { sessionId: string; title: string }) => ({
+    id: input.sessionId,
+    title: input.title,
+    boundNoteId: null,
+    createdAt: "now",
+    updatedAt: "now",
+  })),
   appendChatMessage: vi.fn(),
   recordChatCluster: vi.fn(),
   bindChatNote: vi.fn(),

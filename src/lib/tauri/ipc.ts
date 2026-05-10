@@ -15,6 +15,7 @@ import type {
   StartChatTurnResult,
   TestChatProviderInput,
   TestChatProviderResult,
+  UpdateChatSessionTitleInput,
 } from "../contracts/chat";
 import type {
   IndexStatus,
@@ -156,6 +157,12 @@ export async function deleteChatSession(
   input: ChatSessionInput
 ): Promise<DeleteChatSessionResult> {
   return invoke<DeleteChatSessionResult>("delete_chat_session", { input });
+}
+
+export async function updateChatSessionTitle(
+  input: UpdateChatSessionTitleInput
+): Promise<ChatSession> {
+  return invoke<ChatSession>("update_chat_session_title", { input });
 }
 
 export async function appendChatMessage(

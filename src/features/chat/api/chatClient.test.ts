@@ -52,6 +52,28 @@ describe("chatClient", () => {
     });
   });
 
+  it("updates a chat session title through the Tauri command", async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      id: "s1",
+      title: "事故时间线",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    });
+
+    await chatClient.updateSessionTitle({
+      sessionId: "s1",
+      title: "事故时间线",
+    });
+
+    expect(mockedInvoke).toHaveBeenCalledWith("update_chat_session_title", {
+      input: {
+        sessionId: "s1",
+        title: "事故时间线",
+      },
+    });
+  });
+
   it("appends a chat message with metadata", async () => {
     mockedInvoke.mockResolvedValueOnce({
       id: "m1",

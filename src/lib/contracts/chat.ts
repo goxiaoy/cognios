@@ -51,6 +51,11 @@ export interface ChatSessionInput {
   sessionId: string;
 }
 
+export interface UpdateChatSessionTitleInput {
+  sessionId: string;
+  title: string;
+}
+
 export interface AppendChatMessageInput {
   sessionId: string;
   role: ChatMessageRole;

@@ -56,9 +56,22 @@ export function ChatLayout({ client }: { client: ChatClient }) {
     }
   }
 
-  async function ensureSession(): Promise<ChatSessionDetail> {
-    if (active) return active;
-    const session = await client.createSession({ title: "Research chat" });
+  async function ensureSession(title: string): Promise<ChatSessionDetail> {
+    if (active) {
+      if (shouldRetitleSession(active)) {
+        const updated = await client.updateSessionTitle({
+          sessionId: active.session.id,
+          title,
+        });
+        const detail = { ...active, session: updated };
+        setActive(detail);
+        setSessions((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+        return detail;
+      }
+      return active;
+    }
+
+    const session = await client.createSession({ title });
     const detail = await client.getSession({ sessionId: session.id });
     setActive(detail);
     setSessions((items) => [session, ...items]);
@@ -66,22 +79,24 @@ export function ChatLayout({ client }: { client: ChatClient }) {
   }
 
   async function createNewSession() {
-    const session = await client.createSession({ title: "Research chat" });
-    await refreshSessions(session.id);
+    setActive(null);
     setTurn(null);
     setAccepted(new Set());
+    setQuery("");
+    setError(null);
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!query.trim()) return;
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) return;
     setBusy(true);
     setError(null);
     try {
-      const session = await ensureSession();
+      const session = await ensureSession(sessionTitleFromQuery(trimmedQuery));
       const result = await client.startTurn({
         sessionId: session.session.id,
-        query: query.trim(),
+        query: trimmedQuery,
         model: selectedModel || null,
         includeWeb: true,
       });
@@ -408,4 +423,27 @@ function SourceClusterPanel({
       )}
     </aside>
   );
+}
+
+function shouldRetitleSession(detail: ChatSessionDetail): boolean {
+  const title = detail.session.title.trim().toLowerCase();
+  return detail.messages.length === 0 && (title === "new chat" || title === "research chat");
+}
+
+function sessionTitleFromQuery(query: string): string {
+  const compact = query
+    .replace(/\s+/g, " ")
+    .replace(/^[#>*\-\s]+/, "")
+    .replace(/[。！？!?.,，、；;：:]+$/g, "")
+    .trim();
+  if (!compact) return "New chat";
+
+  const maxLength = containsCjk(compact) ? 18 : 48;
+  const chars = Array.from(compact);
+  if (chars.length <= maxLength) return compact;
+  return `${chars.slice(0, maxLength).join("").trim()}...`;
+}
+
+function containsCjk(value: string): boolean {
+  return /[\u3400-\u9fff]/.test(value);
 }
