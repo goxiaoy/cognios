@@ -61,6 +61,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
   const [sessionMenu, setSessionMenu] = useState<{ session: ChatSession; x: number; y: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const activeTurnEventIdRef = useRef<string | null>(null);
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     void refreshSessions();
@@ -339,6 +340,10 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
   );
   const title = active?.session.title ?? "New chat";
 
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ block: "end", inline: "nearest" });
+  }, [active?.session.id, transcript.length, optimisticTranscript.length, turn?.answer]);
+
   return (
     <section className="chat-layout" aria-label="Chat">
       <aside className="chat-session-list" aria-label="Chat sessions">
@@ -460,6 +465,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
               <p className="chat-message-body">{turn?.answer}</p>
             </article>
           ) : null}
+          <div ref={transcriptEndRef} className="chat-transcript-end" aria-hidden="true" />
         </section>
 
         <form className="chat-composer" onSubmit={submit}>

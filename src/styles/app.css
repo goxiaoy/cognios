@@ -5880,6 +5880,10 @@ button.chat-session-item:not(:disabled):hover {
   text-transform: uppercase;
 }
 
+.chat-transcript-end {
+  min-height: 1px;
+}
+
 .chat-composer {
   grid-row: 4;
   display: grid;

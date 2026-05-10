@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatSessionDetail, ChatTurnStreamPayload } from "../../../lib/contracts/chat";
 import { ExplorerStoreProvider } from "../../explorer/store/ExplorerStoreContext";
@@ -14,6 +14,7 @@ const eventMock = vi.hoisted(() => ({
   chatTurnListener: null as ChatTurnListener | null,
   unlisten: vi.fn(),
 }));
+const scrollIntoViewMock = vi.fn();
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (name: string, cb: ChatTurnListener) => {
@@ -168,6 +169,14 @@ function makeExplorerClient(): ExplorerClient {
 }
 
 describe("ChatLayout", () => {
+  beforeEach(() => {
+    scrollIntoViewMock.mockReset();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoViewMock,
+    });
+  });
+
   afterEach(() => {
     cleanup();
     eventMock.chatTurnListener = null;
@@ -282,6 +291,77 @@ describe("ChatLayout", () => {
     });
     await waitFor(() => {
       expect(client.listSessions).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("scrolls to the latest chat content while a turn streams", async () => {
+    const client = makeClient();
+    let resolveTurn: ((value: Awaited<ReturnType<ChatClient["startTurn"]>>) => void) | null = null;
+    vi.mocked(client.startTurn).mockImplementationOnce(
+      async () =>
+        new Promise((resolve) => {
+          resolveTurn = resolve;
+        })
+    );
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    const composer = screen.getByPlaceholderText(/timeline/i);
+    await waitFor(() => {
+      expect(eventMock.chatTurnListener).not.toBeNull();
+    });
+    scrollIntoViewMock.mockClear();
+
+    fireEvent.change(composer, {
+      target: { value: "整理事故时间线" },
+    });
+    fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: "end", inline: "nearest" });
+    });
+    scrollIntoViewMock.mockClear();
+    const turnEventId = vi.mocked(client.startTurn).mock.calls[0][0].turnEventId!;
+
+    act(() => {
+      eventMock.chatTurnListener!({
+        payload: {
+          turnEventId,
+          event: { event: "delta", delta: "事故发生在 " },
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: "end", inline: "nearest" });
+    });
+    scrollIntoViewMock.mockClear();
+
+    act(() => {
+      eventMock.chatTurnListener!({
+        payload: {
+          turnEventId,
+          event: { event: "delta", delta: "3 月 1 日。" },
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: "end", inline: "nearest" });
+    });
+
+    act(() => {
+      resolveTurn!({
+        turn: {
+          state: "ready",
+          data: {
+            state: "ready",
+            clusters: [],
+            answer: "事故发生在 3 月 1 日。",
+            citations: [],
+            warnings: [],
+          },
+        },
+      });
     });
   });
 
