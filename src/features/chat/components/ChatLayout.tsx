@@ -472,6 +472,7 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
   const showAssistantLoading = Boolean(busy && optimisticTranscript.length > 0 && !turn?.answer && !error);
   const title = active?.session.title ?? "New chat";
   const memoryAvailable = Boolean(active?.memory?.available);
+  const renderableMemoryBody = memoryBody ? normalizeMemoryMarkdown(memoryBody) : "";
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ block: "end", inline: "nearest" });
@@ -702,12 +703,12 @@ export function ChatLayout({ client, searchClient }: { client: ChatClient; searc
                 ) : null}
               </div>
             ) : null}
-            {!memoryLoading && !memoryError && memoryBody ? (
-              <div className="chat-message-markdown markdown-body">
-                <MarkdownRenderer allowHtml={false}>{memoryBody}</MarkdownRenderer>
+            {!memoryLoading && !memoryError && renderableMemoryBody ? (
+              <div className="chat-message-markdown chat-memory-markdown markdown-body">
+                <MarkdownRenderer allowHtml={false}>{renderableMemoryBody}</MarkdownRenderer>
               </div>
             ) : null}
-            {!memoryLoading && !memoryError && !memoryBody ? (
+            {!memoryLoading && !memoryError && !renderableMemoryBody ? (
               <p className="chat-memory-placeholder">Session Memory is not available yet.</p>
             ) : null}
           </div>
@@ -834,6 +835,13 @@ function ChatMessageBody({
       <MarkdownRenderer allowHtml={false}>{body}</MarkdownRenderer>
     </div>
   );
+}
+
+function normalizeMemoryMarkdown(body: string): string {
+  const trimmed = body.trim();
+  const fencedMarkdown = /^```(?:markdown|md|gfm)[^\S\r\n]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/i.exec(trimmed);
+  if (!fencedMarkdown) return body;
+  return fencedMarkdown[1].trim();
 }
 
 function shouldRetitleSession(detail: ChatSessionDetail): boolean {

@@ -381,7 +381,7 @@ describe("ChatLayout", () => {
     });
     vi.mocked(client.getSessionMemory).mockResolvedValue({
       available: true,
-      body: "## Timeline\n\n<script>alert('x')</script>\n\n- 3 月 1 日：事故发生",
+      body: "```markdown\n## Timeline\n\n<script>alert('x')</script>\n\n- **3 月 1 日**：事故发生\n```",
       revision: 2,
     });
 
@@ -391,6 +391,8 @@ describe("ChatLayout", () => {
 
     expect(await screen.findByRole("heading", { name: "Session Memory" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Timeline", level: 2 })).toBeInTheDocument();
+    expect(screen.getByText("3 月 1 日")).toHaveProperty("tagName", "STRONG");
+    expect(document.querySelector(".chat-memory-markdown pre")).toBeNull();
     expect(document.querySelector(".chat-memory-panel script")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Save as Note" }));
