@@ -356,7 +356,12 @@ describe("ChatLayout", () => {
 
     render(<ChatLayout client={client} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Delete chat Research chat/i }));
+    expect(screen.queryByRole("button", { name: /Delete chat Research chat/i })).not.toBeInTheDocument();
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "Research chat" }), {
+      clientX: 120,
+      clientY: 160,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Delete$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^Delete$/i }));
 
     await waitFor(() => {
@@ -393,7 +398,11 @@ describe("ChatLayout", () => {
 
     render(<ChatLayout client={client} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Delete chat First chat/i }));
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "First chat" }), {
+      clientX: 120,
+      clientY: 160,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Delete$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^Delete$/i }));
 
     await waitFor(() => {

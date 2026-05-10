@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Check, CircleAlert, FileText, Globe, MessageSquare, Plus, Search, Sparkles, Trash2 } from "lucide-react";
+import { Check, CircleAlert, FileText, Globe, MessageSquare, Plus, Search, Sparkles } from "lucide-react";
 
 import type {
   ChatSession,
@@ -22,12 +22,31 @@ export function ChatLayout({ client }: { client: ChatClient }) {
   const [busy, setBusy] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ChatSession | null>(null);
+  const [sessionMenu, setSessionMenu] = useState<{ session: ChatSession; x: number; y: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshSessions();
     void refreshModels();
   }, []);
+
+  useEffect(() => {
+    if (!sessionMenu) return;
+    function close() {
+      setSessionMenu(null);
+    }
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [sessionMenu]);
+
+  useEffect(() => {
+    if (!sessionMenu) return;
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setSessionMenu(null);
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [sessionMenu]);
 
   async function refreshModels() {
     try {
@@ -154,6 +173,7 @@ export function ChatLayout({ client }: { client: ChatClient }) {
 
       const next = await client.listSessions();
       setSessions(next);
+      setSessionMenu(null);
 
       if (active?.session.id === session.id) {
         const fallback = next[0];
@@ -209,11 +229,25 @@ export function ChatLayout({ client }: { client: ChatClient }) {
               <div
                 key={session.id}
                 className={`chat-session-row${isActive ? " is-active" : ""}`}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setSessionMenu({ session, x: event.clientX, y: event.clientY });
+                }}
               >
                 <button
                   type="button"
                   className="chat-session-item"
                   onClick={() => refreshSessions(session.id)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+                    event.preventDefault();
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    setSessionMenu({
+                      session,
+                      x: rect.left + Math.min(rect.width - 12, 160),
+                      y: rect.top + Math.min(rect.height - 4, 44),
+                    });
+                  }}
                 >
                   <span className="chat-session-title">{session.title}</span>
                   {session.boundNoteId ? (
@@ -222,15 +256,6 @@ export function ChatLayout({ client }: { client: ChatClient }) {
                       Note
                     </span>
                   ) : null}
-                </button>
-                <button
-                  type="button"
-                  className="chat-session-delete"
-                  aria-label={`Delete chat ${session.title}`}
-                  disabled={busy || deletingId !== null}
-                  onClick={() => setDeleteTarget(session)}
-                >
-                  <Trash2 size={14} aria-hidden="true" />
                 </button>
               </div>
             );
@@ -341,6 +366,28 @@ export function ChatLayout({ client }: { client: ChatClient }) {
           });
         }}
       />
+
+      {sessionMenu ? (
+        <div
+          className="tree-context-menu chat-session-context-menu"
+          role="menu"
+          style={{ top: sessionMenu.y, left: sessionMenu.x }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <button
+            className="tree-context-item tree-context-item--danger"
+            role="menuitem"
+            type="button"
+            disabled={busy || deletingId !== null}
+            onClick={() => {
+              setDeleteTarget(sessionMenu.session);
+              setSessionMenu(null);
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      ) : null}
 
       {deleteTarget ? (
         <div className="modal-overlay" onClick={(event) => {
