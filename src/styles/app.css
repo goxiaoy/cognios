@@ -4695,6 +4695,20 @@ body.is-resizing-pane {
   color: var(--paper);
 }
 
+.settings-action.is-success {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: var(--paper);
+  font-weight: 500;
+}
+
+.settings-action.is-success:hover:not(:disabled),
+.settings-action.is-success:focus-visible {
+  background: color-mix(in srgb, var(--ok) 88%, white 12%);
+  border-color: color-mix(in srgb, var(--ok) 88%, white 12%);
+  color: var(--paper);
+}
+
 /* ── Diagnostics summary block ── */
 .settings-diag {
   margin-top: 0.5rem;

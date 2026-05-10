@@ -24,7 +24,7 @@ type EditorState =
 type TestState =
   | { kind: "idle" }
   | { kind: "testing" }
-  | { kind: "connected"; message: string }
+  | { kind: "connected"; modelCount: number }
   | { kind: "error"; message: string };
 
 export function ProviderEditor({
@@ -221,7 +221,7 @@ export function ProviderEditor({
       }
       setTestState({
         kind: "connected",
-        message: `Connected. Found ${formatModelCount(data.models.length)}.`,
+        modelCount: data.models.length,
       });
     } catch (err) {
       setTestState({
@@ -295,14 +295,6 @@ export function ProviderEditor({
       {state.kind === "saved" ? (
         <p className="muted-copy">Saved ✓</p>
       ) : null}
-      {testState.kind === "testing" ? (
-        <p className="muted-copy">Testing connection…</p>
-      ) : null}
-      {testState.kind === "connected" ? (
-        <p className="muted-copy" role="status">
-          {testState.message}
-        </p>
-      ) : null}
       {testState.kind === "error" ? (
         <p className="settings-role-error" role="alert">
           {testState.message}
@@ -333,11 +325,13 @@ export function ProviderEditor({
             </button>
             <button
               type="button"
-              className="settings-action"
+              className={`settings-action${
+                testState.kind === "connected" ? " is-success" : ""
+              }`}
               disabled={testState.kind === "testing" || !baseUrl.trim()}
               onClick={() => void handleTestConfig()}
             >
-              Test
+              <span aria-live="polite">{testButtonLabel(testState)}</span>
             </button>
           </>
         ) : null}
@@ -373,4 +367,12 @@ export function ProviderEditor({
 
 function formatModelCount(count: number): string {
   return `${count} ${count === 1 ? "model" : "models"}`;
+}
+
+function testButtonLabel(state: TestState): string {
+  if (state.kind === "testing") return "Testing…";
+  if (state.kind === "connected") {
+    return `Connected · ${formatModelCount(state.modelCount)}`;
+  }
+  return "Test";
 }

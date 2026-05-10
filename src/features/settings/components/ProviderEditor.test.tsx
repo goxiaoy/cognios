@@ -119,7 +119,10 @@ describe("ProviderEditor", () => {
         baseUrl: "http://localhost:11435",
       });
     });
-    expect(await screen.findByText(/connected\. found 1 model/i)).toBeInTheDocument();
+    const button = await screen.findByRole("button", {
+      name: /connected · 1 model/i,
+    });
+    expect(button).toHaveClass("is-success");
   });
 
   it("surfaces configurable local provider test failures", async () => {
