@@ -124,6 +124,12 @@ function makeClient(): SearchClient {
   };
 }
 
+function observabilityWindows(client: SearchClient): number[] {
+  return vi
+    .mocked(client.observability)
+    .mock.calls.map(([input]) => input.recentDays);
+}
+
 describe("HomeDashboard", () => {
   it("renders current status, activity, latency, and token usage", async () => {
     const client = makeClient();
@@ -144,10 +150,11 @@ describe("HomeDashboard", () => {
     expect(screen.getByText("llama3 · local-ollama")).toBeInTheDocument();
     expect(screen.queryByText("Downloads")).not.toBeInTheDocument();
     expect(client.observability).toHaveBeenCalledWith({ recentDays: 30 });
+    expect(observabilityWindows(client)).toEqual([30]);
     expect(client.settings).not.toHaveBeenCalled();
   });
 
-  it("reloads recent indexing when the range changes", async () => {
+  it("reloads only recent indexing when the range changes", async () => {
     const client = makeClient();
     render(<HomeDashboard client={client} />);
 
@@ -160,6 +167,9 @@ describe("HomeDashboard", () => {
     await waitFor(() => {
       expect(client.observability).toHaveBeenCalledWith({ recentDays: 7 });
     });
+    await waitFor(() => {
+      expect(observabilityWindows(client)).toEqual([30, 7, 30]);
+    });
     expect(screen.getByRole("button", { name: "7d" })).toHaveAttribute(
       "aria-pressed",
       "true"
@@ -169,6 +179,9 @@ describe("HomeDashboard", () => {
 
     await waitFor(() => {
       expect(client.observability).toHaveBeenCalledWith({ recentDays: 90 });
+    });
+    await waitFor(() => {
+      expect(observabilityWindows(client)).toEqual([30, 7, 30, 90, 30]);
     });
     expect(screen.getByRole("button", { name: "90d" })).toHaveAttribute(
       "aria-pressed",

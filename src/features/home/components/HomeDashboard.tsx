@@ -27,6 +27,7 @@ import type { SearchClient } from "../../search/types/search";
 import { useSearchSubsystemStatus } from "../../settings/hooks/useSearchSubsystemStatus";
 
 const POLL_INTERVAL_MS = 5_000;
+const METRICS_WINDOW_DAYS = 30;
 const RECENT_INDEX_WINDOWS = [7, 30, 90] as const;
 type RecentIndexWindow = (typeof RECENT_INDEX_WINDOWS)[number];
 const LATENCY_METRICS = [
@@ -55,7 +56,9 @@ const CHART_LINE = "var(--line)";
 
 export function HomeDashboard({ client }: { client: SearchClient }) {
   const { models, indexing } = useSearchSubsystemStatus(client);
-  const [observability, setObservability] =
+  const [recentObservability, setRecentObservability] =
+    useState<SidecarEnvelope<SearchObservability> | null>(null);
+  const [metricsObservability, setMetricsObservability] =
     useState<SidecarEnvelope<SearchObservability> | null>(null);
   const [recentIndexDays, setRecentIndexDays] =
     useState<RecentIndexWindow>(30);
@@ -69,14 +72,30 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
     let timer: ReturnType<typeof setTimeout> | null = null;
     async function poll() {
       try {
-        const env = await client.observability({ recentDays: recentIndexDays });
-        if (!cancelled) setObservability(env);
+        if (recentIndexDays === METRICS_WINDOW_DAYS) {
+          const env = await client.observability({ recentDays: METRICS_WINDOW_DAYS });
+          if (!cancelled) {
+            setRecentObservability(env);
+            setMetricsObservability(env);
+          }
+        } else {
+          const [recentEnv, metricsEnv] = await Promise.all([
+            client.observability({ recentDays: recentIndexDays }),
+            client.observability({ recentDays: METRICS_WINDOW_DAYS }),
+          ]);
+          if (!cancelled) {
+            setRecentObservability(recentEnv);
+            setMetricsObservability(metricsEnv);
+          }
+        }
       } catch {
         if (!cancelled) {
-          setObservability({
+          const unavailable: SidecarEnvelope<SearchObservability> = {
             state: "unavailable",
             error: "Observability unavailable.",
-          });
+          };
+          setRecentObservability(unavailable);
+          setMetricsObservability(unavailable);
         }
       }
       if (!cancelled) {
@@ -92,7 +111,8 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
 
   const indexData = readyData(indexing);
   const modelData = readyData(models);
-  const observabilityData = readyData(observability);
+  const recentObservabilityData = readyData(recentObservability);
+  const metricsObservabilityData = readyData(metricsObservability);
   const enhancement = enhancementDisplay(indexData, modelData);
 
   return (
@@ -124,7 +144,7 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
           <header className="home-section-head home-section-head--with-control">
             <div>
               <h2>Recent indexing</h2>
-              <span>{sumIndexed(observabilityData).toLocaleString()} nodes</span>
+              <span>{sumIndexed(recentObservabilityData).toLocaleString()} nodes</span>
             </div>
             <div
               className="home-window-toggle"
@@ -145,7 +165,7 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
             </div>
           </header>
           <ActivityChart
-            days={observabilityData?.recentIndexedNodes ?? []}
+            days={recentObservabilityData?.recentIndexedNodes ?? []}
             windowDays={recentIndexDays}
           />
         </section>
@@ -154,7 +174,7 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
           <header className="home-section-head home-section-head--with-control">
             <div>
               <h2>Latency</h2>
-              <span>{observabilityData ? "recent samples" : statusCopy(observability)}</span>
+              <span>{metricsObservabilityData ? "recent samples" : statusCopy(metricsObservability)}</span>
             </div>
             <div
               className="home-window-toggle"
@@ -175,7 +195,7 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
             </div>
           </header>
           <LatencyChart
-            observability={observabilityData}
+            observability={metricsObservabilityData}
             metric={latencyMetric}
             category={latencyCategory}
             onCategoryChange={(category) =>
@@ -187,9 +207,9 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
         <section className="home-section">
           <header className="home-section-head">
             <h2>Token usage</h2>
-            <span>{tokenTotal(observabilityData).toLocaleString()} tokens</span>
+            <span>{tokenTotal(metricsObservabilityData).toLocaleString()} tokens</span>
           </header>
-          <TokenUsage observability={observabilityData} />
+          <TokenUsage observability={metricsObservabilityData} />
         </section>
       </div>
     </section>
