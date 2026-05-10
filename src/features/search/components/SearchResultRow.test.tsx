@@ -62,6 +62,21 @@ describe("SearchResultRow", () => {
     expect(onHover).toHaveBeenCalledTimes(1);
   });
 
+  it("does not invoke onHover again when already active", () => {
+    const onHover = vi.fn();
+    render(
+      <SearchResultRow
+        result={makeResult()}
+        active={true}
+        rowId="row-0"
+        onActivate={vi.fn()}
+        onHover={onHover}
+      />
+    );
+    fireEvent.mouseEnter(screen.getByRole("option"));
+    expect(onHover).not.toHaveBeenCalled();
+  });
+
   it("sets aria-selected=true when active", () => {
     const { container } = render(
       <SearchResultRow

@@ -32,8 +32,15 @@ function collectRecent(roots: ExplorerNode[], limit: number): ExplorerNode[] {
   walk(roots, all);
   return all
     .filter((node) => ACTIVATABLE_KINDS.has(node.kind))
-    .sort((a, b) => modifiedTimeMs(b) - modifiedTimeMs(a))
+    .sort(compareRecentNodes)
     .slice(0, limit);
+}
+
+function compareRecentNodes(a: ExplorerNode, b: ExplorerNode): number {
+  const modifiedDelta = modifiedTimeMs(b) - modifiedTimeMs(a);
+  if (modifiedDelta !== 0) return modifiedDelta;
+
+  return a.id.localeCompare(b.id);
 }
 
 function walk(nodes: ExplorerNode[], out: ExplorerNode[]): void {

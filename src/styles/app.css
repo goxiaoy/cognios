@@ -1142,8 +1142,7 @@ button:disabled {
   align-items: flex-start;
 }
 
-.search-result-row.is-active,
-.search-result-row:hover {
+.search-result-row.is-active {
   background: color-mix(in srgb, var(--accent) 14%, transparent 86%);
 }
 

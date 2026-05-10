@@ -95,6 +95,34 @@ describe("useRecentNodes", () => {
     expect(probe.current!.recent.map((n) => n.id)).toEqual(["new", "mid", "old"]);
   });
 
+  it("keeps equal modifiedAt rows deterministic by id", () => {
+    const probe: { current: ProbeRef | null } = { current: null };
+    render(
+      <ExplorerStoreProvider client={makeClient()}>
+        <Probe probeRef={probe} />
+      </ExplorerStoreProvider>
+    );
+
+    const sharedModifiedAt = "2026-04-26T00:00:00Z";
+    act(() => {
+      probe.current!.apply({
+        roots: [
+          makeNode({ id: "z-id", name: "Beta 10", modifiedAt: sharedModifiedAt }),
+          makeNode({ id: "b-id", name: "Beta 2", modifiedAt: sharedModifiedAt }),
+          makeNode({ id: "a-id", name: "alpha", modifiedAt: sharedModifiedAt }),
+          makeNode({ id: "c-id", name: "alpha", modifiedAt: sharedModifiedAt }),
+        ],
+      });
+    });
+
+    expect(probe.current!.recent.map((n) => n.id)).toEqual([
+      "a-id",
+      "b-id",
+      "c-id",
+      "z-id",
+    ]);
+  });
+
   it("walks nested children", () => {
     const probe: { current: ProbeRef | null } = { current: null };
     render(

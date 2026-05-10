@@ -36,6 +36,9 @@ export function SearchResultRow({
 }) {
   const Icon = iconForKind(result.kind, result.name);
   const kindLabel = KIND_LABELS[result.kind] ?? result.kind;
+  const handleHover = () => {
+    if (!active) onHover?.();
+  };
 
   return (
     <li
@@ -43,7 +46,7 @@ export function SearchResultRow({
       role="option"
       aria-selected={active}
       className={`search-result-row${active ? " is-active" : ""}`}
-      onMouseEnter={onHover}
+      onMouseEnter={handleHover}
       onClick={onActivate}
     >
       <span className="search-result-icon" aria-hidden="true">

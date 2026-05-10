@@ -51,6 +51,7 @@ export function SearchPalette({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const hoveredIndexRef = useRef<number | null>(null);
 
   // Capture the previously focused element so Esc/close can restore it.
   useEffect(() => {
@@ -60,11 +61,6 @@ export function SearchPalette({
       previouslyFocusedRef.current?.focus?.();
     };
   }, []);
-
-  // Reset the active row whenever the result list changes shape.
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [state.results, state.envelopeState, recentNodes]);
 
   // Mount choices for the filter bar — derived from the explorer
   // snapshot so the picker stays in sync with the workspace.
@@ -91,6 +87,27 @@ export function SearchPalette({
       result,
     }));
   }, [state.envelopeState, state.results, recentNodes]);
+
+  // Reset the active row whenever the result list changes shape. If
+  // the pointer is still over the list, keep visual focus under it so
+  // result refreshes don't leave two apparent targets.
+  useEffect(() => {
+    const hoveredIndex = hoveredIndexRef.current;
+    setActiveIndex(
+      hoveredIndex !== null && hoveredIndex < navigableItems.length
+        ? hoveredIndex
+        : 0
+    );
+  }, [navigableItems]);
+
+  const hoverRow = useCallback((idx: number) => {
+    hoveredIndexRef.current = idx;
+    setActiveIndex(idx);
+  }, []);
+
+  const clearHoveredRow = useCallback(() => {
+    hoveredIndexRef.current = null;
+  }, []);
 
   const close = useCallback(() => {
     onClose();
@@ -241,7 +258,8 @@ export function SearchPalette({
           state={state.envelopeState}
           error={state.error}
           activeIndex={activeIndex}
-          setActiveIndex={setActiveIndex}
+          onRowHover={hoverRow}
+          onListMouseLeave={clearHoveredRow}
           activate={activate}
           recentNodes={recentNodes}
           results={state.results}
@@ -265,7 +283,8 @@ function PaletteBody({
   state,
   error,
   activeIndex,
-  setActiveIndex,
+  onRowHover,
+  onListMouseLeave,
   activate,
   recentNodes,
   results,
@@ -281,7 +300,8 @@ function PaletteBody({
     | "unavailable";
   error: string | null;
   activeIndex: number;
-  setActiveIndex(idx: number): void;
+  onRowHover(idx: number): void;
+  onListMouseLeave(): void;
   activate(nodeId: string): void;
   recentNodes: ReturnType<typeof useRecentNodes>;
   results: SearchResult[];
@@ -305,6 +325,7 @@ function PaletteBody({
           role="listbox"
           className="search-palette-list"
           aria-label="Recently modified"
+          onMouseLeave={onListMouseLeave}
         >
           {recentNodes.map((node, idx) => (
             <li
@@ -313,7 +334,7 @@ function PaletteBody({
               role="option"
               aria-selected={idx === activeIndex}
               className={`search-result-row${idx === activeIndex ? " is-active" : ""}`}
-              onMouseEnter={() => setActiveIndex(idx)}
+              onMouseEnter={() => onRowHover(idx)}
               onClick={() => activate(node.id)}
             >
               <span className="search-result-body">
@@ -367,6 +388,7 @@ function PaletteBody({
         role="listbox"
         className="search-palette-list"
         aria-label="Search results"
+        onMouseLeave={onListMouseLeave}
       >
         {results.map((result, idx) => (
           <SearchResultRow
@@ -375,7 +397,7 @@ function PaletteBody({
             active={idx === activeIndex}
             rowId={ROW_ID(idx)}
             onActivate={() => activate(result.nodeId)}
-            onHover={() => setActiveIndex(idx)}
+            onHover={() => onRowHover(idx)}
           />
         ))}
       </ul>
