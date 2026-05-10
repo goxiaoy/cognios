@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Check, CircleAlert, FileText, Globe, MessageSquare, Plus, Search } from "lucide-react";
+import { Check, CircleAlert, FileText, Globe, MessageSquare, Plus, Search, Sparkles } from "lucide-react";
 
 import type {
   ChatSession,
@@ -125,111 +125,145 @@ export function ChatLayout({ client }: { client: ChatClient }) {
     turn?.answer &&
       !transcript.some((message) => message.role === "assistant" && message.body === turn.answer),
   );
+  const title = active?.session.title ?? "New chat";
 
   return (
-    <section className="chat-layout" aria-label="Chat research workbench">
+    <section className="chat-layout" aria-label="Chat">
       <aside className="chat-session-list" aria-label="Chat sessions">
-        <div className="chat-section-head">
-          <h2>Sessions</h2>
+        <div className="chat-section-head chat-sidebar-head">
+          <h2>Chats</h2>
           <button type="button" className="icon-button" onClick={createNewSession} aria-label="New chat">
             <Plus size={16} aria-hidden="true" />
           </button>
         </div>
         <div className="chat-session-stack">
-          {sessions.map((session) => (
-            <button
-              key={session.id}
-              type="button"
-              className={`chat-session-item${active?.session.id === session.id ? " is-active" : ""}`}
-              onClick={() => refreshSessions(session.id)}
-            >
-              <span>{session.title}</span>
-              {session.boundNoteId ? <FileText size={14} aria-hidden="true" /> : null}
-            </button>
-          ))}
+          {sessions.length === 0 ? <p className="chat-session-empty">No chats yet</p> : null}
+          {sessions.map((session) => {
+            const isActive = active?.session.id === session.id;
+
+            return (
+              <button
+                key={session.id}
+                type="button"
+                className={`chat-session-item${isActive ? " is-active" : ""}`}
+                onClick={() => refreshSessions(session.id)}
+              >
+                <span className="chat-session-title">{session.title}</span>
+                {session.boundNoteId ? (
+                  <span className="chat-session-meta">
+                    <FileText size={13} aria-hidden="true" />
+                    Note
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
         </div>
       </aside>
 
       <main className="chat-main">
-        <div className="chat-status-row">
-          <span className="chat-status-pill"><MessageSquare size={14} /> {active ? active.session.title : "New chat"}</span>
-          {models.length > 0 ? (
-            <label className="chat-model-picker">
-              Model
-              <select
-                value={selectedModel}
-                onChange={(event) => setSelectedModel(event.target.value)}
-              >
-                {models.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          <span className="chat-status-pill"><Globe size={14} /> Web sources stay session-scoped</span>
-          {active?.session.boundNoteId ? (
-            <span className="chat-status-pill"><FileText size={14} /> Live Note bound</span>
-          ) : null}
-        </div>
+        <header className="chat-topbar">
+          <div className="chat-title-block">
+            <span className="chat-kicker">
+              <MessageSquare size={14} aria-hidden="true" />
+              Workspace chat
+            </span>
+            <h2>{title}</h2>
+          </div>
+          <div className="chat-topbar-actions">
+            <span className="chat-runtime-pill">
+              <Globe size={14} aria-hidden="true" />
+              Web
+            </span>
+            {active?.session.boundNoteId ? (
+              <span className="chat-runtime-pill">
+                <FileText size={14} aria-hidden="true" />
+                Note
+              </span>
+            ) : null}
+            {models.length > 0 ? (
+              <label className="chat-model-picker">
+                Model
+                <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
+                  {models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
+        </header>
 
         {error ? (
-          <p className="chat-error"><CircleAlert size={15} aria-hidden="true" /> {error}</p>
+          <p className="chat-error" role="status"><CircleAlert size={15} aria-hidden="true" /> {error}</p>
         ) : null}
 
-        <div className="chat-work-area">
-          <section className="chat-transcript" aria-label="Transcript">
-            {transcript.length === 0 && !turn ? (
-              <div className="chat-empty">
-                <Search size={24} aria-hidden="true" />
-                <p>Ask a research question across workspace and web sources.</p>
-              </div>
-            ) : null}
-            {transcript.map((message) => (
-              <article key={message.id} className={`chat-message is-${message.role}`}>
-                <p className="chat-message-role">{message.role}</p>
-                <p>{message.body}</p>
-              </article>
-            ))}
-            {showTransientAnswer ? (
-              <article className="chat-message is-assistant">
-                <p className="chat-message-role">assistant</p>
-                <p>{turn?.answer}</p>
-              </article>
-            ) : null}
-          </section>
-
-          <SourceClusterPanel
-            clusters={clusters}
-            accepted={accepted}
-            onToggle={(clusterId) => {
-              setAccepted((current) => {
-                const next = new Set(current);
-                if (next.has(clusterId)) next.delete(clusterId);
-                else next.add(clusterId);
-                return next;
-              });
-            }}
-          />
-        </div>
+        <section className={`chat-transcript${transcript.length === 0 && !turn ? " is-empty" : ""}`} aria-label="Transcript">
+          {transcript.length === 0 && !turn ? (
+            <div className="chat-empty">
+              <Search size={24} aria-hidden="true" />
+              <h3>Ask CogniOS</h3>
+              <p>Timeline, costs, causes, evidence gaps.</p>
+            </div>
+          ) : null}
+          {transcript.map((message) => (
+            <article key={message.id} className={`chat-message is-${message.role}`}>
+              <p className="chat-message-role">{message.role}</p>
+              <p>{message.body}</p>
+            </article>
+          ))}
+          {showTransientAnswer ? (
+            <article className="chat-message is-assistant">
+              <p className="chat-message-role">assistant</p>
+              <p>{turn?.answer}</p>
+            </article>
+          ) : null}
+        </section>
 
         <form className="chat-composer" onSubmit={submit}>
           <textarea
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Ask about a timeline, cost, cause, evidence gaps..."
+            aria-label="Chat message"
           />
-          <div className="chat-composer-actions">
-            <button type="submit" disabled={busy || !query.trim()}>
-              Search clusters
-            </button>
-            <button type="button" disabled={busy || accepted.size === 0} onClick={synthesize}>
-              <Check size={15} aria-hidden="true" /> Synthesize
-            </button>
+          <div className="chat-composer-footer">
+            <span className="chat-composer-meta">
+              <Globe size={14} aria-hidden="true" />
+              Workspace + web
+            </span>
+            <div className="chat-composer-actions">
+              <button className="chat-secondary-action" type="submit" disabled={busy || !query.trim()}>
+                {busy ? "Working..." : "Search"}
+              </button>
+              <button
+                className="chat-primary-action"
+                type="button"
+                disabled={busy || accepted.size === 0}
+                onClick={synthesize}
+              >
+                <Sparkles size={15} aria-hidden="true" />
+                {accepted.size > 0 ? `Synthesize ${accepted.size}` : "Synthesize"}
+              </button>
+            </div>
           </div>
         </form>
       </main>
+
+      <SourceClusterPanel
+        clusters={clusters}
+        accepted={accepted}
+        onToggle={(clusterId) => {
+          setAccepted((current) => {
+            const next = new Set(current);
+            if (next.has(clusterId)) next.delete(clusterId);
+            else next.add(clusterId);
+            return next;
+          });
+        }}
+      />
     </section>
   );
 }
@@ -244,13 +278,20 @@ function SourceClusterPanel({
   onToggle(clusterId: string): void;
 }) {
   const visible = useMemo(() => clusters.slice(0, 6), [clusters]);
+  const acceptedVisible = visible.filter((cluster) => accepted.has(cluster.clusterId)).length;
+
   return (
     <aside className="chat-clusters" aria-label="Source clusters">
-      <div className="chat-section-head">
-        <h2>Source clusters</h2>
+      <div className="chat-section-head chat-source-head">
+        <h2>Sources</h2>
+        {visible.length > 0 ? (
+          <span>
+            {acceptedVisible}/{visible.length}
+          </span>
+        ) : null}
       </div>
       {visible.length === 0 ? (
-        <p className="muted-copy">Clusters appear before synthesis.</p>
+        <p className="chat-source-empty">Sources appear after search.</p>
       ) : (
         visible.map((cluster) => (
           <button
@@ -259,7 +300,12 @@ function SourceClusterPanel({
             className={`chat-cluster-item${accepted.has(cluster.clusterId) ? " is-accepted" : ""}`}
             onClick={() => onToggle(cluster.clusterId)}
           >
-            <span className="chat-cluster-title">{cluster.title}</span>
+            <span className="chat-cluster-row">
+              <span className="chat-cluster-title">{cluster.title}</span>
+              <span className="chat-cluster-check" aria-hidden="true">
+                {accepted.has(cluster.clusterId) ? <Check size={14} /> : null}
+              </span>
+            </span>
             <span className="chat-cluster-kind">{cluster.sourceKind}</span>
             <span className="chat-cluster-summary">{cluster.summary}</span>
           </button>

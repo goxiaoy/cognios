@@ -83,7 +83,7 @@ describe("ChatLayout", () => {
       target: { value: "整理事故时间线" },
     });
     expect(await screen.findByLabelText(/model/i)).toHaveValue("llama3.2");
-    fireEvent.click(screen.getByRole("button", { name: /Search clusters/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Search$/i }));
 
     expect(await screen.findByText("事故/照片")).toBeInTheDocument();
     expect(client.startTurn).toHaveBeenCalledWith({
@@ -104,7 +104,7 @@ describe("ChatLayout", () => {
     fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
       target: { value: "整理事故时间线" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Search clusters/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Search$/i }));
 
     await waitFor(() => {
       expect(client.startTurn).toHaveBeenCalledWith({
@@ -158,7 +158,7 @@ describe("ChatLayout", () => {
     fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
       target: { value: "整理事故时间线" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Search clusters/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Search$/i }));
     fireEvent.click(await screen.findByText("事故/照片"));
     fireEvent.click(screen.getByRole("button", { name: /Synthesize/i }));
 
@@ -244,7 +244,7 @@ describe("ChatLayout", () => {
     fireEvent.change(screen.getByPlaceholderText(/timeline/i), {
       target: { value: "整理事故时间线" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Search clusters/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Search$/i }));
     fireEvent.click(await screen.findByText("事故/照片"));
     fireEvent.click(screen.getByRole("button", { name: /Synthesize/i }));
 
