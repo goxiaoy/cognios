@@ -1,8 +1,9 @@
 """Default model manifest.
 
-Each role pins a HuggingFace repo, a commit hash, and per-file SHA-256
-checksums. The commit + SHA-256 values below are placeholders (``"<pinned>"``)
-that must be resolved before a release build — the resolution flow is:
+Each role pins a HuggingFace repo, a commit hash, per-file SHA-256
+checksums, and optional file sizes for aggregate progress. Commit
+and SHA-256 values below are placeholders (``"<pinned>"``) that must be
+resolved before a release build — the resolution flow is:
 
 1. Pick a HuggingFace revision (e.g. ``main`` snapshot at a known date).
 2. ``curl https://huggingface.co/<repo>/resolve/<commit>/<file> > /tmp/x``.
@@ -17,7 +18,7 @@ v1 release builds must commit real pins.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 PLACEHOLDER_COMMIT = "<pinned>"
 PLACEHOLDER_SHA256 = "<pinned>"
@@ -29,6 +30,7 @@ class FileSpec:
 
     name: str
     sha256: str
+    size_bytes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -37,7 +39,10 @@ class ModelSpec:
 
     ``repo`` and ``commit`` together identify the HuggingFace tree;
     ``files`` enumerates every blob the role needs and pins each one's
-    SHA-256. v1 ships no gated repos — the gated-Gemma path was
+    SHA-256. ``size_bytes`` is optional but should be filled for roles
+    with multiple files so download progress can be reported for the
+    full role instead of resetting per file. v1 ships no gated repos —
+    the gated-Gemma path was
     deferred and the dedicated license-acceptance fields were
     removed when local captioning moved to Ollama.
     """
@@ -60,10 +65,10 @@ DEFAULTS: dict[str, ModelSpec] = {
         repo="onnx-community/gte-multilingual-base",
         commit="2edbf5e672aab465f9ed4c154a8b61791c082c69",
         files=(
-            FileSpec("onnx/model_int8.onnx", "ab2bd164ebd8ca9003dc49a981b611e849b5d326f504c8873ba76e07fa6c0082"),
-            FileSpec("tokenizer.json", "3a56def25aa40facc030ea8b0b87f3688e4b3c39eb8b45d5702b3a1300fe2a20"),
-            FileSpec("tokenizer_config.json", "24cebbf2ef20fc317256e03e52ac7b2ca326586f946a8427ecac036332bf0933"),
-            FileSpec("config.json", "6ef2538d4286a7cd18d05225f659d8a1bceca7adb01c186868e53dbd4f822e17"),
+            FileSpec("onnx/model_int8.onnx", "ab2bd164ebd8ca9003dc49a981b611e849b5d326f504c8873ba76e07fa6c0082", 340318797),
+            FileSpec("tokenizer.json", "3a56def25aa40facc030ea8b0b87f3688e4b3c39eb8b45d5702b3a1300fe2a20", 17082734),
+            FileSpec("tokenizer_config.json", "24cebbf2ef20fc317256e03e52ac7b2ca326586f946a8427ecac036332bf0933", 1149),
+            FileSpec("config.json", "6ef2538d4286a7cd18d05225f659d8a1bceca7adb01c186868e53dbd4f822e17", 1648),
         ),
     ),
     "reranker": ModelSpec(
@@ -71,10 +76,10 @@ DEFAULTS: dict[str, ModelSpec] = {
         repo="onnx-community/gte-multilingual-reranker-base",
         commit="ee64367e35a2db0da46bb6497e13a18f8bd585cb",
         files=(
-            FileSpec("onnx/model_int8.onnx", "ccf51dba7f8aa9205753761cfaa68c55f741792501463a3bf25d7e5bcdac7c35"),
-            FileSpec("tokenizer.json", "3ffb37461c391f096759f4a9bbbc329da0f36952f88bab061fcf84940c022e98"),
-            FileSpec("tokenizer_config.json", "6f00514620aff01ba8b7291b2394e98daca5be264cb743805232d9ae27494b2a"),
-            FileSpec("config.json", "dfa5713436ecb4616eaa576795c8d3efd1f03122031a1ad4973d0b6b7e7edfd3"),
+            FileSpec("onnx/model_int8.onnx", "ccf51dba7f8aa9205753761cfaa68c55f741792501463a3bf25d7e5bcdac7c35", 340858200),
+            FileSpec("tokenizer.json", "3ffb37461c391f096759f4a9bbbc329da0f36952f88bab061fcf84940c022e98", 17082999),
+            FileSpec("tokenizer_config.json", "6f00514620aff01ba8b7291b2394e98daca5be264cb743805232d9ae27494b2a", 1340),
+            FileSpec("config.json", "dfa5713436ecb4616eaa576795c8d3efd1f03122031a1ad4973d0b6b7e7edfd3", 1578),
         ),
     ),
     "audio-transcript": ModelSpec(
@@ -82,14 +87,14 @@ DEFAULTS: dict[str, ModelSpec] = {
         repo="Qwen/Qwen3-ASR-0.6B",
         commit="5eb144179a02acc5e5ba31e748d22b0cf3e303b0",
         files=(
-            FileSpec("chat_template.json", "75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff"),
-            FileSpec("config.json", "76d3ae4601ce939830b2517f4a6cadb86cc51316c3900af6b020b051c21a478c"),
-            FileSpec("generation_config.json", "1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c"),
-            FileSpec("merges.txt", "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"),
-            FileSpec("model.safetensors", "79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea"),
-            FileSpec("preprocessor_config.json", "45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d"),
-            FileSpec("tokenizer_config.json", "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c"),
-            FileSpec("vocab.json", "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"),
+            FileSpec("chat_template.json", "75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff", 1161),
+            FileSpec("config.json", "76d3ae4601ce939830b2517f4a6cadb86cc51316c3900af6b020b051c21a478c", 6193),
+            FileSpec("generation_config.json", "1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c", 142),
+            FileSpec("merges.txt", "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5", 1671853),
+            FileSpec("model.safetensors", "79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea", 1876091704),
+            FileSpec("preprocessor_config.json", "45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d", 330),
+            FileSpec("tokenizer_config.json", "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c", 12487),
+            FileSpec("vocab.json", "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910", 2776833),
         ),
     ),
     # OCR + captioner roles intentionally absent from the basic manifest:

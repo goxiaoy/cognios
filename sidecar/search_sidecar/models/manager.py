@@ -37,7 +37,7 @@ from typing import AsyncIterator
 
 import httpx
 
-from .manifest import ModelSpec
+from .manifest import FileSpec, ModelSpec
 
 LOG = logging.getLogger("search_sidecar.models")
 
@@ -303,9 +303,17 @@ class ModelManager:
         last_err: Exception | None = None
         for attempt in range(MAX_DOWNLOAD_ATTEMPTS):
             try:
+                role_total = _manifest_role_total(spec)
+                completed_bytes = 0
                 for file in spec.files:
-                    async for ev in self._download_file(spec, file):
+                    async for ev in self._download_file(
+                        spec,
+                        file,
+                        role_completed_bytes=completed_bytes,
+                        role_total_bytes=role_total,
+                    ):
                         yield ev
+                    completed_bytes += self._completed_file_bytes(spec, file)
                 self._activate(spec.role, spec.commit)
                 yield ProgressEvent(role=spec.role, state="ready")
                 return
@@ -349,18 +357,24 @@ class ModelManager:
         )
 
     async def _download_file(
-        self, spec: ModelSpec, file
+        self,
+        spec: ModelSpec,
+        file: FileSpec,
+        *,
+        role_completed_bytes: int,
+        role_total_bytes: int | None,
     ) -> AsyncIterator[ProgressEvent]:
         partial, final = self._resolve_target_paths(spec, file.name)
 
         # If final is already present + verifies, skip.
         if final.exists() and _file_sha256(final) == file.sha256:
+            downloaded = role_completed_bytes + final.stat().st_size
             yield ProgressEvent(
                 role=spec.role,
                 state="verifying",
                 file=file.name,
-                bytes_downloaded=final.stat().st_size,
-                bytes_total=final.stat().st_size,
+                bytes_downloaded=downloaded,
+                bytes_total=role_total_bytes or downloaded,
             )
             return
 
@@ -396,8 +410,14 @@ class ModelManager:
                                     role=spec.role,
                                     state="downloading",
                                     file=file.name,
-                                    bytes_downloaded=bytes_downloaded,
-                                    bytes_total=total,
+                                    bytes_downloaded=role_completed_bytes
+                                    + bytes_downloaded,
+                                    bytes_total=role_total_bytes
+                                    or (
+                                        role_completed_bytes + total
+                                        if total is not None
+                                        else None
+                                    ),
                                 )
                     else:
                         body_preview = (await resp.aread())[:200].decode(
@@ -410,12 +430,13 @@ class ModelManager:
             raise DownloadFailed(f"transport error: {err}") from err
 
         # Verify
+        downloaded = role_completed_bytes + partial.stat().st_size
         yield ProgressEvent(
             role=spec.role,
             state="verifying",
             file=file.name,
-            bytes_downloaded=partial.stat().st_size,
-            bytes_total=partial.stat().st_size,
+            bytes_downloaded=downloaded,
+            bytes_total=role_total_bytes or downloaded,
         )
         actual = _file_sha256(partial)
         if actual != file.sha256:
@@ -430,6 +451,14 @@ class ModelManager:
 
         # Atomic rename into commit folder
         os.replace(partial, final)
+
+    def _completed_file_bytes(self, spec: ModelSpec, file: FileSpec) -> int:
+        _, final = self._resolve_target_paths(spec, file.name)
+        if final.exists():
+            return final.stat().st_size
+        if file.size_bytes is not None:
+            return file.size_bytes
+        return 0
 
 
 def _file_sha256(path: Path) -> str:
@@ -453,3 +482,12 @@ def _expected_total(resp: httpx.Response, offset: int) -> int | None:
     if resp.status_code == 206:
         return offset + n
     return n
+
+
+def _manifest_role_total(spec: ModelSpec) -> int | None:
+    total = 0
+    for file in spec.files:
+        if file.size_bytes is None:
+            return None
+        total += file.size_bytes
+    return total

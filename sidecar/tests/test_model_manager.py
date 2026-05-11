@@ -129,7 +129,10 @@ def _make_spec(role: str, files: dict[str, bytes]) -> ModelSpec:
         role=role,
         repo="fixture/repo",
         commit="abc123",
-        files=tuple(FileSpec(name=name, sha256=_sha256(body)) for name, body in files.items()),
+        files=tuple(
+            FileSpec(name=name, sha256=_sha256(body), size_bytes=len(body))
+            for name, body in files.items()
+        ),
     )
 
 
@@ -190,6 +193,25 @@ async def test_download_happy_path(tmp_path: Path):
     assert current.resolve().name == "abc123"
     # tmp/ is now empty
     assert not list((manager.role_dir("embedding") / "tmp").iterdir())
+
+
+async def test_download_progress_reports_role_total_across_files(tmp_path: Path):
+    file_a = b"a" * 1024
+    file_b = b"b" * 2048
+    served = {"/a.bin": file_a, "/b.bin": file_b}
+    spec = _make_spec("embedding", {"a.bin": file_a, "b.bin": file_b})
+
+    with fixture_server(served) as base_url:
+        manager = _make_manager(tmp_path, spec, base_url=base_url)
+        events = await _drain(manager.download("embedding"))
+
+    progress_events = [event for event in events if event.state == "downloading"]
+    assert progress_events, events
+    assert {event.bytes_total for event in progress_events} == {
+        len(file_a) + len(file_b)
+    }
+    assert progress_events[-1].bytes_downloaded == len(file_a) + len(file_b)
+    assert progress_events[-1].bytes_total == len(file_a) + len(file_b)
 
 
 async def test_download_404_emits_error_event(tmp_path: Path):
@@ -355,13 +377,13 @@ async def test_transient_download_failure_is_retried(
         real = m._download_file
         attempts = {"n": 0}
 
-        async def flaky_download_file(spec_, file_):
+        async def flaky_download_file(spec_, file_, **kwargs):
             attempts["n"] += 1
             if attempts["n"] <= 2:
                 raise manager_mod.DownloadFailed(
                     f"simulated transport failure (attempt {attempts['n']})"
                 )
-            async for ev in real(spec_, file_):
+            async for ev in real(spec_, file_, **kwargs):
                 yield ev
 
         monkeypatch.setattr(m, "_download_file", flaky_download_file)
