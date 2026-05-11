@@ -2,12 +2,16 @@ use tauri::State;
 
 use crate::domain::voice_note::VoiceNoteDto;
 use crate::services::voice_notes::{
-    capture_capability, complete_voice_note_transcript as complete_voice_note_transcript_record,
+    append_voice_note_audio_chunk as append_voice_note_audio_chunk_record,
+    begin_voice_note_audio_capture as begin_voice_note_audio_capture_record, capture_capability,
+    complete_voice_note_transcript as complete_voice_note_transcript_record,
     create_voice_note as create_voice_note_record,
     delete_voice_note_source_audio as delete_voice_note_source_audio_record,
+    finish_voice_note_audio_capture as finish_voice_note_audio_capture_record,
     get_voice_note as get_voice_note_record, list_voice_notes as list_voice_notes_record,
-    rename_voice_note_speaker as rename_voice_note_speaker_record, CaptureCapabilityDto,
-    CompleteVoiceNoteTranscriptInput, CreateVoiceNoteInput, CreatedVoiceNote,
+    rename_voice_note_speaker as rename_voice_note_speaker_record, AppendVoiceNoteAudioChunkInput,
+    BeginVoiceNoteAudioCaptureInput, CaptureCapabilityDto, CompleteVoiceNoteTranscriptInput,
+    CreateVoiceNoteInput, CreatedVoiceNote, FinishVoiceNoteAudioCaptureInput,
     RenameVoiceNoteSpeakerInput, VoiceNoteInput,
 };
 use crate::AppState;
@@ -64,6 +68,46 @@ pub fn complete_voice_note_transcript(
     let notes_dir = state.storage_dir.join("notes");
     let emitter = state.emitter.as_ref();
     complete_voice_note_transcript_record(&conn, &input, &notes_dir, &emitter)
+}
+
+#[tauri::command]
+pub fn begin_voice_note_audio_capture(
+    state: State<'_, AppState>,
+    input: BeginVoiceNoteAudioCaptureInput,
+) -> Result<VoiceNoteDto, String> {
+    let conn = state
+        .db
+        .connect()
+        .map_err(|error: rusqlite::Error| error.to_string())?;
+    let notes_dir = state.storage_dir.join("notes");
+    let emitter = state.emitter.as_ref();
+    begin_voice_note_audio_capture_record(&conn, &input, &state.storage_dir, &notes_dir, &emitter)
+}
+
+#[tauri::command]
+pub fn append_voice_note_audio_chunk(
+    state: State<'_, AppState>,
+    input: AppendVoiceNoteAudioChunkInput,
+) -> Result<(), String> {
+    let conn = state
+        .db
+        .connect()
+        .map_err(|error: rusqlite::Error| error.to_string())?;
+    append_voice_note_audio_chunk_record(&conn, &input)
+}
+
+#[tauri::command]
+pub fn finish_voice_note_audio_capture(
+    state: State<'_, AppState>,
+    input: FinishVoiceNoteAudioCaptureInput,
+) -> Result<VoiceNoteDto, String> {
+    let conn = state
+        .db
+        .connect()
+        .map_err(|error: rusqlite::Error| error.to_string())?;
+    let notes_dir = state.storage_dir.join("notes");
+    let emitter = state.emitter.as_ref();
+    finish_voice_note_audio_capture_record(&conn, &input, &notes_dir, &emitter)
 }
 
 #[tauri::command]

@@ -10,7 +10,7 @@ import {
 } from "../../explorer/store/ExplorerStoreContext";
 import { makeStubSearchClient } from "../../search/types/test-helpers";
 import type { VoiceNoteClient } from "../api/voiceNoteClient";
-import { VoiceNotePanel } from "./VoiceNotePanel";
+import { VoiceNotePanel, type VoiceNoteRecorderFactory } from "./VoiceNotePanel";
 
 function makeModelsStatus(
   state: string,
@@ -63,10 +63,41 @@ function makeClient(overrides: Partial<VoiceNoteClient> = {}): VoiceNoteClient {
     list: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(null),
     completeTranscript: vi.fn(),
+    beginAudioCapture: vi.fn(),
+    appendAudioChunk: vi.fn(),
+    finishAudioCapture: vi.fn(),
     renameSpeaker: vi.fn(),
     deleteSourceAudio: vi.fn(),
     ...overrides,
   };
+}
+
+function makeRecorderFactory(
+  overrides: Partial<{
+    voiceNote: VoiceNote;
+    stoppedVoiceNote: VoiceNote;
+  }> = {}
+): VoiceNoteRecorderFactory {
+  const voiceNote = overrides.voiceNote ?? makeVoiceNote({
+    noteId: "created-1",
+    status: "recording",
+    captureStatus: "recording",
+    sourceAudioPresent: true,
+    sourceAudioPath: "/tmp/source.webm",
+  });
+  const stoppedVoiceNote = overrides.stoppedVoiceNote ?? makeVoiceNote({
+    noteId: "created-1",
+    status: "transcribing",
+    captureStatus: "completed",
+    transcriptionStatus: "pending",
+    sourceAudioPresent: true,
+    sourceAudioPath: "/tmp/source.webm",
+  });
+  return vi.fn().mockResolvedValue({
+    voiceNote,
+    startedAt: Date.now(),
+    stop: vi.fn().mockResolvedValue(stoppedVoiceNote),
+  });
 }
 
 function makeExplorerClient(overrides: Partial<ExplorerClient> = {}): ExplorerClient {
@@ -194,6 +225,7 @@ describe("VoiceNotePanel", () => {
     renderWithExplorerStore(
       <VoiceNotePanel
         client={client}
+        recorderFactory={makeRecorderFactory()}
         searchClient={makeStubSearchClient({
           modelsStatus: vi.fn().mockResolvedValue(makeModelsStatus("ready")),
         })}
@@ -207,8 +239,40 @@ describe("VoiceNotePanel", () => {
       expect(client.create).toHaveBeenCalledWith({});
     });
     expect(await screen.findByText("Untitled Voice Note")).toBeInTheDocument();
-    expect(screen.getByText("Voice note created.")).toBeInTheDocument();
+    expect(screen.getByText("Recording voice note.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Stop recording/i })).toBeInTheDocument();
     expect(screen.getByTestId("explorer-root-count")).toHaveTextContent("1");
+  });
+
+  it("stops an active recording and keeps the source audio state", async () => {
+    const recorderFactory = makeRecorderFactory();
+    const client = makeClient({
+      create: vi.fn().mockResolvedValue({
+        voiceNote: makeVoiceNote({ noteId: "created-1" }),
+        snapshot: { roots: [] },
+      }),
+    });
+    render(
+      <VoiceNotePanel
+        client={client}
+        recorderFactory={recorderFactory}
+        searchClient={makeStubSearchClient({
+          modelsStatus: vi.fn().mockResolvedValue(makeModelsStatus("ready")),
+        })}
+      />
+    );
+
+    await screen.findByText("No voice notes yet.");
+    fireEvent.click(screen.getByRole("button", { name: /New voice note/i }));
+    const stopButton = await screen.findByRole("button", { name: /Stop recording/i });
+
+    fireEvent.click(stopButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("Recording saved. Transcription pending.")).toBeInTheDocument();
+    });
+    expect(screen.getByText("completed")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Stop recording/i })).toBeNull();
   });
 
   it("keeps locally created notes visible across stale refresh results", async () => {
@@ -222,6 +286,7 @@ describe("VoiceNotePanel", () => {
     render(
       <VoiceNotePanel
         client={client}
+        recorderFactory={makeRecorderFactory()}
         searchClient={makeStubSearchClient({
           modelsStatus: vi.fn().mockResolvedValue(makeModelsStatus("ready")),
         })}

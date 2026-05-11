@@ -69,6 +69,22 @@ export interface CompleteVoiceNoteTranscriptInput {
   speakerLabels?: Record<string, string>;
 }
 
+export interface BeginVoiceNoteAudioCaptureInput {
+  noteId: string;
+  mimeType?: string | null;
+  fileExtension?: string | null;
+}
+
+export interface AppendVoiceNoteAudioChunkInput {
+  noteId: string;
+  bytes: number[];
+}
+
+export interface FinishVoiceNoteAudioCaptureInput {
+  noteId: string;
+  durationMs?: number | null;
+}
+
 export interface RenameVoiceNoteSpeakerInput {
   noteId: string;
   speakerId: string;

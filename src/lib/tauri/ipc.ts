@@ -36,10 +36,13 @@ import type {
   StartModelDownloadInput,
 } from "../contracts/search";
 import type {
+  AppendVoiceNoteAudioChunkInput,
+  BeginVoiceNoteAudioCaptureInput,
   CaptureCapability,
   CompleteVoiceNoteTranscriptInput,
   CreatedVoiceNote,
   CreateVoiceNoteInput,
+  FinishVoiceNoteAudioCaptureInput,
   RenameVoiceNoteSpeakerInput,
   VoiceNote,
 } from "../contracts/voiceNote";
@@ -150,6 +153,24 @@ export async function completeVoiceNoteTranscript(
   input: CompleteVoiceNoteTranscriptInput
 ): Promise<VoiceNote> {
   return invoke<VoiceNote>("complete_voice_note_transcript", { input });
+}
+
+export async function beginVoiceNoteAudioCapture(
+  input: BeginVoiceNoteAudioCaptureInput
+): Promise<VoiceNote> {
+  return invoke<VoiceNote>("begin_voice_note_audio_capture", { input });
+}
+
+export async function appendVoiceNoteAudioChunk(
+  input: AppendVoiceNoteAudioChunkInput
+): Promise<void> {
+  return invoke<void>("append_voice_note_audio_chunk", { input });
+}
+
+export async function finishVoiceNoteAudioCapture(
+  input: FinishVoiceNoteAudioCaptureInput
+): Promise<VoiceNote> {
+  return invoke<VoiceNote>("finish_voice_note_audio_capture", { input });
 }
 
 export async function renameVoiceNoteSpeaker(

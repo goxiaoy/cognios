@@ -6785,6 +6785,39 @@ button.chat-context-toggle:not(:disabled):hover {
   color: var(--muted);
 }
 
+.voice-note-primary--recording {
+  border-color: #b91c1c;
+  background: #b91c1c;
+}
+
+.voice-note-recording-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.65rem 0.8rem;
+  color: #7f1d1d;
+  background: color-mix(in srgb, #ef4444 10%, var(--paper));
+  border: 1px solid color-mix(in srgb, #ef4444 32%, var(--line));
+  border-radius: var(--radius-sm);
+}
+
+.voice-note-recording-bar > span {
+  width: 0.55rem;
+  height: 0.55rem;
+  background: #dc2626;
+  border-radius: 999px;
+}
+
+.voice-note-recording-bar strong,
+.voice-note-recording-bar time {
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.voice-note-recording-bar time {
+  color: var(--muted);
+}
+
 .voice-note-status-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

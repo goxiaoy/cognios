@@ -10,9 +10,11 @@ use cognios_lib::services::mounts::watcher::VfsChangeEvent;
 use cognios_lib::services::notes::get_note_content::get_note_content;
 use cognios_lib::services::notes::save_note_content::save_note_content;
 use cognios_lib::services::voice_notes::{
-    capture_capability, complete_voice_note_transcript, create_voice_note,
-    delete_voice_note_source_audio, rename_voice_note_speaker, CompleteVoiceNoteTranscriptInput,
-    CreateVoiceNoteInput, RenameVoiceNoteSpeakerInput, VoiceNoteInput,
+    append_voice_note_audio_chunk, begin_voice_note_audio_capture, capture_capability,
+    complete_voice_note_transcript, create_voice_note, delete_voice_note_source_audio,
+    finish_voice_note_audio_capture, rename_voice_note_speaker, AppendVoiceNoteAudioChunkInput,
+    BeginVoiceNoteAudioCaptureInput, CompleteVoiceNoteTranscriptInput, CreateVoiceNoteInput,
+    FinishVoiceNoteAudioCaptureInput, RenameVoiceNoteSpeakerInput, VoiceNoteInput,
 };
 
 fn noop_emitter(_event: VfsChangeEvent) {}
@@ -98,6 +100,85 @@ fn complete_transcript_saves_markdown_and_marks_voice_note_completed() {
             .any(|event| event.mount_id == created.voice_note.note_id
                 && event.reason == "node-saved"),
         "completed transcript should use the normal note save event for search indexing"
+    );
+}
+
+#[test]
+fn audio_capture_writes_source_file_and_marks_transcription_pending() {
+    let (app_dir, db_path, notes_dir) = setup();
+    let mut conn = open_database(&db_path).expect("database");
+    let events = RefCell::new(Vec::<VfsChangeEvent>::new());
+    let recording_emitter = |event: VfsChangeEvent| events.borrow_mut().push(event);
+    let created = create_voice_note(
+        &mut conn,
+        &CreateVoiceNoteInput { parent_id: None },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("create voice note");
+
+    let recording = begin_voice_note_audio_capture(
+        &conn,
+        &BeginVoiceNoteAudioCaptureInput {
+            note_id: created.voice_note.note_id.clone(),
+            mime_type: Some("audio/webm;codecs=opus".into()),
+            file_extension: None,
+        },
+        app_dir.path(),
+        &notes_dir,
+        &recording_emitter,
+    )
+    .expect("begin capture");
+
+    assert_eq!(recording.status, "recording");
+    assert_eq!(recording.capture_status, "recording");
+    assert!(recording.source_audio_present);
+    let audio_path = recording.source_audio_path.as_deref().expect("source path");
+    assert!(audio_path.ends_with("source.webm"));
+
+    append_voice_note_audio_chunk(
+        &conn,
+        &AppendVoiceNoteAudioChunkInput {
+            note_id: created.voice_note.note_id.clone(),
+            bytes: b"first ".to_vec(),
+        },
+    )
+    .expect("append first chunk");
+    append_voice_note_audio_chunk(
+        &conn,
+        &AppendVoiceNoteAudioChunkInput {
+            note_id: created.voice_note.note_id.clone(),
+            bytes: b"second".to_vec(),
+        },
+    )
+    .expect("append second chunk");
+    assert_eq!(fs::read(audio_path).expect("audio bytes"), b"first second");
+
+    let finished = finish_voice_note_audio_capture(
+        &conn,
+        &FinishVoiceNoteAudioCaptureInput {
+            note_id: created.voice_note.note_id.clone(),
+            duration_ms: Some(1_250),
+        },
+        &notes_dir,
+        &recording_emitter,
+    )
+    .expect("finish capture");
+
+    assert_eq!(finished.status, "transcribing");
+    assert_eq!(finished.capture_status, "completed");
+    assert_eq!(finished.transcription_status, "pending");
+    assert!(finished.source_audio_present);
+    let body = get_note_content(&created.voice_note.note_id, &notes_dir).expect("body");
+    assert!(body.contains("Source audio saved locally as `source.webm` (1s)."));
+    assert!(body.contains("Transcription pending."));
+    assert!(
+        events
+            .borrow()
+            .iter()
+            .any(|event| event.mount_id == created.voice_note.note_id
+                && event.reason == "node-saved"),
+        "audio capture changes should refresh the note"
     );
 }
 

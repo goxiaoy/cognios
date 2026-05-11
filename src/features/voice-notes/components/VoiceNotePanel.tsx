@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { FileAudio, Mic, RefreshCw, ShieldAlert, WandSparkles } from "lucide-react";
+import { FileAudio, Mic, RefreshCw, ShieldAlert, Square, WandSparkles } from "lucide-react";
 
 import {
   AUDIO_TRANSCRIPT_MODEL_ROLE,
@@ -28,12 +28,25 @@ const EMPTY_CAPABILITY: CaptureCapability = {
 const ASR_POLL_INTERVAL_MS = 1_000;
 const ASR_READY_TIMEOUT_MS = 30 * 60 * 1_000;
 
+export type VoiceNoteRecorderFactory = (
+  noteId: string,
+  client: VoiceNoteClient
+) => Promise<VoiceNoteRecording>;
+
+interface VoiceNoteRecording {
+  voiceNote: VoiceNote;
+  startedAt: number;
+  stop(): Promise<VoiceNote>;
+}
+
 export function VoiceNotePanel({
   client,
   searchClient,
+  recorderFactory = createBrowserVoiceNoteRecorder,
 }: {
   client: VoiceNoteClient;
   searchClient: SearchClient;
+  recorderFactory?: VoiceNoteRecorderFactory;
 }) {
   const [voiceNotes, setVoiceNotes] = useState<VoiceNote[]>([]);
   const [capture, setCapture] = useState<CaptureCapability>(EMPTY_CAPABILITY);
@@ -41,10 +54,17 @@ export function VoiceNotePanel({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [activeRecording, setActiveRecording] = useState<{
+    noteId: string;
+    startedAt: number;
+    elapsedMs: number;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
   const locallyCreatedNoteIds = useRef(new Set<string>());
   const asrDownloadRequested = useRef(false);
+  const recordingRef = useRef<VoiceNoteRecording | null>(null);
   const explorerStore = useOptionalExplorerStoreContext();
 
   const refresh = useCallback(async () => {
@@ -79,6 +99,7 @@ export function VoiceNotePanel({
   }, [refresh]);
 
   const asrDisplay = useMemo(() => describeAsrStatus(models), [models]);
+  const browserCaptureAvailable = isBrowserAudioCaptureAvailable();
 
   const refreshModels = useCallback(async () => {
     const nextModels = await searchClient.modelsStatus();
@@ -146,7 +167,26 @@ export function VoiceNotePanel({
     throw new Error("Timed out waiting for Qwen ASR to finish downloading.");
   }, [models, refreshModels, searchClient]);
 
+  useEffect(() => {
+    if (!activeRecording) return;
+    const timer = window.setInterval(() => {
+      setActiveRecording((current) =>
+        current
+          ? {
+              ...current,
+              elapsedMs: Date.now() - current.startedAt,
+            }
+          : current
+      );
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [activeRecording?.noteId]);
+
   async function handleCreate() {
+    if (activeRecording) {
+      await handleStopRecording();
+      return;
+    }
     setCreating(true);
     setError(null);
     try {
@@ -155,11 +195,37 @@ export function VoiceNotePanel({
       locallyCreatedNoteIds.current.add(created.voiceNote.noteId);
       setVoiceNotes((notes) => [created.voiceNote, ...notes]);
       explorerStore?.applySnapshot(created.snapshot);
-      setStatusMessage("Voice note created.");
+      const recording = await recorderFactory(created.voiceNote.noteId, client);
+      recordingRef.current = recording;
+      setVoiceNotes((notes) => upsertVoiceNote(notes, recording.voiceNote));
+      setActiveRecording({
+        noteId: created.voiceNote.noteId,
+        startedAt: recording.startedAt,
+        elapsedMs: 0,
+      });
+      setStatusMessage("Recording voice note.");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleStopRecording() {
+    const recording = recordingRef.current;
+    if (!recording) return;
+    setStopping(true);
+    setError(null);
+    try {
+      const updated = await recording.stop();
+      recordingRef.current = null;
+      setActiveRecording(null);
+      setVoiceNotes((notes) => upsertVoiceNote(notes, updated));
+      setStatusMessage("Recording saved. Transcription pending.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStopping(false);
     }
   }
 
@@ -170,27 +236,51 @@ export function VoiceNotePanel({
           <p className="eyebrow">Voice Notes</p>
           <h2>Meeting transcripts</h2>
           <p className="muted-copy">
-            Manual notes are ready now. Automatic meeting detection and system audio capture stay disabled until the native capture adapter lands.
+            Manual audio recording is ready now. Automatic meeting detection and native system audio capture stay disabled until the capture adapter lands.
           </p>
         </div>
         <button
-          className="voice-note-primary"
-          disabled={creating || loading || refreshing}
+          className={`voice-note-primary${activeRecording ? " voice-note-primary--recording" : ""}`}
+          disabled={activeRecording ? stopping : creating || loading || refreshing}
           onClick={handleCreate}
           type="button"
         >
-          <Mic size={16} aria-hidden="true" />
-          <span>{creating ? "Preparing ASR" : "New voice note"}</span>
+          {activeRecording ? (
+            <Square size={15} aria-hidden="true" />
+          ) : (
+            <Mic size={16} aria-hidden="true" />
+          )}
+          <span>
+            {activeRecording
+              ? stopping
+                ? "Saving recording"
+                : "Stop recording"
+              : creating
+                ? "Preparing ASR"
+                : "New voice note"}
+          </span>
         </button>
       </header>
+
+      {activeRecording ? (
+        <div className="voice-note-recording-bar" role="status" aria-live="polite">
+          <span aria-hidden="true" />
+          <strong>Recording</strong>
+          <time>{formatElapsed(activeRecording.elapsedMs)}</time>
+        </div>
+      ) : null}
 
       <section className="voice-note-status-grid" aria-label="Voice note readiness">
         <StatusBlock
           icon={<FileAudio size={17} aria-hidden="true" />}
-          label="System audio"
-          value={capture.systemAudioRecording ? "Available" : "Unsupported"}
-          detail={capture.reason}
-          tone={capture.systemAudioRecording ? "ready" : "blocked"}
+          label="Audio capture"
+          value={browserCaptureAvailable ? "Available" : "Unsupported"}
+          detail={
+            browserCaptureAvailable
+              ? "Manual recording uses the WebView audio capture adapter."
+              : capture.reason
+          }
+          tone={browserCaptureAvailable ? "ready" : "blocked"}
         />
         <StatusBlock
           icon={<ShieldAlert size={17} aria-hidden="true" />}
@@ -382,6 +472,12 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function upsertVoiceNote(notes: VoiceNote[], next: VoiceNote): VoiceNote[] {
+  const existingIndex = notes.findIndex((note) => note.noteId === next.noteId);
+  if (existingIndex === -1) return [next, ...notes];
+  return notes.map((note, index) => (index === existingIndex ? next : note));
+}
+
 function mergeServerNotesWithLocalCreates(
   serverNotes: VoiceNote[],
   currentNotes: VoiceNote[],
@@ -394,4 +490,175 @@ function mergeServerNotesWithLocalCreates(
 
   const pendingLocalNotes = currentNotes.filter((note) => localIds.has(note.noteId));
   return [...pendingLocalNotes, ...serverNotes];
+}
+
+async function createBrowserVoiceNoteRecorder(
+  noteId: string,
+  client: VoiceNoteClient
+): Promise<VoiceNoteRecording> {
+  if (typeof MediaRecorder === "undefined") {
+    throw new Error("Audio recording is not available in this WebView.");
+  }
+  const stream = await requestVoiceNoteAudioStream();
+  const mimeType = preferredAudioMimeType();
+  let recorder: MediaRecorder;
+  try {
+    recorder = new MediaRecorder(
+      stream,
+      mimeType
+        ? {
+            mimeType,
+          }
+        : undefined
+    );
+  } catch (err) {
+    stopMediaStream(stream);
+    throw err;
+  }
+  const startedAt = Date.now();
+  let writeQueue = Promise.resolve();
+  let writeError: unknown = null;
+
+  let started: VoiceNote;
+  try {
+    started = await client.beginAudioCapture({
+      noteId,
+      mimeType: recorder.mimeType || mimeType || null,
+      fileExtension: audioExtensionForMimeType(recorder.mimeType || mimeType),
+    });
+  } catch (err) {
+    stopMediaStream(stream);
+    throw err;
+  }
+
+  recorder.addEventListener("dataavailable", (event) => {
+    if (!event.data || event.data.size === 0) return;
+    writeQueue = writeQueue
+      .then(async () => {
+        const bytes = Array.from(new Uint8Array(await event.data.arrayBuffer()));
+        await client.appendAudioChunk({ noteId, bytes });
+      })
+      .catch((err) => {
+        writeError = err;
+        throw err;
+      });
+    void writeQueue.catch(() => {});
+  });
+
+  try {
+    recorder.start(1_000);
+  } catch (err) {
+    stopMediaStream(stream);
+    throw err;
+  }
+
+  return {
+    voiceNote: started,
+    startedAt,
+    async stop() {
+      try {
+        if (recorder.state !== "inactive") {
+          const stopped = new Promise<void>((resolve, reject) => {
+            recorder.addEventListener("stop", () => resolve(), { once: true });
+            recorder.addEventListener(
+              "error",
+              (event) => reject(mediaRecorderError(event)),
+              { once: true }
+            );
+          });
+          recorder.requestData();
+          recorder.stop();
+          await stopped;
+        }
+        await writeQueue.catch(() => {});
+        if (writeError) {
+          throw writeError instanceof Error
+            ? writeError
+            : new Error(String(writeError));
+        }
+        return await client.finishAudioCapture({
+          noteId,
+          durationMs: Date.now() - startedAt,
+        });
+      } finally {
+        stopMediaStream(stream);
+      }
+    },
+  };
+}
+
+async function requestVoiceNoteAudioStream(): Promise<MediaStream> {
+  const mediaDevices = navigator.mediaDevices;
+  if (!mediaDevices) {
+    throw new Error("Audio capture is not available in this environment.");
+  }
+
+  if (mediaDevices.getDisplayMedia) {
+    try {
+      const displayStream = await mediaDevices.getDisplayMedia({
+        audio: true,
+        video: true,
+      });
+      const audioTracks = displayStream.getAudioTracks();
+      displayStream.getVideoTracks().forEach((track) => track.stop());
+      if (audioTracks.length > 0) {
+        return new MediaStream(audioTracks);
+      }
+      stopMediaStream(displayStream);
+    } catch {
+      // Fall back to microphone capture below.
+    }
+  }
+
+  if (!mediaDevices.getUserMedia) {
+    throw new Error("Audio capture is not available in this environment.");
+  }
+  return mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+    },
+    video: false,
+  });
+}
+
+function isBrowserAudioCaptureAvailable(): boolean {
+  if (typeof MediaRecorder === "undefined") return false;
+  const mediaDevices = navigator.mediaDevices;
+  return Boolean(mediaDevices?.getUserMedia || mediaDevices?.getDisplayMedia);
+}
+
+function preferredAudioMimeType(): string | undefined {
+  if (typeof MediaRecorder.isTypeSupported !== "function") return undefined;
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus",
+  ];
+  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
+}
+
+function audioExtensionForMimeType(mimeType?: string): string {
+  const baseType = (mimeType || "").split(";")[0];
+  if (baseType === "audio/mp4" || baseType === "audio/aac") return "m4a";
+  if (baseType === "audio/ogg") return "ogg";
+  if (baseType === "audio/wav" || baseType === "audio/wave") return "wav";
+  return "webm";
+}
+
+function mediaRecorderError(event: Event): Error {
+  const maybeError = event as Event & { error?: { message?: string } };
+  return new Error(maybeError.error?.message ?? "Audio recording failed.");
+}
+
+function stopMediaStream(stream: MediaStream): void {
+  stream.getTracks().forEach((track) => track.stop());
+}
+
+function formatElapsed(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1_000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }

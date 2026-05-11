@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -43,6 +45,28 @@ pub struct CreateVoiceNoteInput {
 pub struct CreatedVoiceNote {
     pub voice_note: VoiceNoteDto,
     pub snapshot: ExplorerSnapshotDto,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BeginVoiceNoteAudioCaptureInput {
+    pub note_id: String,
+    pub mime_type: Option<String>,
+    pub file_extension: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendVoiceNoteAudioChunkInput {
+    pub note_id: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FinishVoiceNoteAudioCaptureInput {
+    pub note_id: String,
+    pub duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -240,6 +264,126 @@ pub fn complete_voice_note_transcript(
         .ok_or_else(|| "voice note metadata missing after transcript update".to_string())
 }
 
+pub fn begin_voice_note_audio_capture(
+    conn: &Connection,
+    input: &BeginVoiceNoteAudioCaptureInput,
+    storage_dir: &Path,
+    notes_dir: &Path,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<VoiceNoteDto, String> {
+    get_voice_note(conn, &input.note_id)?.ok_or_else(|| "voice note not found".to_string())?;
+
+    let audio_dir = voice_note_audio_dir(storage_dir, &input.note_id)?;
+    fs::create_dir_all(&audio_dir).map_err(|error| error.to_string())?;
+    let extension =
+        audio_file_extension(input.file_extension.as_deref(), input.mime_type.as_deref());
+    let audio_path = audio_dir.join(format!("source.{extension}"));
+    fs::File::create(&audio_path).map_err(|error| error.to_string())?;
+
+    let existing_body = get_note_content(&input.note_id, notes_dir)?;
+    let body = replace_section(
+        &existing_body,
+        SOURCE_START,
+        SOURCE_END,
+        "Recording in progress. Source audio is being written locally.",
+    );
+    write_note_content(conn, &input.note_id, &body, notes_dir)?;
+
+    conn.execute(
+        "
+        UPDATE voice_notes
+        SET
+          status = 'recording',
+          capture_status = 'recording',
+          transcription_status = 'pending',
+          source_audio_path = ?2,
+          source_audio_deleted_at = NULL,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE note_id = ?1
+        ",
+        params![input.note_id, audio_path.to_string_lossy().to_string()],
+    )
+    .map_err(|error| error.to_string())?;
+
+    emit_note_saved(&input.note_id, emitter);
+
+    get_voice_note(conn, &input.note_id)?
+        .ok_or_else(|| "voice note metadata missing after audio capture start".to_string())
+}
+
+pub fn append_voice_note_audio_chunk(
+    conn: &Connection,
+    input: &AppendVoiceNoteAudioChunkInput,
+) -> Result<(), String> {
+    if input.bytes.is_empty() {
+        return Ok(());
+    }
+    let audio_path = source_audio_path_for_recording(conn, &input.note_id)?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&audio_path)
+        .map_err(|error| error.to_string())?;
+    file.write_all(&input.bytes)
+        .map_err(|error| error.to_string())
+}
+
+pub fn finish_voice_note_audio_capture(
+    conn: &Connection,
+    input: &FinishVoiceNoteAudioCaptureInput,
+    notes_dir: &Path,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<VoiceNoteDto, String> {
+    let voice_note =
+        get_voice_note(conn, &input.note_id)?.ok_or_else(|| "voice note not found".to_string())?;
+    if voice_note.capture_status != "recording" {
+        return Err("voice note is not currently recording".to_string());
+    }
+    let audio_path = voice_note
+        .source_audio_path
+        .as_deref()
+        .ok_or_else(|| "voice note source audio path is missing".to_string())?;
+    let audio_path = PathBuf::from(audio_path);
+    let metadata = fs::metadata(&audio_path).map_err(|error| error.to_string())?;
+    if metadata.len() == 0 {
+        mark_voice_note_capture_failed(conn, &input.note_id)?;
+        return Err("voice note source audio is empty".to_string());
+    }
+
+    let file_name = audio_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("source audio");
+    let duration = input
+        .duration_ms
+        .map(format_duration)
+        .unwrap_or_else(|| "duration unknown".to_string());
+    let source_text =
+        format!("Source audio saved locally as `{file_name}` ({duration}). Transcription pending.");
+    let existing_body = get_note_content(&input.note_id, notes_dir)?;
+    let body = replace_section(&existing_body, SOURCE_START, SOURCE_END, &source_text);
+    write_note_content(conn, &input.note_id, &body, notes_dir)?;
+
+    conn.execute(
+        "
+        UPDATE voice_notes
+        SET
+          status = 'transcribing',
+          capture_status = 'completed',
+          transcription_status = 'pending',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE note_id = ?1
+        ",
+        [&input.note_id],
+    )
+    .map_err(|error| error.to_string())?;
+
+    emit_note_saved(&input.note_id, emitter);
+
+    get_voice_note(conn, &input.note_id)?
+        .ok_or_else(|| "voice note metadata missing after audio capture finish".to_string())
+}
+
 pub fn rename_voice_note_speaker(
     conn: &Connection,
     input: &RenameVoiceNoteSpeakerInput,
@@ -380,4 +524,86 @@ fn append_section(existing: &str, start: &str, end: &str, replacement: &str) -> 
         "\n\n"
     };
     format!("{existing}{separator}{start}\n{replacement}\n{end}\n")
+}
+
+fn voice_note_audio_dir(storage_dir: &Path, note_id: &str) -> Result<PathBuf, String> {
+    if !note_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return Err("invalid voice note id for audio path".to_string());
+    }
+    Ok(storage_dir.join("voice-notes").join(note_id))
+}
+
+fn audio_file_extension(file_extension: Option<&str>, mime_type: Option<&str>) -> String {
+    if let Some(extension) = file_extension.and_then(sanitize_extension) {
+        return extension;
+    }
+    match mime_type.unwrap_or("").split(';').next().unwrap_or("") {
+        "audio/mp4" | "audio/aac" => "m4a",
+        "audio/ogg" => "ogg",
+        "audio/wav" | "audio/wave" | "audio/x-wav" => "wav",
+        _ => "webm",
+    }
+    .to_string()
+}
+
+fn sanitize_extension(raw: &str) -> Option<String> {
+    let extension = raw.trim().trim_start_matches('.');
+    if extension.is_empty() || extension.len() > 12 {
+        return None;
+    }
+    if !extension
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return None;
+    }
+    Some(extension.to_ascii_lowercase())
+}
+
+fn source_audio_path_for_recording(conn: &Connection, note_id: &str) -> Result<PathBuf, String> {
+    let path = conn
+        .query_row(
+            "
+            SELECT source_audio_path
+            FROM voice_notes
+            WHERE note_id = ?1 AND capture_status = 'recording'
+            ",
+            [note_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .flatten()
+        .ok_or_else(|| "voice note is not currently recording".to_string())?;
+    Ok(PathBuf::from(path))
+}
+
+fn mark_voice_note_capture_failed(conn: &Connection, note_id: &str) -> Result<(), String> {
+    conn.execute(
+        "
+        UPDATE voice_notes
+        SET
+          status = 'failed',
+          capture_status = 'failed',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE note_id = ?1
+        ",
+        [note_id],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
+fn format_duration(duration_ms: u64) -> String {
+    let total_seconds = (duration_ms + 500) / 1000;
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    if minutes == 0 {
+        format!("{seconds}s")
+    } else {
+        format!("{minutes}m {seconds:02}s")
+    }
 }
