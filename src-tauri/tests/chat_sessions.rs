@@ -210,5 +210,5 @@ fn chat_migration_preserves_existing_workspace_rows() {
         .expect("memory table");
 
     assert_eq!(memory_table_count, 1);
-    assert_eq!(user_version, 6);
+    assert_eq!(user_version, 7);
 }

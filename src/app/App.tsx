@@ -8,6 +8,8 @@ import { HomeDashboard } from "../features/home/components/HomeDashboard";
 import { searchClient } from "../features/search/api/searchClient";
 import { SearchPalette } from "../features/search/components/SearchPalette";
 import { SettingsLayout } from "../features/settings/components/SettingsLayout";
+import { voiceNoteClient } from "../features/voice-notes/api/voiceNoteClient";
+import { VoiceNotePanel } from "../features/voice-notes/components/VoiceNotePanel";
 import { AppSection, AppSidebar } from "./AppSidebar";
 import { useAutoModelDownload } from "./hooks/useAutoModelDownload";
 
@@ -15,6 +17,7 @@ const SECTION_LABELS: Record<AppSection, string> = {
   home: "Home",
   chat: "Chat",
   explorer: "Explorer",
+  "voice-notes": "Voice Notes",
   memory: "Memory Timeline",
   settings: "Settings",
 };
@@ -100,6 +103,12 @@ function AppShell() {
             </section>
           ) : null}
 
+          {activeSection === "voice-notes" ? (
+            <section className="voice-note-page-panel">
+              <VoiceNotePanel client={voiceNoteClient} searchClient={searchClient} />
+            </section>
+          ) : null}
+
           <div className={`app-panel${activeSection === "chat" ? " is-active" : ""}`}>
             <section className="chat-page-panel" aria-hidden={activeSection !== "chat"}>
               <ChatLayout
@@ -111,7 +120,7 @@ function AppShell() {
             </section>
           </div>
 
-          {activeSection !== "explorer" && activeSection !== "settings" && activeSection !== "chat" && activeSection !== "home" ? (
+          {activeSection !== "explorer" && activeSection !== "settings" && activeSection !== "chat" && activeSection !== "home" && activeSection !== "voice-notes" ? (
             <section className="placeholder-panel">
               <p className="eyebrow">{sectionLabel}</p>
               <p className="muted-copy">

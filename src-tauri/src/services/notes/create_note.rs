@@ -37,6 +37,25 @@ pub fn create_note_with_body(
     body: &str,
     emitter: &dyn Fn(VfsChangeEvent),
 ) -> Result<CreatedNote, String> {
+    create_note_with_body_internal(conn, input, notes_dir, body, Some(emitter))
+}
+
+pub fn create_note_with_body_without_event(
+    conn: &mut Connection,
+    input: &CreateNoteInput,
+    notes_dir: &Path,
+    body: &str,
+) -> Result<CreatedNote, String> {
+    create_note_with_body_internal(conn, input, notes_dir, body, None)
+}
+
+fn create_note_with_body_internal(
+    conn: &mut Connection,
+    input: &CreateNoteInput,
+    notes_dir: &Path,
+    body: &str,
+    emitter: Option<&dyn Fn(VfsChangeEvent)>,
+) -> Result<CreatedNote, String> {
     let node_id = Uuid::new_v4().to_string();
     let size_bytes = body.len() as i64;
 
@@ -67,10 +86,12 @@ pub fn create_note_with_body(
     touch_node_modified_at(conn, input.parent_id.as_deref()).map_err(|error| error.to_string())?;
 
     let snapshot = list_snapshot(conn).map_err(|error| error.to_string())?;
-    emitter(VfsChangeEvent {
-        mount_id: node_id.clone(),
-        reason: "node-created".to_string(),
-        ..Default::default()
-    });
+    if let Some(emitter) = emitter {
+        emitter(VfsChangeEvent {
+            mount_id: node_id.clone(),
+            reason: "node-created".to_string(),
+            ..Default::default()
+        });
+    }
     Ok(CreatedNote { node_id, snapshot })
 }

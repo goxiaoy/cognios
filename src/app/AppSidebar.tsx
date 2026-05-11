@@ -3,6 +3,7 @@ import {
   Files,
   Home,
   MessageCircle,
+  Mic,
   Search,
   Settings,
 } from "lucide-react";
@@ -10,7 +11,7 @@ import {
 import { CogniLogo } from "./components/CogniLogo";
 import { DownloadDock } from "./components/DownloadDock";
 
-export type AppSection = "home" | "chat" | "explorer" | "memory" | "settings";
+export type AppSection = "home" | "chat" | "explorer" | "voice-notes" | "memory" | "settings";
 
 type NavItem = { id: AppSection; label: string; Icon: React.ComponentType<{ size?: number }> };
 
@@ -18,6 +19,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "home",     label: "Home",     Icon: Home },
   { id: "chat",     label: "Chat",     Icon: MessageCircle },
   { id: "explorer", label: "Explorer", Icon: Files },
+  { id: "voice-notes", label: "Voice Notes", Icon: Mic },
   { id: "memory",   label: "Memory",   Icon: BookOpen },
 ];
 

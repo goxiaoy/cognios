@@ -1,0 +1,76 @@
+import type { ExplorerSnapshot } from "./vfs";
+
+export const AUDIO_TRANSCRIPT_MODEL_ROLE = "audio-transcript";
+
+export type VoiceNoteStatus =
+  | "pending_audio"
+  | "recording"
+  | "transcribing"
+  | "speaker_processing"
+  | "indexing"
+  | "completed"
+  | "failed";
+
+export type VoiceNoteCaptureStatus =
+  | "unsupported"
+  | "pending"
+  | "recording"
+  | "completed"
+  | "failed";
+
+export type VoiceNoteTranscriptionStatus =
+  | "pending"
+  | "transcribing"
+  | "completed"
+  | "failed"
+  | "unavailable";
+
+export type VoiceNoteSummaryStatus =
+  | "unavailable"
+  | "pending"
+  | "ready"
+  | "failed";
+
+export interface VoiceNote {
+  noteId: string;
+  status: VoiceNoteStatus;
+  captureStatus: VoiceNoteCaptureStatus;
+  transcriptionStatus: VoiceNoteTranscriptionStatus;
+  summaryStatus: VoiceNoteSummaryStatus;
+  sourceAudioPresent: boolean;
+  sourceAudioPath?: string | null;
+  sourceAudioDeletedAt?: string | null;
+  transcriptUpdatedAt?: string | null;
+  speakerLabels: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CaptureCapability {
+  systemAudioRecording: boolean;
+  automaticDetection: boolean;
+  reason: string;
+}
+
+export interface CreateVoiceNoteInput {
+  parentId?: string | null;
+}
+
+export interface CreatedVoiceNote {
+  voiceNote: VoiceNote;
+  snapshot: ExplorerSnapshot;
+}
+
+export interface CompleteVoiceNoteTranscriptInput {
+  noteId: string;
+  transcript: string;
+  summary?: string | null;
+  actionItems?: string[];
+  speakerLabels?: Record<string, string>;
+}
+
+export interface RenameVoiceNoteSpeakerInput {
+  noteId: string;
+  speakerId: string;
+  label: string;
+}

@@ -166,7 +166,12 @@ export interface NodeContent {
   assets?: Record<string, string>;
 }
 
-export type ModelRoleName = "embedding" | "reranker" | "ocr" | "captioner";
+export type ModelRoleName =
+  | "embedding"
+  | "reranker"
+  | "ocr"
+  | "captioner"
+  | "audio-transcript";
 
 export type ModelRoleStateName =
   | "missing"
