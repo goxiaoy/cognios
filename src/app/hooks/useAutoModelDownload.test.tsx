@@ -29,7 +29,7 @@ function readySettings(): SearchSettings {
 afterEach(() => cleanup());
 
 describe("useAutoModelDownload", () => {
-  it("starts model downloads in embedding, reranker, ASR priority order", async () => {
+  it("starts startup model downloads in embedding then reranker order and defers ASR", async () => {
     const startModelDownload = vi.fn().mockResolvedValue(undefined);
     const client = makeStubSearchClient({
       settings: vi.fn().mockResolvedValue({ state: "ready", data: readySettings() }),
@@ -61,12 +61,11 @@ describe("useAutoModelDownload", () => {
     render(<HookHarness client={client} />);
 
     await waitFor(() => {
-      expect(startModelDownload).toHaveBeenCalledTimes(3);
+      expect(startModelDownload).toHaveBeenCalledTimes(2);
     });
     expect(startModelDownload.mock.calls.map(([input]) => input.role)).toEqual([
       "embedding",
       "reranker",
-      "audio-transcript",
     ]);
   });
 });

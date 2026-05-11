@@ -6,17 +6,17 @@ import {
 } from "../../features/settings/data/providerPresets";
 import type { SearchClient } from "../../features/search/types/search";
 import {
-  sortModelDownloadRoles,
   startModelDownloadsInPriorityOrder,
 } from "../../features/search/modelDownloadPriority";
 
 const POLL_INTERVAL_MS = 500;
 const POLL_TIMEOUT_MS = 30_000;
+const STARTUP_DEFERRED_MODEL_ROLES = new Set(["audio-transcript"]);
 
 /**
  * Headless model bootstrap. Walks every feature in settings and,
- * for each enabled feature bound to a local provider, fires
- * ``startModelDownload`` for any owned role whose model isn't
+ * for each enabled feature bound to a startup-eligible local provider,
+ * fires ``startModelDownload`` for any owned role whose model isn't
  * already on disk.
  *
  * Generic over the feature catalog rather than hardcoding
@@ -25,6 +25,10 @@ const POLL_TIMEOUT_MS = 30_000;
  * picked up here on the next app launch (FeatureRow fires the
  * same logic on the *bind* event; this hook covers cold-starts
  * where the binding was set in a prior session).
+ *
+ * ASR is deliberately deferred from app startup: Voice Notes starts
+ * it on demand when the user opens or starts that workflow, still
+ * behind embedding/reranker priority.
  *
  * One-shot per app session: polls ``client.settings()`` until the
  * sidecar reports ``ready``, then reads ``modelsStatus`` once and
@@ -96,6 +100,7 @@ export function useAutoModelDownload(client: SearchClient): void {
           if (!preset) continue;
           for (const [roleId, status] of Object.entries(allRoles)) {
             if (!presetOwnsRole(preset, roleId)) continue;
+            if (STARTUP_DEFERRED_MODEL_ROLES.has(roleId)) continue;
             if (status.state === "ready" || status.state === "downloading") {
               continue;
             }
@@ -103,11 +108,12 @@ export function useAutoModelDownload(client: SearchClient): void {
           }
         }
         firedRef.current = true;
-        const pendingByPriority = sortModelDownloadRoles(pendingRoles)
+        const pendingByPriority = pendingRoles
           .map((roleId) => allRoles[roleId])
           .filter((role): role is NonNullable<typeof role> => Boolean(role));
-        // Fire all pending roles in priority order — embedding,
-        // reranker, then ASR before any optional tail. Each
+        // Fire all pending roles in priority order — embedding before
+        // reranker, with startup-deferred roles such as ASR excluded.
+        // Each
         // ``startModelDownload`` opens its own SSE stream that stays
         // alive until the download completes. ``await``ing each in
         // sequence would let only one stream open at a time, which
