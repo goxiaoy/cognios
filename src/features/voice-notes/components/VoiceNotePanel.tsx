@@ -7,6 +7,7 @@ import {
   type VoiceNote,
 } from "../../../lib/contracts/voiceNote";
 import type { ModelsStatus, SidecarEnvelope } from "../../../lib/contracts/search";
+import { useOptionalExplorerStoreContext } from "../../explorer/store/ExplorerStoreContext";
 import type { SearchClient } from "../../search/types/search";
 import type { VoiceNoteClient } from "../api/voiceNoteClient";
 
@@ -32,6 +33,7 @@ export function VoiceNotePanel({
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
   const locallyCreatedNoteIds = useRef(new Set<string>());
+  const explorerStore = useOptionalExplorerStoreContext();
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -73,6 +75,7 @@ export function VoiceNotePanel({
       const created = await client.create({});
       locallyCreatedNoteIds.current.add(created.voiceNote.noteId);
       setVoiceNotes((notes) => [created.voiceNote, ...notes]);
+      explorerStore?.applySnapshot(created.snapshot);
       setStatusMessage("Voice note created.");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

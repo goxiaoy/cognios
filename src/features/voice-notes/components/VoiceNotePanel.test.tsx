@@ -1,7 +1,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { VoiceNote } from "../../../lib/contracts/voiceNote";
+import type { ExplorerClient, ExplorerNode, ExplorerSnapshot } from "../../explorer/types/explorer";
+import {
+  ExplorerStoreProvider,
+  useExplorerStoreContext,
+} from "../../explorer/store/ExplorerStoreContext";
 import { makeStubSearchClient } from "../../search/types/test-helpers";
 import type { VoiceNoteClient } from "../api/voiceNoteClient";
 import { VoiceNotePanel } from "./VoiceNotePanel";
@@ -44,6 +50,60 @@ function makeClient(overrides: Partial<VoiceNoteClient> = {}): VoiceNoteClient {
   };
 }
 
+function makeExplorerClient(overrides: Partial<ExplorerClient> = {}): ExplorerClient {
+  return {
+    getExplorerSnapshot: vi.fn().mockResolvedValue({ roots: [] }),
+    getMountSetupContext: vi.fn().mockResolvedValue({ suggestedFolders: [], existingMounts: [] }),
+    createFolder: vi.fn(),
+    createMount: vi.fn(),
+    createNote: vi.fn(),
+    createUrl: vi.fn(),
+    renameNode: vi.fn(),
+    deleteNode: vi.fn(),
+    reindexNode: vi.fn(),
+    retryUrl: vi.fn(),
+    getNodeThumbnail: vi.fn(),
+    getNoteContent: vi.fn(),
+    saveNoteContent: vi.fn(),
+    readFileContent: vi.fn(),
+    showNodeInFileManager: vi.fn(),
+    showNodeExtractArtifacts: vi.fn(),
+    ...overrides,
+  };
+}
+
+function makeExplorerNote(overrides: Partial<ExplorerNode> = {}): ExplorerNode {
+  return {
+    id: "created-1",
+    parentId: null,
+    name: "Untitled",
+    kind: "note",
+    state: "ready",
+    createdAt: "2026-05-11 10:00:00",
+    modifiedAt: "2026-05-11 10:00:00",
+    sizeBytes: 0,
+    children: [],
+    ...overrides,
+  };
+}
+
+function renderWithExplorerStore(
+  ui: ReactNode,
+  explorerClient: ExplorerClient = makeExplorerClient()
+) {
+  return render(
+    <ExplorerStoreProvider client={explorerClient}>
+      {ui}
+      <ExplorerSnapshotProbe />
+    </ExplorerStoreProvider>
+  );
+}
+
+function ExplorerSnapshotProbe() {
+  const store = useExplorerStoreContext();
+  return <span data-testid="explorer-root-count">{store.snapshot.roots.length}</span>;
+}
+
 describe("VoiceNotePanel", () => {
   afterEach(() => {
     cleanup();
@@ -65,8 +125,13 @@ describe("VoiceNotePanel", () => {
   });
 
   it("creates a manual voice note from the primary action", async () => {
+    const snapshot: ExplorerSnapshot = { roots: [makeExplorerNote()] };
     const client = makeClient();
-    render(
+    vi.mocked(client.create).mockResolvedValue({
+      voiceNote: makeVoiceNote({ noteId: "created-1" }),
+      snapshot,
+    });
+    renderWithExplorerStore(
       <VoiceNotePanel
         client={client}
         searchClient={makeStubSearchClient({
@@ -83,6 +148,7 @@ describe("VoiceNotePanel", () => {
     });
     expect(await screen.findByText("Untitled Voice Note")).toBeInTheDocument();
     expect(screen.getByText("Voice note created.")).toBeInTheDocument();
+    expect(screen.getByTestId("explorer-root-count")).toHaveTextContent("1");
   });
 
   it("keeps locally created notes visible across stale refresh results", async () => {
