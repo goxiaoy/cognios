@@ -42,9 +42,9 @@ function AppShell() {
   const openPalette = useCallback(() => setPaletteOpen(true), []);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
 
-  // First-run model bootstrap: silently kick off downloads for the
-  // mandatory features' local models if they're not on disk yet.
-  // The DownloadDock in the sidebar surfaces progress.
+  // First-run model bootstrap: silently kick off downloads for enabled
+  // local features' models if they're not on disk yet. The DownloadDock
+  // in the sidebar surfaces progress.
   useAutoModelDownload(searchClient);
 
   // Global keyboard shortcut. Cmd/Ctrl+K toggles the palette; the

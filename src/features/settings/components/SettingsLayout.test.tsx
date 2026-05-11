@@ -211,6 +211,7 @@ describe("SettingsLayout", () => {
       "Vision",
       "OCR",
       "Advanced OCR",
+      "Audio Transcript",
       "Chat",
       "Web Search",
     ]) {

@@ -12,6 +12,21 @@ import { makeStubSearchClient } from "../../search/types/test-helpers";
 import type { VoiceNoteClient } from "../api/voiceNoteClient";
 import { VoiceNotePanel } from "./VoiceNotePanel";
 
+function makeModelsStatus(state: string) {
+  return {
+    state: "ready" as const,
+    data: {
+      roles: {
+        "audio-transcript": {
+          role: "audio-transcript",
+          state,
+          repo: "Qwen/Qwen3-ASR-0.6B",
+        },
+      },
+    },
+  };
+}
+
 function makeVoiceNote(overrides: Partial<VoiceNote> = {}): VoiceNote {
   return {
     noteId: "voice-1",
@@ -109,19 +124,25 @@ describe("VoiceNotePanel", () => {
     cleanup();
   });
 
-  it("renders honest unsupported capture and missing ASR readiness states", async () => {
+  it("renders honest unsupported capture and starts missing ASR download", async () => {
+    const startModelDownload = vi.fn().mockResolvedValue(undefined);
     render(
       <VoiceNotePanel
         client={makeClient()}
         searchClient={makeStubSearchClient({
-          modelsStatus: vi.fn().mockResolvedValue({ state: "ready", data: { roles: {} } }),
+          modelsStatus: vi.fn().mockResolvedValue(makeModelsStatus("missing")),
+          startModelDownload,
         })}
       />
     );
 
     expect(await screen.findByText("Unsupported")).toBeInTheDocument();
     expect(screen.getByText("Manual only")).toBeInTheDocument();
-    expect(screen.getByText("Not configured")).toBeInTheDocument();
+    expect(screen.getByText("Missing")).toBeInTheDocument();
+    expect(screen.getByText("Download starts automatically before recording.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(startModelDownload).toHaveBeenCalledWith({ role: "audio-transcript" });
+    });
   });
 
   it("creates a manual voice note from the primary action", async () => {
@@ -135,7 +156,7 @@ describe("VoiceNotePanel", () => {
       <VoiceNotePanel
         client={client}
         searchClient={makeStubSearchClient({
-          modelsStatus: vi.fn().mockResolvedValue({ state: "ready", data: { roles: {} } }),
+          modelsStatus: vi.fn().mockResolvedValue(makeModelsStatus("ready")),
         })}
       />
     );
@@ -163,7 +184,7 @@ describe("VoiceNotePanel", () => {
       <VoiceNotePanel
         client={client}
         searchClient={makeStubSearchClient({
-          modelsStatus: vi.fn().mockResolvedValue({ state: "ready", data: { roles: {} } }),
+          modelsStatus: vi.fn().mockResolvedValue(makeModelsStatus("ready")),
         })}
       />
     );
@@ -185,18 +206,7 @@ describe("VoiceNotePanel", () => {
       <VoiceNotePanel
         client={makeClient()}
         searchClient={makeStubSearchClient({
-          modelsStatus: vi.fn().mockResolvedValue({
-            state: "ready",
-            data: {
-              roles: {
-                "audio-transcript": {
-                  role: "audio-transcript",
-                  state: "ready",
-                  repo: "Qwen/Qwen3-ASR-0.6B",
-                },
-              },
-            },
-          }),
+          modelsStatus: vi.fn().mockResolvedValue(makeModelsStatus("ready")),
         })}
       />
     );
@@ -211,23 +221,12 @@ describe("VoiceNotePanel", () => {
       <VoiceNotePanel
         client={makeClient()}
         searchClient={makeStubSearchClient({
-          modelsStatus: vi.fn().mockResolvedValue({
-            state: "ready",
-            data: {
-              roles: {
-                "audio-transcript": {
-                  role: "audio-transcript",
-                  state: "downloading",
-                  repo: "Qwen/Qwen3-ASR-0.6B",
-                },
-              },
-            },
-          }),
+          modelsStatus: vi.fn().mockResolvedValue(makeModelsStatus("downloading")),
         })}
       />
     );
 
-    expect(await screen.findByText("downloading")).toBeInTheDocument();
+    expect(await screen.findByText("Downloading")).toBeInTheDocument();
     expect(screen.getByText("Qwen/Qwen3-ASR-0.6B")).toBeInTheDocument();
   });
 });

@@ -77,6 +77,21 @@ DEFAULTS: dict[str, ModelSpec] = {
             FileSpec("config.json", "dfa5713436ecb4616eaa576795c8d3efd1f03122031a1ad4973d0b6b7e7edfd3"),
         ),
     ),
+    "audio-transcript": ModelSpec(
+        role="audio-transcript",
+        repo="Qwen/Qwen3-ASR-0.6B",
+        commit="5eb144179a02acc5e5ba31e748d22b0cf3e303b0",
+        files=(
+            FileSpec("chat_template.json", "75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff"),
+            FileSpec("config.json", "76d3ae4601ce939830b2517f4a6cadb86cc51316c3900af6b020b051c21a478c"),
+            FileSpec("generation_config.json", "1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c"),
+            FileSpec("merges.txt", "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"),
+            FileSpec("model.safetensors", "79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea"),
+            FileSpec("preprocessor_config.json", "45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d"),
+            FileSpec("tokenizer_config.json", "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c"),
+            FileSpec("vocab.json", "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"),
+        ),
+    ),
     # OCR + captioner roles intentionally absent from the basic manifest:
     #
     # - Local OCR (basic) is served by ``rapidocr-onnxruntime`` (PP-OCRv4

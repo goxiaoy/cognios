@@ -35,12 +35,15 @@ from typing import Literal
 # local, structured-prompted vision for cloud) that produces markdown
 # with embedded tables and LaTeX formulas — distinct from the basic
 # ``ocr`` capability which only returns flat detected text.
+# ``audio-transcript`` powers Voice Notes transcription from captured
+# meeting audio.
 Capability = Literal[
     "embedding",
     "reranking",
     "vision",
     "ocr",
     "advanced-ocr",
+    "audio-transcript",
     "chat",
     "web-search",
 ]
@@ -69,15 +72,17 @@ class ProviderPreset:
 
 # v1 preset table. Capability/provider matrix:
 #
-#                   embedding  reranking  vision  ocr  chat  web-search
+#                   embedding  reranking  vision  ocr  adv-ocr  audio  chat  web-search
 #   local-gte           ✓
 #   local-gte-reranker             ✓
 #   local-paddleocr                                  ✓
-#   local-ollama                                           ✓
-#   openai              ✓                    ✓     ✓       ✓
-#   qwen-dashscope                           ✓     ✓
-#   brave-search                                                   ✓
-#   tavily-search                                                  ✓
+#   local-paddleocr-advanced                                ✓
+#   local-qwen-asr                                               ✓
+#   local-ollama                                                       ✓
+#   openai              ✓                    ✓     ✓       ✓           ✓
+#   qwen-dashscope                           ✓     ✓       ✓
+#   brave-search                                                               ✓
+#   tavily-search                                                              ✓
 #
 # Cloud "vision" providers also serve OCR — same chat-completions
 # endpoint with a transcribe-only prompt; see
@@ -139,6 +144,16 @@ PRESETS: dict[str, ProviderPreset] = {
         # (``advanced-ocr-detection``, ``advanced-ocr-recognition``, ...).
         default_model_per_capability={
             "advanced-ocr": "PP-StructureV3",
+        },
+        auth_kind="none",
+    ),
+    "local-qwen-asr": ProviderPreset(
+        provider_id="local-qwen-asr",
+        display_name="Local Qwen ASR",
+        provider_type="local",
+        capabilities=frozenset({"audio-transcript"}),
+        default_model_per_capability={
+            "audio-transcript": "Qwen3-ASR-0.6B",
         },
         auth_kind="none",
     ),

@@ -34,6 +34,7 @@ describe("FeaturesList", () => {
       "Image captioning",
       "Advanced OCR",
       "Chat",
+      "Voice notes",
       "Web search",
       "Semantic search",
       "Result reranking",

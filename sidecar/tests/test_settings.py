@@ -55,6 +55,13 @@ def test_default_settings_seeds_local_gte_and_semantic_search():
     # and cloud incurs per-image API cost. Off + unbound by default.
     assert s.features["advanced-ocr"].enabled is False
     assert s.features["advanced-ocr"].provider_id is None
+    # Voice Notes is enabled by default and bound to the local Qwen
+    # ASR provider so the shared first-run model downloader can start
+    # preparing transcription without a separate bootstrap path.
+    assert "local-qwen-asr" in s.providers
+    assert s.providers["local-qwen-asr"].enabled is True
+    assert s.features["voice-notes"].enabled is True
+    assert s.features["voice-notes"].provider_id == "local-qwen-asr"
     # Chat is pre-bound to local Ollama, but the provider is not
     # considered ready until the user opens Add and saves the default
     # endpoint. This keeps first launch from claiming Ollama is ready

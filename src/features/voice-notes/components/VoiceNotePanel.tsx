@@ -6,7 +6,11 @@ import {
   type CaptureCapability,
   type VoiceNote,
 } from "../../../lib/contracts/voiceNote";
-import type { ModelsStatus, SidecarEnvelope } from "../../../lib/contracts/search";
+import type {
+  ModelRoleStatus,
+  ModelsStatus,
+  SidecarEnvelope,
+} from "../../../lib/contracts/search";
 import { useOptionalExplorerStoreContext } from "../../explorer/store/ExplorerStoreContext";
 import type { SearchClient } from "../../search/types/search";
 import type { VoiceNoteClient } from "../api/voiceNoteClient";
@@ -16,6 +20,8 @@ const EMPTY_CAPABILITY: CaptureCapability = {
   automaticDetection: false,
   reason: "Voice note capture capability is loading.",
 };
+const ASR_POLL_INTERVAL_MS = 1_000;
+const ASR_READY_TIMEOUT_MS = 30 * 60 * 1_000;
 
 export function VoiceNotePanel({
   client,
@@ -33,6 +39,7 @@ export function VoiceNotePanel({
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
   const locallyCreatedNoteIds = useRef(new Set<string>());
+  const asrDownloadRequested = useRef(false);
   const explorerStore = useOptionalExplorerStoreContext();
 
   const refresh = useCallback(async () => {
@@ -68,10 +75,81 @@ export function VoiceNotePanel({
 
   const asrDisplay = useMemo(() => describeAsrStatus(models), [models]);
 
+  const refreshModels = useCallback(async () => {
+    const nextModels = await searchClient.modelsStatus();
+    setModels(nextModels);
+    return nextModels;
+  }, [searchClient]);
+
+  useEffect(() => {
+    if (!shouldAutoStartAsrDownload(models, asrDownloadRequested.current)) return;
+    let cancelled = false;
+    asrDownloadRequested.current = true;
+    setStatusMessage("Downloading Qwen ASR for voice notes.");
+    void searchClient
+      .startModelDownload({ role: AUDIO_TRANSCRIPT_MODEL_ROLE })
+      .then(async () => {
+        if (cancelled) return;
+        await refresh();
+      })
+      .catch((err) => {
+        if (cancelled || isAlreadyDownloadingError(err)) return;
+        setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [models, refresh, searchClient]);
+
+  const ensureAsrReady = useCallback(async () => {
+    const deadline = Date.now() + ASR_READY_TIMEOUT_MS;
+    let current = models ?? (await refreshModels());
+    let kickedDownload = false;
+
+    while (Date.now() < deadline) {
+      const role = getAsrRole(current);
+      if (role?.state === "ready") return;
+      if (current.state !== "ready" || !current.data) {
+        throw new Error(current.error ?? "Search sidecar is not ready.");
+      }
+      if (!role) {
+        throw new Error("Qwen ASR model role is not configured in this sidecar.");
+      }
+      if (role.state === "error" && kickedDownload) {
+        throw new Error(role.error ?? "Qwen ASR download failed.");
+      }
+
+      if (
+        !kickedDownload &&
+        role.state !== "downloading" &&
+        role.state !== "verifying" &&
+        role.state !== "queued"
+      ) {
+        kickedDownload = true;
+        asrDownloadRequested.current = true;
+        setStatusMessage("Preparing Qwen ASR before starting voice note.");
+        try {
+          await searchClient.startModelDownload({ role: AUDIO_TRANSCRIPT_MODEL_ROLE });
+        } catch (err) {
+          if (!isAlreadyDownloadingError(err)) {
+            throw err;
+          }
+        }
+      } else {
+        await delay(ASR_POLL_INTERVAL_MS);
+      }
+
+      current = await refreshModels();
+    }
+
+    throw new Error("Timed out waiting for Qwen ASR to finish downloading.");
+  }, [models, refreshModels, searchClient]);
+
   async function handleCreate() {
     setCreating(true);
     setError(null);
     try {
+      await ensureAsrReady();
       const created = await client.create({});
       locallyCreatedNoteIds.current.add(created.voiceNote.noteId);
       setVoiceNotes((notes) => [created.voiceNote, ...notes]);
@@ -101,7 +179,7 @@ export function VoiceNotePanel({
           type="button"
         >
           <Mic size={16} aria-hidden="true" />
-          <span>{creating ? "Creating" : "New voice note"}</span>
+          <span>{creating ? "Preparing ASR" : "New voice note"}</span>
         </button>
       </header>
 
@@ -241,10 +319,42 @@ function describeAsrStatus(models: SidecarEnvelope<ModelsStatus> | null): {
   }
 
   return {
-    value: role.state === "ready" ? "Ready" : role.state,
-    detail: role.repo || "Model repo unknown.",
+    value: role.state === "ready" ? "Ready" : titleCaseState(role.state),
+    detail:
+      role.state === "missing"
+        ? "Download starts automatically before recording."
+        : role.repo || "Model repo unknown.",
     tone: role.state === "ready" ? "ready" : "loading",
   };
+}
+
+function getAsrRole(
+  models: SidecarEnvelope<ModelsStatus> | null
+): ModelRoleStatus | null {
+  if (models?.state !== "ready" || !models.data) return null;
+  return models.data.roles[AUDIO_TRANSCRIPT_MODEL_ROLE] ?? null;
+}
+
+function shouldAutoStartAsrDownload(
+  models: SidecarEnvelope<ModelsStatus> | null,
+  alreadyRequested: boolean
+): boolean {
+  if (alreadyRequested) return false;
+  const role = getAsrRole(models);
+  return role?.state === "missing";
+}
+
+function isAlreadyDownloadingError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.toLowerCase().includes("already downloading");
+}
+
+function titleCaseState(state: string): string {
+  return state.slice(0, 1).toUpperCase() + state.slice(1);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function mergeServerNotesWithLocalCreates(

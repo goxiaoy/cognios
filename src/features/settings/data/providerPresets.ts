@@ -6,7 +6,8 @@
  * values to the sidecar's response would catch drift in CI.
  *
  * Capability vocabulary v1: ``embedding`` / ``reranking`` / ``vision``
- * / ``ocr`` / ``advanced-ocr`` / ``chat`` / ``web-search``.
+ * / ``ocr`` / ``advanced-ocr`` / ``audio-transcript`` / ``chat`` /
+ * ``web-search``.
  */
 
 export type ProviderType = "local" | "cloud";
@@ -17,6 +18,7 @@ export type Capability =
   | "vision"
   | "ocr"
   | "advanced-ocr"
+  | "audio-transcript"
   | "chat"
   | "web-search";
 
@@ -93,6 +95,17 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     // Prefix match — every ``advanced-ocr-*`` stage role belongs
     // to this provider.
     localRoleId: "advanced-ocr-",
+  },
+  {
+    providerId: "local-qwen-asr",
+    displayName: "Local Qwen ASR",
+    providerType: "local",
+    capabilities: ["audio-transcript"],
+    defaultModelPerCapability: {
+      "audio-transcript": "Qwen3-ASR-0.6B",
+    },
+    authKind: "none",
+    localRoleId: "audio-transcript",
   },
   {
     providerId: "local-ollama",
@@ -226,6 +239,15 @@ export const FEATURE_CATALOG: readonly FeatureMeta[] = [
     description:
       "Answers questions from selected workspace and web sources. Local Ollama stays on-device; cloud providers send prompt context off-device.",
     capability: "chat",
+    mandatory: false,
+    comingSoon: false,
+  },
+  {
+    featureId: "voice-notes",
+    displayName: "Voice notes",
+    description:
+      "Transcribes meeting audio locally with Qwen3-ASR 0.6B. The model downloads automatically before recording starts.",
+    capability: "audio-transcript",
     mandatory: false,
     comingSoon: false,
   },

@@ -172,7 +172,9 @@ def default_settings() -> SearchSettings:
     state once the first-run downloads complete. PaddleOCR ships
     bundled inside the rapidocr-onnxruntime wheel, so image-ocr has
     no download cost — that's why it's mandatory rather than opt-in.
-    Image captioning is still optional pending the local Gemma path.
+    Voice Notes is also enabled by default so the app can prepare
+    Qwen3-ASR through the same model-download path before a recording
+    starts. Image captioning is still optional pending the local Gemma path.
     """
     return SearchSettings(
         providers={
@@ -186,6 +188,10 @@ def default_settings() -> SearchSettings:
             ),
             "local-paddleocr": ProviderConfig(
                 provider_id="local-paddleocr",
+                enabled=True,
+            ),
+            "local-qwen-asr": ProviderConfig(
+                provider_id="local-qwen-asr",
                 enabled=True,
             ),
         },
@@ -209,6 +215,10 @@ def default_settings() -> SearchSettings:
             # When enabled and bound, ImageProcessor routes through the
             # advanced extractor; basic image-ocr stays as the fallback.
             "advanced-ocr": FeatureConfig(enabled=False, provider_id=None),
+            "voice-notes": FeatureConfig(
+                enabled=True,
+                provider_id="local-qwen-asr",
+            ),
             "chat": FeatureConfig(enabled=True, provider_id="local-ollama"),
             "web-search": FeatureConfig(enabled=False, provider_id=None),
         },

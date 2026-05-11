@@ -15,6 +15,7 @@ const CAPABILITY_LABEL: Record<string, string> = {
   vision: "Vision",
   ocr: "OCR",
   "advanced-ocr": "Advanced OCR",
+  "audio-transcript": "Audio Transcript",
 };
 
 const STATE_LABEL: Record<string, string> = {
