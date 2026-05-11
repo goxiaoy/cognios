@@ -12,6 +12,11 @@ import type {
   SidecarEnvelope,
 } from "../../../lib/contracts/search";
 import { useOptionalExplorerStoreContext } from "../../explorer/store/ExplorerStoreContext";
+import {
+  type ModelDownloadStartResult,
+  modelRolesAtOrAbovePriority,
+  startModelDownloadsInPriorityOrder,
+} from "../../search/modelDownloadPriority";
 import type { SearchClient } from "../../search/types/search";
 import type { VoiceNoteClient } from "../api/voiceNoteClient";
 
@@ -86,10 +91,10 @@ export function VoiceNotePanel({
     let cancelled = false;
     asrDownloadRequested.current = true;
     setStatusMessage("Downloading Qwen ASR for voice notes.");
-    void searchClient
-      .startModelDownload({ role: AUDIO_TRANSCRIPT_MODEL_ROLE })
-      .then(async () => {
+    void startAsrAndHigherPriorityDownloads(searchClient, models)
+      .then(async (results) => {
         if (cancelled) return;
+        throwIfAsrStartFailed(results);
         await refresh();
       })
       .catch((err) => {
@@ -128,13 +133,9 @@ export function VoiceNotePanel({
         kickedDownload = true;
         asrDownloadRequested.current = true;
         setStatusMessage("Preparing Qwen ASR before starting voice note.");
-        try {
-          await searchClient.startModelDownload({ role: AUDIO_TRANSCRIPT_MODEL_ROLE });
-        } catch (err) {
-          if (!isAlreadyDownloadingError(err)) {
-            throw err;
-          }
-        }
+        throwIfAsrStartFailed(
+          await startAsrAndHigherPriorityDownloads(searchClient, current)
+        );
       } else {
         await delay(ASR_POLL_INTERVAL_MS);
       }
@@ -342,6 +343,30 @@ function shouldAutoStartAsrDownload(
   if (alreadyRequested) return false;
   const role = getAsrRole(models);
   return role?.state === "missing";
+}
+
+function startAsrAndHigherPriorityDownloads(
+  client: SearchClient,
+  models: SidecarEnvelope<ModelsStatus> | null
+): Promise<ModelDownloadStartResult[]> {
+  if (models?.state !== "ready" || !models.data) return Promise.resolve([]);
+  return startModelDownloadsInPriorityOrder(
+    client,
+    modelRolesAtOrAbovePriority(models.data.roles, AUDIO_TRANSCRIPT_MODEL_ROLE)
+  );
+}
+
+function throwIfAsrStartFailed(results: ModelDownloadStartResult[]): void {
+  const failedAsr = results.find(
+    (result) =>
+      result.role === AUDIO_TRANSCRIPT_MODEL_ROLE &&
+      result.status === "rejected" &&
+      !isAlreadyDownloadingError(result.reason)
+  );
+  if (!failedAsr || failedAsr.status !== "rejected") return;
+  throw failedAsr.reason instanceof Error
+    ? failedAsr.reason
+    : new Error(String(failedAsr.reason));
 }
 
 function isAlreadyDownloadingError(err: unknown): boolean {

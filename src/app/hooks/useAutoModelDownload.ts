@@ -5,6 +5,10 @@ import {
   presetOwnsRole,
 } from "../../features/settings/data/providerPresets";
 import type { SearchClient } from "../../features/search/types/search";
+import {
+  sortModelDownloadRoles,
+  startModelDownloadsInPriorityOrder,
+} from "../../features/search/modelDownloadPriority";
 
 const POLL_INTERVAL_MS = 500;
 const POLL_TIMEOUT_MS = 30_000;
@@ -99,22 +103,21 @@ export function useAutoModelDownload(client: SearchClient): void {
           }
         }
         firedRef.current = true;
-        // Fire all pending roles in parallel — each
+        const pendingByPriority = sortModelDownloadRoles(pendingRoles)
+          .map((roleId) => allRoles[roleId])
+          .filter((role): role is NonNullable<typeof role> => Boolean(role));
+        // Fire all pending roles in priority order — embedding,
+        // reranker, then ASR before any optional tail. Each
         // ``startModelDownload`` opens its own SSE stream that stays
-        // alive until the download completes. ``await``ing them in
+        // alive until the download completes. ``await``ing each in
         // sequence would let only one stream open at a time, which
         // defeats the sidecar's concurrency cap (the manager wants
         // to see all N requests so it can park N-2 on the semaphore
-        // and emit ``queued`` frames). We don't await the resolved
-        // promises here — the dock surfaces progress via the live
+        // and emit ``queued`` frames). The sorted fire order decides
+        // which requests claim the first slots. We don't await the
+        // resolved promises here — the dock surfaces progress via the live
         // ``models/progress`` Tauri events.
-        for (const role of pendingRoles) {
-          void client.startModelDownload({ role }).catch(() => {
-            // The DownloadDock will display any persistent error
-            // via the polled models envelope — we don't surface
-            // anything from here.
-          });
-        }
+        void startModelDownloadsInPriorityOrder(client, pendingByPriority);
       } catch {
         if (!cancelled && Date.now() < deadline) {
           timer = window.setTimeout(attempt, POLL_INTERVAL_MS);

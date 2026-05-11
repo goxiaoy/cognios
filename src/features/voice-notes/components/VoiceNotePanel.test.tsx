@@ -12,11 +12,15 @@ import { makeStubSearchClient } from "../../search/types/test-helpers";
 import type { VoiceNoteClient } from "../api/voiceNoteClient";
 import { VoiceNotePanel } from "./VoiceNotePanel";
 
-function makeModelsStatus(state: string) {
+function makeModelsStatus(
+  state: string,
+  roles: Record<string, { role: string; state: string; repo: string }> = {}
+) {
   return {
     state: "ready" as const,
     data: {
       roles: {
+        ...roles,
         "audio-transcript": {
           role: "audio-transcript",
           state,
@@ -143,6 +147,41 @@ describe("VoiceNotePanel", () => {
     await waitFor(() => {
       expect(startModelDownload).toHaveBeenCalledWith({ role: "audio-transcript" });
     });
+  });
+
+  it("starts higher-priority core model downloads before ASR from the panel", async () => {
+    const startModelDownload = vi.fn().mockResolvedValue(undefined);
+    render(
+      <VoiceNotePanel
+        client={makeClient()}
+        searchClient={makeStubSearchClient({
+          modelsStatus: vi.fn().mockResolvedValue(
+            makeModelsStatus("missing", {
+              embedding: {
+                role: "embedding",
+                state: "missing",
+                repo: "onnx-community/gte-multilingual-base",
+              },
+              reranker: {
+                role: "reranker",
+                state: "missing",
+                repo: "onnx-community/gte-multilingual-reranker-base",
+              },
+            })
+          ),
+          startModelDownload,
+        })}
+      />
+    );
+
+    await waitFor(() => {
+      expect(startModelDownload).toHaveBeenCalledTimes(3);
+    });
+    expect(startModelDownload.mock.calls.map(([input]) => input.role)).toEqual([
+      "embedding",
+      "reranker",
+      "audio-transcript",
+    ]);
   });
 
   it("creates a manual voice note from the primary action", async () => {
