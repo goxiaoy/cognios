@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -29,3 +30,13 @@ def utc_now_iso() -> str:
 
 class WebSearchError(RuntimeError):
     """Recoverable web-search provider failure."""
+
+
+class WebSearchProvider(Protocol):
+    provider_id: str
+
+    def search(self, query: str, *, count: int = 5) -> WebSearchResponse:
+        ...
+
+    def close(self) -> None:
+        ...

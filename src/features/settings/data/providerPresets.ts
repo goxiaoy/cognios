@@ -145,6 +145,17 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     baseUrl: "https://api.search.brave.com/res/v1",
     validationEndpoint: "/web/search",
   },
+  {
+    providerId: "tavily-search",
+    displayName: "Tavily Search",
+    providerType: "cloud",
+    capabilities: ["web-search"],
+    defaultModelPerCapability: { "web-search": "tavily-search" },
+    authKind: "api-key",
+    baseUrl: "https://api.tavily.com",
+    validationEndpoint: "/search",
+    apiKeyPrefix: "tvly-",
+  },
 ];
 
 export function presetById(providerId: string): ProviderPreset | undefined {

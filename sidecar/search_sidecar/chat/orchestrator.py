@@ -16,7 +16,7 @@ from .types import (
     ChatModelList,
     ChatProviderError,
 )
-from ..web_search.brave import BraveWebSearchProvider
+from ..web_search.types import WebSearchProvider
 
 
 @dataclass(frozen=True)
@@ -132,7 +132,7 @@ class ChatOrchestrator:
         self._chat_provider = chat_provider
 
     def set_web_search_provider(
-        self, web_search_provider: BraveWebSearchProvider | None
+        self, web_search_provider: WebSearchProvider | None
     ) -> None:
         self._retrieval.set_web_search_provider(web_search_provider)
 

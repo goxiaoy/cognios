@@ -1,11 +1,14 @@
 from .brave import BraveWebSearchProvider
 from .factory import select_web_search_provider
 from .fetch import fetch_web_preview
-from .types import WebSearchError, WebSearchResponse, WebSource
+from .tavily import TavilyWebSearchProvider
+from .types import WebSearchError, WebSearchProvider, WebSearchResponse, WebSource
 
 __all__ = [
     "BraveWebSearchProvider",
+    "TavilyWebSearchProvider",
     "WebSearchError",
+    "WebSearchProvider",
     "WebSearchResponse",
     "WebSource",
     "fetch_web_preview",

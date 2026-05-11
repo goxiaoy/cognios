@@ -28,6 +28,7 @@ def test_v1_presets_cover_known_providers():
         "openai",
         "qwen-dashscope",
         "brave-search",
+        "tavily-search",
     }
 
 
@@ -83,6 +84,7 @@ def test_capability_matrix_matches_v1_decision():
     - openai → embedding + vision + ocr + advanced-ocr + chat
     - qwen-dashscope → vision + ocr + advanced-ocr
     - brave-search → web-search
+    - tavily-search → web-search
     """
     assert PRESETS["local-gte"].capabilities == frozenset({"embedding"})
     assert PRESETS["local-gte-reranker"].capabilities == frozenset({"reranking"})
@@ -98,6 +100,7 @@ def test_capability_matrix_matches_v1_decision():
         {"vision", "ocr", "advanced-ocr"}
     )
     assert PRESETS["brave-search"].capabilities == frozenset({"web-search"})
+    assert PRESETS["tavily-search"].capabilities == frozenset({"web-search"})
 
 
 def test_chat_and_web_search_capabilities_are_explicit():
@@ -105,7 +108,7 @@ def test_chat_and_web_search_capabilities_are_explicit():
     web_ids = {p.provider_id for p in presets_with_capability("web-search")}
 
     assert chat_ids == {"local-ollama", "openai"}
-    assert web_ids == {"brave-search"}
+    assert web_ids == {"brave-search", "tavily-search"}
 
 
 def test_presets_with_capability_filters_correctly():
@@ -137,7 +140,7 @@ def test_presets_with_capability_filters_correctly():
 
     web_providers = presets_with_capability("web-search")
     web_ids = {p.provider_id for p in web_providers}
-    assert web_ids == {"brave-search"}
+    assert web_ids == {"brave-search", "tavily-search"}
 
 
 def test_openai_embedding_default_is_3_small():

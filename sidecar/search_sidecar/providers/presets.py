@@ -77,6 +77,7 @@ class ProviderPreset:
 #   openai              ✓                    ✓     ✓       ✓
 #   qwen-dashscope                           ✓     ✓
 #   brave-search                                                   ✓
+#   tavily-search                                                  ✓
 #
 # Cloud "vision" providers also serve OCR — same chat-completions
 # endpoint with a transcribe-only prompt; see
@@ -208,6 +209,19 @@ PRESETS: dict[str, ProviderPreset] = {
         auth_kind="api-key",
         base_url="https://api.search.brave.com/res/v1",
         validation_endpoint="/web/search",
+    ),
+    "tavily-search": ProviderPreset(
+        provider_id="tavily-search",
+        display_name="Tavily Search",
+        provider_type="cloud",
+        capabilities=frozenset({"web-search"}),
+        default_model_per_capability={
+            "web-search": "tavily-search",
+        },
+        auth_kind="api-key",
+        base_url="https://api.tavily.com",
+        validation_endpoint="/search",
+        api_key_prefix="tvly-",
     ),
 }
 

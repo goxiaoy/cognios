@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from ..retrieval import SearchOrchestrator, SearchRequest
-from ..web_search.brave import BraveWebSearchProvider
-from ..web_search.types import WebSearchError
+from ..web_search.types import WebSearchError, WebSearchProvider
 from .sources import ChatSource
 
 
@@ -13,13 +12,13 @@ class ChatRetrieval:
         self,
         *,
         search_orchestrator: SearchOrchestrator | None,
-        web_search_provider: BraveWebSearchProvider | None = None,
+        web_search_provider: WebSearchProvider | None = None,
     ) -> None:
         self._search_orchestrator = search_orchestrator
         self._web_search_provider = web_search_provider
 
     def set_web_search_provider(
-        self, web_search_provider: BraveWebSearchProvider | None
+        self, web_search_provider: WebSearchProvider | None
     ) -> None:
         _close_if_supported(self._web_search_provider)
         self._web_search_provider = web_search_provider

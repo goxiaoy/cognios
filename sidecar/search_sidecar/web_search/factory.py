@@ -6,9 +6,11 @@ from ..providers.keychain import get_provider_secret
 from ..providers.presets import PRESETS
 from ..settings import SearchSettings
 from .brave import BraveWebSearchProvider
+from .tavily import TavilyWebSearchProvider
+from .types import WebSearchProvider
 
 
-def select_web_search_provider(settings: SearchSettings) -> BraveWebSearchProvider | None:
+def select_web_search_provider(settings: SearchSettings) -> WebSearchProvider | None:
     feature = settings.features.get("web-search")
     if feature is None or not feature.enabled or feature.provider_id is None:
         return None
@@ -21,6 +23,11 @@ def select_web_search_provider(settings: SearchSettings) -> BraveWebSearchProvid
     if provider.provider_id == "brave-search":
         return BraveWebSearchProvider(
             base_url=provider.base_url or preset.base_url or "https://api.search.brave.com/res/v1",
+            api_key_provider=lambda pid=provider.provider_id: _required_key(pid),
+        )
+    if provider.provider_id == "tavily-search":
+        return TavilyWebSearchProvider(
+            base_url=provider.base_url or preset.base_url or "https://api.tavily.com",
             api_key_provider=lambda pid=provider.provider_id: _required_key(pid),
         )
     return None
