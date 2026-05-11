@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import http.server
+import os
 import socket
 import threading
 from contextlib import contextmanager
@@ -136,6 +137,10 @@ def _make_spec(role: str, files: dict[str, bytes]) -> ModelSpec:
     )
 
 
+def _repo_dir(storage_dir: Path, spec: ModelSpec) -> Path:
+    return storage_dir / "models" / Path(*spec.repo.split("/"))
+
+
 def _make_manager(
     storage_dir: Path,
     spec: ModelSpec,
@@ -193,6 +198,39 @@ async def test_download_happy_path(tmp_path: Path):
     assert current.resolve().name == "abc123"
     # tmp/ is now empty
     assert not list((manager.role_dir("embedding") / "tmp").iterdir())
+
+
+async def test_role_dir_uses_manifest_repo_path(tmp_path: Path):
+    spec = _make_spec("audio-transcript", {"a.bin": b"x"})
+    manager = ModelManager(
+        storage_dir=tmp_path,
+        manifest={"audio-transcript": spec},
+    )
+
+    assert manager.role_dir("audio-transcript") == (
+        tmp_path / "models" / "fixture" / "repo"
+    )
+
+
+async def test_constructor_migrates_legacy_role_dir_to_repo_path(
+    tmp_path: Path,
+):
+    spec = _make_spec("embedding", {"a.bin": b"x"})
+    legacy_dir = tmp_path / "search" / "models" / "embedding"
+    commit_dir = legacy_dir / "abc123"
+    commit_dir.mkdir(parents=True, exist_ok=True)
+    (commit_dir / "a.bin").write_bytes(b"x")
+    os.symlink("abc123", legacy_dir / "current")
+
+    manager = ModelManager(storage_dir=tmp_path, manifest={"embedding": spec})
+
+    migrated_dir = tmp_path / "models" / "fixture" / "repo"
+    assert manager.role_dir("embedding") == migrated_dir
+    assert not legacy_dir.exists()
+    assert (migrated_dir / "abc123" / "a.bin").read_bytes() == b"x"
+    current = migrated_dir / "current"
+    assert current.is_symlink()
+    assert os.readlink(current) == "abc123"
 
 
 async def test_download_progress_reports_role_total_across_files(tmp_path: Path):
@@ -256,7 +294,7 @@ async def test_download_resumes_from_existing_partial(tmp_path: Path):
 
     # Pre-seed a partial with the first half
     half = full[: len(full) // 2]
-    manager_dir = tmp_path / "search" / "models" / "embedding" / "tmp"
+    manager_dir = _repo_dir(tmp_path, spec) / "tmp"
     manager_dir.mkdir(parents=True, exist_ok=True)
     (manager_dir / "a.bin.partial").write_bytes(half)
 
@@ -278,7 +316,7 @@ async def test_download_handles_server_ignoring_range(tmp_path: Path):
     spec = _make_spec("embedding", {"a.bin": full})
 
     # Partial with garbage that does not match the actual file
-    manager_dir = tmp_path / "search" / "models" / "embedding" / "tmp"
+    manager_dir = _repo_dir(tmp_path, spec) / "tmp"
     manager_dir.mkdir(parents=True, exist_ok=True)
     (manager_dir / "a.bin.partial").write_bytes(b"garbage" * 30)
 
@@ -296,9 +334,7 @@ async def test_skips_download_when_final_already_verified(tmp_path: Path):
     body = b"already here"
     spec = _make_spec("embedding", {"a.bin": body})
     # Pre-place the final file at the commit dir
-    final = (
-        tmp_path / "search" / "models" / "embedding" / "abc123" / "a.bin"
-    )
+    final = _repo_dir(tmp_path, spec) / "abc123" / "a.bin"
     final.parent.mkdir(parents=True, exist_ok=True)
     final.write_bytes(body)
 
@@ -435,7 +471,7 @@ async def test_concurrent_downloads_capped_at_max(tmp_path: Path):
     for role, body in bodies.items():
         specs[role] = ModelSpec(
             role=role,
-            repo="fixture/repo",
+            repo=f"fixture/{role}",
             commit="abc123",
             files=(FileSpec(name="a.bin", sha256=_sha256(body)),),
         )
@@ -446,16 +482,13 @@ async def test_concurrent_downloads_capped_at_max(tmp_path: Path):
             storage_dir=tmp_path,
             manifest=specs,
             url_override={
-                f"fixture/repo@abc123/a.bin": f"{base_url}/role-0",
+                f"fixture/{role}@abc123/a.bin": f"{base_url}/{role}"
+                for role in bodies
             },
         )
         # Force the cap low so the test is deterministic against
         # tiny payloads that complete near-instantly.
         manager._download_slot = _asyncio.Semaphore(2)
-        # Override URL per-role so each role hits its own served body.
-        manager._url_override = {
-            f"fixture/repo@abc123/a.bin": f"{base_url}/role-0",
-        }
 
         # Track how many downloads are simultaneously inside the
         # semaphore. The downloader's first frame fires immediately
@@ -478,16 +511,7 @@ async def test_concurrent_downloads_capped_at_max(tmp_path: Path):
                         active_count -= 1
             return events
 
-        # Re-point each role's URL at the per-role served path.
-        manager._url_override = {
-            f"fixture/repo@abc123/a.bin": f"{base_url}/role-0",
-            **{
-                f"fixture/repo@abc123/a.bin@{role}": f"{base_url}/{role}"
-                for role in bodies
-            },
-        }
-        # Simpler: same URL per role works because each role's spec
-        # is identical here. Drive 3 concurrent downloads.
+        # Drive 3 concurrent downloads.
         results = await _asyncio.gather(
             *[run_one(role) for role in bodies]
         )

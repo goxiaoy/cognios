@@ -1,9 +1,9 @@
 """Model manifest, downloader, and license-gate (Phase 2 / Unit 4).
 
-The four roles — embedding, reranker, ocr, captioner — each map to a
+The roles — embedding, reranker, ASR, OCR stages — each map to a
 HuggingFace repo with commit-pinned files and per-file SHA-256s. The
 manager downloads, verifies, and activates the role's commit folder
-under ``<storage>/search/models/<role>/<commit>/`` with a ``current``
+under ``<storage>/models/<namespace>/<repo>/<commit>/`` with a ``current``
 symlink for cold-start lookup.
 """
 

@@ -2,17 +2,18 @@
 
 Storage layout::
 
-    <storage>/search/models/
-      <role>/
-        current -> <commit>          # symlink, set after activation
-        license.accepted             # presence-only sentinel
-        <commit>/
-          <file1>
-          <file2>
-        <commit>/                    # an older commit, still on disk
-          ...
-        tmp/                         # in-progress downloads
-          <file>.partial
+    <storage>/models/
+      <repo namespace>/
+        <repo name>/
+          current -> <commit>        # symlink, set after activation
+          license.accepted           # presence-only sentinel
+          <commit>/
+            <file1>
+            <file2>
+          <commit>/                  # an older commit, still on disk
+            ...
+          tmp/                       # in-progress downloads
+            <file>.partial
 
 Download is HTTP GET with ``Range: bytes=N-`` resume when a ``.partial``
 exists. Each file is verified end-to-end against the manifest's SHA-256
@@ -97,7 +98,7 @@ class RoleStatus:
 
 
 class ModelManager:
-    """Orchestrates the model lifecycle for the four roles.
+    """Orchestrates the model lifecycle for the manifest roles.
 
     The manager is constructed once at sidecar startup with the active
     manifest (defaults at ``models.manifest.DEFAULTS``). Tests inject a
@@ -132,8 +133,10 @@ class ModelManager:
         # Tests pass {repo+commit+filename -> URL} to point at a fixture
         # HTTP server. Production passes None (manager builds HF URLs).
         self._url_override = dict(url_override or {})
-        self._models_root = storage_dir / "search" / "models"
+        self._models_root = storage_dir / "models"
+        self._legacy_models_root = storage_dir / "search" / "models"
         self._models_root.mkdir(parents=True, exist_ok=True)
+        self._migrate_legacy_model_dirs()
         self._inflight: set[str] = set()
         self._lock = asyncio.Lock()
         # Lazy semaphore creation: ``asyncio.Semaphore`` binds to
@@ -148,7 +151,7 @@ class ModelManager:
         return self._manifest
 
     def role_dir(self, role: str) -> Path:
-        return self._models_root / role
+        return self._repo_dir(self._spec(role))
 
     def commit_dir(self, role: str, commit: str) -> Path:
         return self.role_dir(role) / commit
@@ -231,6 +234,87 @@ class ModelManager:
         except KeyError as err:
             raise KeyError(f"unknown role: {role!r}") from err
 
+    def _repo_dir(self, spec: ModelSpec) -> Path:
+        return self._models_root / _repo_relative_path(spec.repo)
+
+    def _migrate_legacy_model_dirs(self) -> None:
+        """Move old ``search/models/<role>`` folders to repo paths.
+
+        Older builds used role names as the persistent directory name,
+        which collapsed upstream identifiers like ``Qwen/Qwen3-ASR-0.6B``
+        into app-specific names such as ``audio-transcript``. Keep the
+        public role API but store files under the original HF namespace
+        path so users can inspect and reuse downloaded models directly.
+        """
+        legacy_root = self._legacy_models_root
+        if not legacy_root.exists():
+            return
+        for role, spec in self._manifest.items():
+            legacy_dir = legacy_root / role
+            if not legacy_dir.exists() and not legacy_dir.is_symlink():
+                continue
+            target_dir = self._repo_dir(spec)
+            try:
+                self._move_or_merge_legacy_dir(legacy_dir, target_dir)
+            except OSError as err:
+                LOG.warning(
+                    "failed to migrate model directory for %s from %s to %s: %s",
+                    role,
+                    legacy_dir,
+                    target_dir,
+                    err,
+                )
+        self._prune_empty_legacy_model_dirs()
+
+    def _move_or_merge_legacy_dir(self, source: Path, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists() and not target.is_symlink():
+            source.rename(target)
+            LOG.info("migrated model directory %s -> %s", source, target)
+            return
+        if source.is_dir() and target.is_dir():
+            self._merge_directory_contents(source, target)
+            return
+        LOG.warning(
+            "leaving legacy model path in place because target already exists: %s -> %s",
+            source,
+            target,
+        )
+
+    def _merge_directory_contents(self, source: Path, target: Path) -> None:
+        for child in source.iterdir():
+            destination = target / child.name
+            if not destination.exists() and not destination.is_symlink():
+                child.rename(destination)
+                continue
+            if child.is_dir() and destination.is_dir() and not child.is_symlink():
+                self._merge_directory_contents(child, destination)
+                continue
+            if _same_legacy_content(child, destination):
+                _remove_duplicate_legacy_path(child)
+                continue
+            LOG.warning(
+                "leaving legacy model path in place because target already exists: %s",
+                child,
+            )
+        try:
+            source.rmdir()
+        except OSError:
+            pass
+
+    def _prune_empty_legacy_model_dirs(self) -> None:
+        ds_store = self._legacy_models_root / ".DS_Store"
+        if ds_store.is_file():
+            try:
+                ds_store.unlink()
+            except OSError:
+                pass
+        for path in (self._legacy_models_root, self._legacy_models_root.parent):
+            try:
+                path.rmdir()
+            except OSError:
+                pass
+
     def _read_current(self, role: str) -> str | None:
         link = self.role_dir(role) / "current"
         if not link.exists() and not link.is_symlink():
@@ -243,7 +327,7 @@ class ModelManager:
         return target
 
     def _activate(self, role: str, commit: str) -> None:
-        """Atomically point ``<role>/current`` at ``<commit>``.
+        """Atomically point the role's ``current`` link at ``<commit>``.
 
         Implementation: write the new symlink to ``current.tmp`` and
         ``os.replace`` it onto ``current``. ``os.replace`` of a symlink
@@ -491,3 +575,27 @@ def _manifest_role_total(spec: ModelSpec) -> int | None:
             return None
         total += file.size_bytes
     return total
+
+
+def _repo_relative_path(repo: str) -> Path:
+    parts = tuple(repo.split("/"))
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError(f"invalid model repo path: {repo!r}")
+    return Path(*parts)
+
+
+def _same_legacy_content(source: Path, destination: Path) -> bool:
+    if source.is_symlink() or destination.is_symlink():
+        if not source.is_symlink() or not destination.is_symlink():
+            return False
+        return os.readlink(source) == os.readlink(destination)
+    if source.is_file() and destination.is_file():
+        if source.stat().st_size != destination.stat().st_size:
+            return False
+        return _file_sha256(source) == _file_sha256(destination)
+    return False
+
+
+def _remove_duplicate_legacy_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()

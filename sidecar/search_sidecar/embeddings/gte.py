@@ -11,7 +11,8 @@ importable without the ``embedding`` extra installed — the
 :class:`StubEmbedder` when ``onnxruntime``/``transformers`` are missing.
 
 A typical model directory layout (matches the per-role tree
-:class:`ModelManager` writes under ``<storage>/search/models/embedding/<commit>/``)::
+:class:`ModelManager` writes under
+``<storage>/models/onnx-community/gte-multilingual-base/<commit>/``)::
 
     <model_dir>/
       onnx/
