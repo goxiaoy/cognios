@@ -206,10 +206,10 @@ export function HomeDashboard({
   const recentObservabilityData = readyData(recentObservability);
   const metricsObservabilityData = readyData(metricsObservability);
   const enhancement = enhancementDisplay(indexData, modelData);
-  const indexLoading = indexing === null;
-  const enhancementLoading = indexing === null || models === null;
-  const recentLoading = recentObservability === null;
-  const metricsLoading = metricsObservability === null;
+  const indexLoading = isLoading(indexing);
+  const enhancementLoading = isLoading(indexing) || isLoading(models);
+  const recentLoading = isLoading(recentObservability);
+  const metricsLoading = isLoading(metricsObservability);
 
   if (workspaceIsEmpty) {
     return (
@@ -1063,6 +1063,10 @@ function tooltipStyle() {
 
 function readyData<T>(env: SidecarEnvelope<T> | null): T | null {
   return env?.state === "ready" && env.data ? env.data : null;
+}
+
+function isLoading<T>(env: SidecarEnvelope<T> | null): boolean {
+  return env === null || env.state === "initialising";
 }
 
 function statusCopy<T>(env: SidecarEnvelope<T> | null): string {

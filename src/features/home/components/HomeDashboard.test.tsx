@@ -231,6 +231,24 @@ describe("HomeDashboard", () => {
     expect(screen.getByLabelText("Token usage loading")).toBeInTheDocument();
   });
 
+  it("keeps Home charts in skeleton state while the sidecar is starting", async () => {
+    const client = {
+      ...makeClient(),
+      indexStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
+      modelsStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
+      observability: vi.fn().mockResolvedValue({ state: "initialising" }),
+    };
+
+    render(<HomeDashboard client={client} />);
+
+    expect(await screen.findByLabelText("Indexed items loading")).toBeInTheDocument();
+    expect(screen.getByLabelText("In flight loading")).toBeInTheDocument();
+    expect(screen.getByLabelText("OCR enhancement loading")).toBeInTheDocument();
+    expect(screen.getByLabelText("Recent indexing loading")).toBeInTheDocument();
+    expect(screen.getByLabelText("Latency loading")).toBeInTheDocument();
+    expect(screen.getByLabelText("Token usage loading")).toBeInTheDocument();
+  });
+
   it("renders current status, activity, latency, and token usage", async () => {
     const client = makeClient();
     render(<HomeDashboard client={client} />);
