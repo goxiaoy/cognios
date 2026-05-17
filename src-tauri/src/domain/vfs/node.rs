@@ -46,6 +46,7 @@ pub struct NodeRecord {
     pub created_at: String,
     pub updated_at: String,
     pub size_bytes: i64,
+    pub is_voice_note: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -59,6 +60,7 @@ pub struct ExplorerNodeDto {
     pub created_at: String,
     pub modified_at: String,
     pub size_bytes: i64,
+    pub is_voice_note: bool,
     pub children: Vec<ExplorerNodeDto>,
 }
 
@@ -78,6 +80,7 @@ impl From<NodeRecord> for ExplorerNodeDto {
             created_at: value.created_at,
             modified_at: value.updated_at,
             size_bytes: value.size_bytes,
+            is_voice_note: value.is_voice_note,
             children: Vec::new(),
         }
     }

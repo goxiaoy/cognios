@@ -72,6 +72,32 @@ def test_process_writes_chunks_to_store(tmp_path: Path):
     assert {role_or_default(r) for r in rows} == {"body"}
 
 
+def test_process_indexes_voice_note_transcript_with_dedicated_role(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    proc = TextProcessor(store, StubEmbedder())
+    node_id = "22222222-2222-2222-2222-222222222222"
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    note = notes_dir / f"{node_id}.md"
+    note.write_text("## Summary\n\nLaunch notes.")
+    transcript_dir = tmp_path / "voice-notes" / node_id
+    transcript_dir.mkdir(parents=True)
+    (transcript_dir / "transcript.md").write_text(
+        "[00:00.000] Speaker 1: transcript line"
+    )
+
+    written = proc.process(_make_job(note, node_id=node_id))
+
+    assert written == 3
+    rows = sorted(store.scan(node_id), key=lambda row: row["id"])
+    assert {role_or_default(r) for r in rows} == {"body", "voice_transcript"}
+    assert any(
+        role_or_default(r) == "voice_transcript"
+        and r["text"] == "[00:00.000] Speaker 1: transcript line"
+        for r in rows
+    )
+
+
 def test_process_replaces_previous_chunks_on_re_index(tmp_path: Path):
     store = open_store(tmp_path / "index.lance")
     proc = TextProcessor(store, StubEmbedder())

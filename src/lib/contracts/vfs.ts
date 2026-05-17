@@ -18,6 +18,7 @@ export interface ExplorerNode {
   createdAt: string;
   modifiedAt: string;
   sizeBytes: number;
+  isVoiceNote?: boolean;
   children: ExplorerNode[];
 }
 

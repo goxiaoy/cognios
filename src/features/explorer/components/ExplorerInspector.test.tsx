@@ -133,6 +133,32 @@ describe("ExplorerInspector", () => {
     expect(screen.getByText("512 B")).toBeInTheDocument();
   });
 
+  it("does not repeat the title in the voice note kind label", () => {
+    render(
+      <ExplorerInspector
+        client={makeClient()}
+        node={{
+          id: "voice-1",
+          parentId: null,
+          name: "2026-05-17 15.03.12",
+          kind: "note",
+          state: "ready",
+          createdAt: "2026-05-17 15:03:12",
+          modifiedAt: "2026-05-17 15:04:12",
+          sizeBytes: 2048,
+          children: [],
+          isVoiceNote: true,
+        }}
+        selectedArtifacts={[]}
+        selectionCount={0}
+      />
+    );
+
+    expect(screen.getByText("2026-05-17 15.03.12")).toBeInTheDocument();
+    expect(screen.getByText("VOICE NOTE")).toBeInTheDocument();
+    expect(screen.queryByText(/VOICE NOTE\s+.\s+2026-05-17/i)).not.toBeInTheDocument();
+  });
+
   it("shows aggregate metadata during multi-select", () => {
     render(
       <ExplorerInspector

@@ -137,16 +137,17 @@ export interface NodeIndexStatus {
   attempts: number;
 }
 
-export type NodeContentChunkRole = "body" | "summary";
+export type NodeContentChunkRole = "body" | "summary" | "voice_transcript";
 
 export interface NodeContentChunk {
   id: string;
   /**
-   * "body" for literal content (text, OCR, PDF, HTML body) or
+   * "body" for literal content (text, OCR, PDF, HTML body),
    * "summary" for generated descriptions (today: image captions;
-   * future: document summaries). Pre-2026-05 sidecars omit the
-   * field; the Rust DTO defaults it to "body" before reaching the
-   * frontend.
+   * future: document summaries), or "voice_transcript" for the
+   * dedicated transcript file attached to a voice note. Pre-2026-05
+   * sidecars omit the field; the Rust DTO defaults it to "body"
+   * before reaching the frontend.
    */
   role: NodeContentChunkRole;
   text: string;

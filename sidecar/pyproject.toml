@@ -31,6 +31,10 @@ dependencies = [
   # is its image-decoding companion.
   "rapidocr-onnxruntime>=1.3,<2.0",
   "Pillow>=10.0,<12.0",
+  # Required local Voice Notes transcription runtime. Model weights still
+  # download through Cognios' model manager; this package provides the
+  # Qwen3-ASR loader/inference code used by the sidecar transcription route.
+  "qwen-asr>=0.0.6,<0.1.0",
 ]
 
 # The semantic-search ONNX path and the layout-aware advanced-OCR
@@ -48,7 +52,9 @@ dependencies = [
 [project.optional-dependencies]
 embedding = [
   "onnxruntime>=1.20,<2.0",
-  "optimum[onnxruntime]>=1.24,<2.0",
+  # qwen-asr pins transformers==4.57.6; optimum 1.x caps transformers below
+  # that range, so the ONNX reranker/embedding stack needs optimum 2.x.
+  "optimum[onnxruntime]>=2.0,<3.0",
   "transformers>=4.45,<5.0",
 ]
 # Layout-aware OCR (PP-StructureV3). Genuinely heavy — paddleocr +

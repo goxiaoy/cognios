@@ -262,6 +262,7 @@ _MANDATORY_FEATURE_IDS: tuple[str, ...] = (
     "semantic-search",
     "result-reranking",
     "image-ocr",
+    "voice-notes",
 )
 
 _DISPATCHER_FEATURE_CAPABILITIES: dict[str, str] = {

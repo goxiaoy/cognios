@@ -26,10 +26,25 @@ function readySettings(): SearchSettings {
   };
 }
 
+function singleAsrStatus() {
+  return {
+    state: "ready" as const,
+    data: {
+      roles: {
+        "audio-transcript": {
+          role: "audio-transcript",
+          state: "missing",
+          repo: "Qwen/Qwen3-ASR-0.6B",
+        },
+      },
+    },
+  };
+}
+
 afterEach(() => cleanup());
 
 describe("useAutoModelDownload", () => {
-  it("starts startup model downloads in embedding then reranker order and defers ASR", async () => {
+  it("starts required startup downloads in embedding then reranker then ASR order", async () => {
     const startModelDownload = vi.fn().mockResolvedValue(undefined);
     const client = makeStubSearchClient({
       settings: vi.fn().mockResolvedValue({ state: "ready", data: readySettings() }),
@@ -61,11 +76,38 @@ describe("useAutoModelDownload", () => {
     render(<HookHarness client={client} />);
 
     await waitFor(() => {
-      expect(startModelDownload).toHaveBeenCalledTimes(2);
+      expect(startModelDownload).toHaveBeenCalledTimes(3);
     });
     expect(startModelDownload.mock.calls.map(([input]) => input.role)).toEqual([
       "embedding",
       "reranker",
+      "audio-transcript",
     ]);
+  });
+
+  it("still downloads required voice-note ASR when first-run was previously skipped", async () => {
+    const startModelDownload = vi.fn().mockResolvedValue(undefined);
+    const client = makeStubSearchClient({
+      settings: vi.fn().mockResolvedValue({
+        state: "ready",
+        data: {
+          ...readySettings(),
+          features: {
+            "voice-notes": { enabled: true, providerId: "local-qwen-asr" },
+          },
+          firstRunSkipped: true,
+        },
+      }),
+      modelsStatus: vi.fn().mockResolvedValue(singleAsrStatus()),
+      startModelDownload,
+    });
+
+    render(<HookHarness client={client} />);
+
+    await waitFor(() => {
+      expect(startModelDownload).toHaveBeenCalledWith({
+        role: "audio-transcript",
+      });
+    });
   });
 });

@@ -231,11 +231,12 @@ def test_save_settings_idempotent_repeat(tmp_path: Path):
 # ---- migrate_mandatory_features ---------------------------------------------
 
 
-def test_migrate_backfills_pre_mandatory_reranking_state():
+def test_migrate_backfills_pre_mandatory_local_features():
     """Pre-mandatory installs persisted ``result-reranking`` as
     ``{enabled: false, providerId: null}``. Boot-time migration must
     restore the default binding so the user isn't stuck with no
-    provider picker (the row is now a Required badge)."""
+    provider picker (the row is now a Required badge). Voice Notes is
+    also required now and must default back to local Qwen ASR."""
     settings = SearchSettings(
         providers={
             "local-gte": ProviderConfig(provider_id="local-gte"),
@@ -245,6 +246,7 @@ def test_migrate_backfills_pre_mandatory_reranking_state():
                 enabled=True, provider_id="local-gte"
             ),
             "result-reranking": FeatureConfig(enabled=False, provider_id=None),
+            "voice-notes": FeatureConfig(enabled=False, provider_id=None),
         },
     )
     migrated, changed = migrate_mandatory_features(settings)
@@ -253,7 +255,10 @@ def test_migrate_backfills_pre_mandatory_reranking_state():
     assert (
         migrated.features["result-reranking"].provider_id == "local-gte-reranker"
     )
+    assert migrated.features["voice-notes"].enabled is True
+    assert migrated.features["voice-notes"].provider_id == "local-qwen-asr"
     assert "local-gte-reranker" in migrated.providers
+    assert "local-qwen-asr" in migrated.providers
 
 
 def test_migrate_preserves_explicit_non_default_binding():

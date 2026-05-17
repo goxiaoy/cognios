@@ -1,4 +1,11 @@
-import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import type { ExistingMount, ExplorerClient, ExplorerNode, MountSetupContext } from "../types/explorer";
@@ -18,6 +25,15 @@ import { MountModal } from "./MountModal";
 import { NoteEditor, type NoteEditorHandle } from "./NoteEditor";
 import { UrlModal } from "./UrlModal";
 import { searchClient } from "../../search/api/searchClient";
+import { voiceNoteClient } from "../../voice-notes/api/voiceNoteClient";
+import {
+  VoiceNoteRecordingPreview,
+  VoiceNoteSourceAudioBar,
+  type VoiceNotePlaybackState,
+  type VoiceNotePreviewSession,
+  type VoiceNoteRecordingPhase,
+} from "../../voice-notes/components/VoiceNoteRecordingPreview";
+import type { VoiceNote } from "../../../lib/contracts/voiceNote";
 import { error as logError } from "../../../lib/logger";
 
 const DEFAULT_TREE_WIDTH = 240;
@@ -26,10 +42,16 @@ const MAX_TREE_WIDTH = 520;
 
 export function ExplorerLayout({
   active,
-  client
+  client,
+  focusNodeRequest,
+  onFocusNodeRequestHandled,
+  voiceNoteSession,
 }: {
   active: boolean;
   client: ExplorerClient;
+  focusNodeRequest?: { nodeId: string; serial: number } | null;
+  onFocusNodeRequestHandled?(): void;
+  voiceNoteSession?: VoiceNotePreviewSession | null;
 }) {
   // The store is hoisted to a context provider at the App root so
   // SearchPalette + this layout share one instance. ``client`` stays
@@ -47,6 +69,15 @@ export function ExplorerLayout({
   const [mountSetupError, setMountSetupError] = useState<string | null>(null);
   const [mountSubmitting, setMountSubmitting] = useState(false);
   const [treeWidth, setTreeWidth] = useState(DEFAULT_TREE_WIDTH);
+  const [openedVoiceNote, setOpenedVoiceNote] = useState<VoiceNote | null>(null);
+  const [openedVoiceNoteId, setOpenedVoiceNoteId] = useState<string | null>(null);
+  const [liveVoiceNoteTranscript, setLiveVoiceNoteTranscript] = useState("");
+  const [voiceNoteTranscript, setVoiceNoteTranscript] = useState("");
+  const [voiceNotePlayback, setVoiceNotePlayback] = useState<VoiceNotePlaybackState>({
+    currentMs: 0,
+    durationMs: 0,
+    isPlaying: false,
+  });
   const noteEditorRef = useRef<NoteEditorHandle>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
@@ -98,6 +129,61 @@ export function ExplorerLayout({
   }, [client, openModal]);
 
   useExplorerEvents(store.refresh);
+
+  useEffect(() => {
+    const activeNoteId = store.activeNoteId;
+    if (!activeNoteId) {
+      setOpenedVoiceNote(null);
+      setOpenedVoiceNoteId(null);
+      return;
+    }
+    if (voiceNoteSession?.note.noteId === activeNoteId) {
+      setOpenedVoiceNote(null);
+      setOpenedVoiceNoteId(null);
+      return;
+    }
+
+    let cancelled = false;
+    setOpenedVoiceNote(null);
+    setOpenedVoiceNoteId(activeNoteId);
+    void voiceNoteClient
+      .get(activeNoteId)
+      .then((voiceNote) => {
+        if (cancelled) return;
+        setOpenedVoiceNote(voiceNote);
+        setOpenedVoiceNoteId(activeNoteId);
+      })
+      .catch((cause) => {
+        if (cancelled) return;
+        setOpenedVoiceNote(null);
+        setOpenedVoiceNoteId(activeNoteId);
+        void logError(
+          `[ExplorerLayout] failed to load voice note metadata: ${
+            cause instanceof Error ? cause.message : String(cause)
+          }`
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [store.activeNoteId, voiceNoteSession?.note.noteId]);
+
+  useEffect(() => {
+    if (!active || !focusNodeRequest) return;
+    if (!findNodeById(store.snapshot.roots, focusNodeRequest.nodeId)) return;
+    selectionAnchorRef.current = focusNodeRequest.nodeId;
+    store.selectArtifact(focusNodeRequest.nodeId, false);
+    store.activateArtifact(focusNodeRequest.nodeId);
+    onFocusNodeRequestHandled?.();
+  }, [
+    active,
+    focusNodeRequest?.nodeId,
+    focusNodeRequest?.serial,
+    onFocusNodeRequestHandled,
+    store,
+    store.snapshot,
+  ]);
 
   // Window close: only the note editor has pending writes to flush. Previews
   // are read-only and cannot block close.
@@ -323,20 +409,47 @@ export function ExplorerLayout({
   }
 
   async function handleDeleteById(nodeId: string, cascade: boolean) {
-    if (store.activeNoteId === nodeId) {
-      store.setActiveNoteId(null);
-      setNoteFlushError(null);
-    }
-    if (store.activePreviewId === nodeId) {
-      store.setActivePreviewId(null);
-    }
-    if (store.activeImagePreviewId === nodeId) {
-      store.setActiveImagePreviewId(null);
-    }
+    const deletedIds = new Set(
+      collectNodeIds(findNodeById(store.snapshot.roots, nodeId)).concat(nodeId)
+    );
+    clearDeletedPreviewState(deletedIds);
     const snapshot = await store.runAction("delete", () =>
       client.deleteNode({ nodeId, cascade })
     );
     if (snapshot) store.applySnapshot(snapshot);
+  }
+
+  async function handleDeleteMany(nodeIds: string[]) {
+    const nodesToDelete = topLevelSelectedNodes(store.snapshot.roots, nodeIds);
+    if (nodesToDelete.length === 0) return;
+
+    const deletedIds = new Set(nodesToDelete.flatMap((node) => collectNodeIds(node)));
+    clearDeletedPreviewState(deletedIds);
+
+    const snapshot = await store.runAction("delete", async () => {
+      let latest = store.snapshot;
+      for (const node of nodesToDelete) {
+        latest = await client.deleteNode({
+          nodeId: node.id,
+          cascade: node.children.length > 0,
+        });
+      }
+      return latest;
+    });
+    if (snapshot) store.applySnapshot(snapshot);
+  }
+
+  function clearDeletedPreviewState(deletedIds: Set<string>) {
+    if (store.activeNoteId && deletedIds.has(store.activeNoteId)) {
+      store.setActiveNoteId(null);
+      setNoteFlushError(null);
+    }
+    if (store.activePreviewId && deletedIds.has(store.activePreviewId)) {
+      store.setActivePreviewId(null);
+    }
+    if (store.activeImagePreviewId && deletedIds.has(store.activeImagePreviewId)) {
+      store.setActiveImagePreviewId(null);
+    }
   }
 
   async function handleInlineRename(nodeId: string, newName: string) {
@@ -428,6 +541,53 @@ export function ExplorerLayout({
 
   // Center surface decision. Note takes render priority if both fields are set.
   const showNote = !!store.activeNoteId && !!store.activeNote;
+  const openedVoiceNoteSession = useMemo<VoiceNotePreviewSession | null>(() => {
+    if (!openedVoiceNote || openedVoiceNote.noteId !== openedVoiceNoteId) {
+      return null;
+    }
+    return {
+      note: openedVoiceNote,
+      elapsedMs: 0,
+      phase: phaseForOpenedVoiceNote(openedVoiceNote),
+      error:
+        openedVoiceNote.status === "failed" ||
+        openedVoiceNote.transcriptionStatus === "failed"
+          ? "Voice note transcription failed."
+          : null,
+      onTogglePause: noop,
+      onStop: noop,
+    };
+  }, [openedVoiceNote, openedVoiceNoteId]);
+  const displayedVoiceNoteSession =
+    voiceNoteSession?.note.noteId === store.activeNoteId
+      ? voiceNoteSession
+      : openedVoiceNoteSession;
+  const liveVoiceNoteSession = displayedVoiceNoteSession
+    ? {
+        ...displayedVoiceNoteSession,
+        transcript: liveVoiceNoteTranscript,
+      }
+    : null;
+  const activeVoiceNoteSession =
+    voiceNoteSession?.note.noteId === store.activeNoteId ? voiceNoteSession : null;
+  const showRecordingSurface =
+    !!activeVoiceNoteSession && isRecordingSurfacePhase(activeVoiceNoteSession.phase);
+  const savedVoiceNote =
+    showNote && !showRecordingSurface
+      ? activeVoiceNoteSession?.note ?? openedVoiceNote
+      : null;
+  const showVoiceNoteRecording =
+    showNote &&
+    showRecordingSurface &&
+    !!liveVoiceNoteSession &&
+    liveVoiceNoteSession.note.noteId === store.activeNoteId;
+  const voiceNoteEditorKey = savedVoiceNote
+    ? `${store.activeNoteId}:${savedVoiceNote.updatedAt}:${savedVoiceNote.transcriptionStatus}`
+    : store.activeNoteId ?? "note";
+  const transcriptCues = useMemo(
+    () => parseTimestampedTranscript(voiceNoteTranscript),
+    [voiceNoteTranscript]
+  );
   const showMarkdown = !showNote && !!store.activePreviewId && !!store.activePreview;
   const showImage =
     !showNote &&
@@ -443,6 +603,65 @@ export function ExplorerLayout({
     store.selectedArtifacts[0].kind === "file";
   const showWelcome = !showNote && !showMarkdown && !showImage && !showCannotPreview;
   const clampedTreeWidth = clampTreeWidth(treeWidth, workspaceRef.current);
+
+  useEffect(() => {
+    if (!showVoiceNoteRecording || !store.activeNoteId) {
+      setLiveVoiceNoteTranscript("");
+      return;
+    }
+
+    let cancelled = false;
+    async function refreshTranscript() {
+      if (!store.activeNoteId) return;
+      try {
+        const transcript = await voiceNoteClient.getTranscript(store.activeNoteId);
+        if (!cancelled) {
+          setLiveVoiceNoteTranscript(transcript.trim());
+        }
+      } catch {
+        if (!cancelled) setLiveVoiceNoteTranscript("");
+      }
+    }
+
+    void refreshTranscript();
+    const timer = window.setInterval(() => {
+      void refreshTranscript();
+    }, 1_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [client, showVoiceNoteRecording, store.activeNoteId]);
+
+  useEffect(() => {
+    setVoiceNotePlayback({
+      currentMs: 0,
+      durationMs: 0,
+      isPlaying: false,
+    });
+    if (!savedVoiceNote || !store.activeNoteId) {
+      setVoiceNoteTranscript("");
+      return;
+    }
+
+    let cancelled = false;
+    void voiceNoteClient
+      .getTranscript(store.activeNoteId)
+      .then((transcript) => {
+        if (!cancelled) setVoiceNoteTranscript(transcript);
+      })
+      .catch(() => {
+        if (!cancelled) setVoiceNoteTranscript("");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [savedVoiceNote?.noteId, savedVoiceNote?.transcriptUpdatedAt, store.activeNoteId]);
+
+  const handleVoiceNotePlaybackChange = useCallback((state: VoiceNotePlaybackState) => {
+    setVoiceNotePlayback(state);
+  }, []);
 
   function handleResizeStart(event: ReactMouseEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -493,6 +712,7 @@ export function ExplorerLayout({
             expandedIds={store.expandedIds}
             nodes={store.snapshot.roots}
             onDelete={handleDeleteById}
+            onDeleteMany={handleDeleteMany}
             onInlineRename={handleInlineRename}
             onOpenUrl={(nodeId) => {
               void handleOpenUrl(nodeId);
@@ -528,17 +748,46 @@ export function ExplorerLayout({
             ) : (
               <>
                 {activeFileNode ? <Breadcrumbs nodes={breadcrumbNodes} /> : null}
-                {showNote ? (
-                  <NoteEditor
-                    ref={noteEditorRef}
-                    client={client}
-                    flushError={noteFlushError}
-                    initialTitle={store.activeNote!.name}
-                    nodeId={store.activeNoteId!}
-                    onTitleChange={() => {
-                      void store.refresh().catch(() => {});
-                    }}
-                  />
+                {showVoiceNoteRecording ? (
+                  <VoiceNoteRecordingPreview session={liveVoiceNoteSession!} />
+                ) : showNote ? (
+                  savedVoiceNote ? (
+                    <NoteEditor
+                      key={voiceNoteEditorKey}
+                      ref={noteEditorRef}
+                      client={client}
+                      flushError={noteFlushError}
+                      initialTitle={store.activeNote!.name}
+                      nodeId={store.activeNoteId!}
+                      onTitleChange={() => {
+                        void store.refresh().catch(() => {});
+                      }}
+                      afterHeader={
+                        <div className="voice-note-note-surface">
+                          <VoiceNoteSourceAudioBar
+                            note={savedVoiceNote}
+                            onPlaybackChange={handleVoiceNotePlaybackChange}
+                          />
+                          <VoiceNoteTranscriptPlayback
+                            cues={transcriptCues}
+                            playback={voiceNotePlayback}
+                            transcript={voiceNoteTranscript}
+                          />
+                        </div>
+                      }
+                    />
+                  ) : (
+                    <NoteEditor
+                      ref={noteEditorRef}
+                      client={client}
+                      flushError={noteFlushError}
+                      initialTitle={store.activeNote!.name}
+                      nodeId={store.activeNoteId!}
+                      onTitleChange={() => {
+                        void store.refresh().catch(() => {});
+                      }}
+                    />
+                  )
                 ) : null}
                 {showMarkdown ? (
                   <MarkdownPreview
@@ -625,10 +874,42 @@ function collectIds(nodes: ExplorerNode[]): Set<string> {
   return ids;
 }
 
+function collectNodeIds(node: ExplorerNode | null): string[] {
+  if (!node) return [];
+  return [node.id, ...node.children.flatMap((child) => collectNodeIds(child))];
+}
+
+function topLevelSelectedNodes(nodes: ExplorerNode[], selectedIds: string[]): ExplorerNode[] {
+  const selected = new Set(selectedIds);
+  const result: ExplorerNode[] = [];
+
+  function visit(node: ExplorerNode, hasSelectedAncestor: boolean) {
+    const isSelected = selected.has(node.id);
+    if (isSelected && !hasSelectedAncestor) {
+      result.push(node);
+    }
+    for (const child of node.children) {
+      visit(child, hasSelectedAncestor || isSelected);
+    }
+  }
+
+  nodes.forEach((node) => visit(node, false));
+  return result;
+}
+
 function findNewId(node: ExplorerNode, prevIds: Set<string>): string | null {
   if (!prevIds.has(node.id)) return node.id;
   for (const child of node.children) {
     const found = findNewId(child, prevIds);
+    if (found) return found;
+  }
+  return null;
+}
+
+function findNodeById(nodes: ExplorerNode[], nodeId: string): ExplorerNode | null {
+  for (const node of nodes) {
+    if (node.id === nodeId) return node;
+    const found = findNodeById(node.children, nodeId);
     if (found) return found;
   }
   return null;
@@ -642,3 +923,153 @@ function clampTreeWidth(nextWidth: number, workspace: HTMLDivElement | null) {
 
   return Math.max(MIN_TREE_WIDTH, Math.min(nextWidth, maxWidth));
 }
+
+interface TranscriptCue {
+  id: string;
+  startMs: number;
+  text: string;
+}
+
+function VoiceNoteTranscriptPlayback({
+  cues,
+  playback,
+  transcript,
+}: {
+  cues: TranscriptCue[];
+  playback: VoiceNotePlaybackState;
+  transcript: string;
+}) {
+  const lineRefs = useRef(new Map<string, HTMLDivElement>());
+  const activeIndex = activeTranscriptCueIndex(cues, playback.currentMs);
+  const activeCue = activeIndex >= 0 ? cues[activeIndex] : null;
+  const plainTranscriptLines = useMemo(
+    () =>
+      transcript
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean),
+    [transcript]
+  );
+
+  useEffect(() => {
+    if (!playback.isPlaying || !activeCue) return;
+    lineRefs.current.get(activeCue.id)?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }, [activeCue?.id, playback.isPlaying]);
+
+  if (cues.length === 0 && plainTranscriptLines.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="voice-note-transcript-sync" aria-label="Transcript playback">
+      <div className="voice-note-transcript-sync-list">
+        {cues.length > 0
+          ? cues.map((cue, index) => (
+              <div
+                aria-current={index === activeIndex ? "true" : undefined}
+                className={`voice-note-transcript-sync-line${index === activeIndex ? " is-active" : ""}`}
+                key={cue.id}
+                ref={(element) => {
+                  if (element) {
+                    lineRefs.current.set(cue.id, element);
+                  } else {
+                    lineRefs.current.delete(cue.id);
+                  }
+                }}
+              >
+                <time>{formatTranscriptCueTime(cue.startMs)}</time>
+                <p>{cue.text}</p>
+              </div>
+            ))
+          : plainTranscriptLines.map((line, index) => (
+              <div className="voice-note-transcript-sync-line is-plain" key={`${index}:${line}`}>
+                <p>{line}</p>
+              </div>
+            ))}
+      </div>
+    </section>
+  );
+}
+
+function phaseForOpenedVoiceNote(note: VoiceNote): VoiceNoteRecordingPhase {
+  if (note.status === "failed" || note.transcriptionStatus === "failed") {
+    return "failed";
+  }
+  if (
+    note.status === "transcribing" ||
+    note.status === "speaker_processing" ||
+    note.status === "indexing" ||
+    note.transcriptionStatus === "transcribing" ||
+    note.summaryStatus === "pending"
+  ) {
+    return "transcribing";
+  }
+  return "complete";
+}
+
+function isRecordingSurfacePhase(phase: VoiceNoteRecordingPhase): boolean {
+  return (
+    phase === "preparing" ||
+    phase === "recording" ||
+    phase === "paused" ||
+    phase === "stopping"
+  );
+}
+
+function parseTimestampedTranscript(transcript: string): TranscriptCue[] {
+  return transcript
+    .split(/\r?\n/)
+    .map((line, index) => parseTranscriptCue(line, index))
+    .filter((cue): cue is TranscriptCue => cue !== null);
+}
+
+function parseTranscriptCue(line: string, index: number): TranscriptCue | null {
+  const trimmed = line.trim();
+  const match = /^\[(\d{1,3}:\d{2}(?:\.\d{1,3})?)\]\s*(.+)$/.exec(trimmed);
+  if (!match) return null;
+  const startMs = parseTranscriptTimestampMs(match[1]);
+  if (startMs === null) return null;
+  return {
+    id: `${index}:${startMs}`,
+    startMs,
+    text: match[2],
+  };
+}
+
+function parseTranscriptTimestampMs(timestamp: string): number | null {
+  const [minutesText, secondsText] = timestamp.split(":");
+  const minutes = Number(minutesText);
+  if (!Number.isFinite(minutes)) return null;
+  const [secondsWhole, millisText = "0"] = secondsText.split(".");
+  const seconds = Number(secondsWhole);
+  if (!Number.isFinite(seconds) || seconds >= 60) return null;
+  const millis = Number(millisText.padEnd(3, "0").slice(0, 3));
+  if (!Number.isFinite(millis)) return null;
+  return minutes * 60_000 + seconds * 1_000 + millis;
+}
+
+function activeTranscriptCueIndex(cues: TranscriptCue[], currentMs: number): number {
+  if (cues.length === 0) return -1;
+  let activeIndex = -1;
+  for (let index = 0; index < cues.length; index += 1) {
+    if (cues[index].startMs <= currentMs + 250) {
+      activeIndex = index;
+    } else {
+      break;
+    }
+  }
+  return activeIndex;
+}
+
+function formatTranscriptCueTime(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1_000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function noop() {}

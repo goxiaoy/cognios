@@ -149,6 +149,10 @@ export async function getVoiceNote(noteId: string): Promise<VoiceNote | null> {
   return invoke<VoiceNote | null>("get_voice_note", { input: { noteId } });
 }
 
+export async function getVoiceNoteTranscript(noteId: string): Promise<string> {
+  return invoke<string>("get_voice_note_transcript", { input: { noteId } });
+}
+
 export async function completeVoiceNoteTranscript(
   input: CompleteVoiceNoteTranscriptInput
 ): Promise<VoiceNote> {
@@ -171,6 +175,26 @@ export async function finishVoiceNoteAudioCapture(
   input: FinishVoiceNoteAudioCaptureInput
 ): Promise<VoiceNote> {
   return invoke<VoiceNote>("finish_voice_note_audio_capture", { input });
+}
+
+export async function beginNativeVoiceNoteAudioCapture(
+  input: BeginVoiceNoteAudioCaptureInput
+): Promise<VoiceNote> {
+  return invoke<VoiceNote>("begin_native_voice_note_audio_capture", { input });
+}
+
+export async function finishNativeVoiceNoteAudioCapture(
+  input: FinishVoiceNoteAudioCaptureInput
+): Promise<VoiceNote> {
+  return invoke<VoiceNote>("finish_native_voice_note_audio_capture", { input });
+}
+
+export async function pauseNativeVoiceNoteAudioCapture(noteId: string): Promise<void> {
+  return invoke<void>("pause_native_voice_note_audio_capture", { input: { noteId } });
+}
+
+export async function resumeNativeVoiceNoteAudioCapture(noteId: string): Promise<void> {
+  return invoke<void>("resume_native_voice_note_audio_capture", { input: { noteId } });
 }
 
 export async function renameVoiceNoteSpeaker(

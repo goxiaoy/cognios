@@ -37,7 +37,7 @@ pub fn create_note_with_body(
     body: &str,
     emitter: &dyn Fn(VfsChangeEvent),
 ) -> Result<CreatedNote, String> {
-    create_note_with_body_internal(conn, input, notes_dir, body, Some(emitter))
+    create_note_with_body_internal(conn, input, notes_dir, "Untitled", body, Some(emitter))
 }
 
 pub fn create_note_with_body_without_event(
@@ -46,17 +46,30 @@ pub fn create_note_with_body_without_event(
     notes_dir: &Path,
     body: &str,
 ) -> Result<CreatedNote, String> {
-    create_note_with_body_internal(conn, input, notes_dir, body, None)
+    create_note_with_name_and_body_without_event(conn, input, notes_dir, "Untitled", body)
+}
+
+pub fn create_note_with_name_and_body_without_event(
+    conn: &mut Connection,
+    input: &CreateNoteInput,
+    notes_dir: &Path,
+    name: &str,
+    body: &str,
+) -> Result<CreatedNote, String> {
+    create_note_with_body_internal(conn, input, notes_dir, name, body, None)
 }
 
 fn create_note_with_body_internal(
     conn: &mut Connection,
     input: &CreateNoteInput,
     notes_dir: &Path,
+    name: &str,
     body: &str,
     emitter: Option<&dyn Fn(VfsChangeEvent)>,
 ) -> Result<CreatedNote, String> {
     let node_id = Uuid::new_v4().to_string();
+    let name = name.trim();
+    let name = if name.is_empty() { "Untitled" } else { name };
     let size_bytes = body.len() as i64;
 
     conn.execute(
@@ -68,7 +81,7 @@ fn create_note_with_body_internal(
             node_id,
             input.parent_id,
             NodeKind::Note.as_str(),
-            "Untitled",
+            name,
             NodeState::Ready.as_str(),
             size_bytes
         ],

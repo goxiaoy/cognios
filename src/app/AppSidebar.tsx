@@ -11,7 +11,7 @@ import {
 import { CogniLogo } from "./components/CogniLogo";
 import { DownloadDock } from "./components/DownloadDock";
 
-export type AppSection = "home" | "chat" | "explorer" | "voice-notes" | "memory" | "settings";
+export type AppSection = "home" | "chat" | "explorer" | "memory" | "settings";
 
 type NavItem = { id: AppSection; label: string; Icon: React.ComponentType<{ size?: number }> };
 
@@ -19,17 +19,20 @@ const NAV_ITEMS: NavItem[] = [
   { id: "home",     label: "Home",     Icon: Home },
   { id: "chat",     label: "Chat",     Icon: MessageCircle },
   { id: "explorer", label: "Explorer", Icon: Files },
-  { id: "voice-notes", label: "Voice Notes", Icon: Mic },
   { id: "memory",   label: "Memory",   Icon: BookOpen },
 ];
 
 export function AppSidebar({
   activeSection,
+  isVoiceNoteStarting = false,
   onSelect,
+  onNewVoiceNote,
   onOpenSearch,
 }: {
   activeSection: AppSection;
+  isVoiceNoteStarting?: boolean;
   onSelect(section: AppSection): void;
+  onNewVoiceNote(): void;
   onOpenSearch(): void;
 }) {
   const isSettingsActive = activeSection === "settings";
@@ -42,6 +45,16 @@ export function AppSidebar({
           <p className="app-brand-copy">Personal knowledge OS</p>
         </div>
       </div>
+
+      <button
+        className="app-voice-note-button"
+        disabled={isVoiceNoteStarting}
+        onClick={onNewVoiceNote}
+        type="button"
+      >
+        <Mic size={15} aria-hidden="true" />
+        <span>Voice Note</span>
+      </button>
 
       <div className="app-ops">
         <button

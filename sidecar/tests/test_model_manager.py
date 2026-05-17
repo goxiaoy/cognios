@@ -308,6 +308,37 @@ async def test_download_resumes_from_existing_partial(tmp_path: Path):
     assert final.read_bytes() == full
 
 
+async def test_download_falls_back_to_next_source_and_keeps_partial(
+    tmp_path: Path, monkeypatch
+):
+    full = b"abcdefghij" * 1000
+    spec = _make_spec("embedding", {"a.bin": full})
+
+    half = full[: len(full) // 2]
+    manager_dir = _repo_dir(tmp_path, spec) / "tmp"
+    manager_dir.mkdir(parents=True, exist_ok=True)
+    (manager_dir / "a.bin.partial").write_bytes(half)
+
+    with fixture_server(
+        {"/mirror/a.bin": full},
+        not_found={"/direct/a.bin"},
+    ) as base_url:
+        manager = ModelManager(storage_dir=tmp_path, manifest={"embedding": spec})
+        monkeypatch.setattr(
+            manager,
+            "_build_urls",
+            lambda _spec, _file_name: (
+                f"{base_url}/direct/a.bin",
+                f"{base_url}/mirror/a.bin",
+            ),
+        )
+        events = await _drain(manager.download("embedding"))
+
+    assert events[-1].state == "ready", events
+    final = manager.commit_dir("embedding", "abc123") / "a.bin"
+    assert final.read_bytes() == full
+
+
 async def test_download_handles_server_ignoring_range(tmp_path: Path):
     """If the server returns 200 instead of 206, manager should restart
     from byte 0 (overwrite the partial)."""
@@ -530,3 +561,42 @@ async def test_concurrent_downloads_capped_at_max(tmp_path: Path):
             for role_events in results
         )
         assert queued_seen, "expected at least one ``queued`` frame from the third caller"
+
+
+def test_download_base_urls_auto_prefers_china_mirror_for_china_locale(
+    monkeypatch,
+):
+    from search_sidecar.models import manager as manager_mod
+
+    monkeypatch.delenv(manager_mod.DOWNLOAD_ENDPOINT_ENV, raising=False)
+    monkeypatch.delenv(manager_mod.HF_ENDPOINT_ENV, raising=False)
+    monkeypatch.setenv("TZ", "Asia/Shanghai")
+    monkeypatch.setenv("LANG", "zh_CN.UTF-8")
+
+    assert manager_mod._download_base_urls() == (
+        manager_mod.HF_CHINA_MIRROR_ENDPOINT,
+        manager_mod.HF_DEFAULT_ENDPOINT,
+    )
+
+
+def test_download_base_urls_honours_explicit_hf_endpoint(monkeypatch):
+    from search_sidecar.models import manager as manager_mod
+
+    monkeypatch.delenv(manager_mod.DOWNLOAD_ENDPOINT_ENV, raising=False)
+    monkeypatch.setenv(manager_mod.HF_ENDPOINT_ENV, "https://hf-mirror.com/")
+
+    assert manager_mod._download_base_urls() == ("https://hf-mirror.com",)
+
+
+def test_download_base_urls_honours_app_endpoint_modes(monkeypatch):
+    from search_sidecar.models import manager as manager_mod
+
+    monkeypatch.delenv(manager_mod.HF_ENDPOINT_ENV, raising=False)
+    monkeypatch.setenv(manager_mod.DOWNLOAD_ENDPOINT_ENV, "china")
+    assert manager_mod._download_base_urls() == (
+        manager_mod.HF_CHINA_MIRROR_ENDPOINT,
+        manager_mod.HF_DEFAULT_ENDPOINT,
+    )
+
+    monkeypatch.setenv(manager_mod.DOWNLOAD_ENDPOINT_ENV, "https://models.example.test/hf/")
+    assert manager_mod._download_base_urls() == ("https://models.example.test/hf",)

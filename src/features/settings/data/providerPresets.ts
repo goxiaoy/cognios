@@ -196,8 +196,8 @@ export function presetOwnsRole(preset: ProviderPreset, role: string): boolean {
 }
 
 /** UI display order for features. User-configurable capabilities
- * come first; built-in mandatory pipeline stages sit at the end so
- * the Settings page leads with choices the user can act on. */
+ * come first; mandatory pipeline stages sit at the end so the
+ * Settings page leads with choices the user can act on. */
 export interface FeatureMeta {
   featureId: string;
   displayName: string;
@@ -243,15 +243,6 @@ export const FEATURE_CATALOG: readonly FeatureMeta[] = [
     comingSoon: false,
   },
   {
-    featureId: "voice-notes",
-    displayName: "Voice notes",
-    description:
-      "Transcribes meeting audio locally with Qwen3-ASR 0.6B. The model downloads automatically before recording starts.",
-    capability: "audio-transcript",
-    mandatory: false,
-    comingSoon: false,
-  },
-  {
     featureId: "web-search",
     displayName: "Web search",
     description:
@@ -286,6 +277,15 @@ export const FEATURE_CATALOG: readonly FeatureMeta[] = [
       "Local PaddleOCR ships bundled with no download; cloud providers " +
       "transcribe via vision API.",
     capability: "ocr",
+    mandatory: true,
+    comingSoon: false,
+  },
+  {
+    featureId: "voice-notes",
+    displayName: "Voice notes",
+    description:
+      "Required. Transcribes meeting audio locally with Qwen3-ASR 0.6B. The model downloads automatically on startup.",
+    capability: "audio-transcript",
     mandatory: true,
     comingSoon: false,
   },

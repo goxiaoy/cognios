@@ -33,6 +33,7 @@ export type VoiceNoteSummaryStatus =
 
 export interface VoiceNote {
   noteId: string;
+  name: string;
   status: VoiceNoteStatus;
   captureStatus: VoiceNoteCaptureStatus;
   transcriptionStatus: VoiceNoteTranscriptionStatus;
@@ -40,6 +41,7 @@ export interface VoiceNote {
   sourceAudioPresent: boolean;
   sourceAudioPath?: string | null;
   sourceAudioDeletedAt?: string | null;
+  transcriptPath?: string | null;
   transcriptUpdatedAt?: string | null;
   speakerLabels: Record<string, string>;
   createdAt: string;
@@ -47,6 +49,7 @@ export interface VoiceNote {
 }
 
 export interface CaptureCapability {
+  manualAudioRecording: boolean;
   systemAudioRecording: boolean;
   automaticDetection: boolean;
   reason: string;

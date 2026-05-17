@@ -13,6 +13,12 @@ export interface SelectModifiers {
   toggle: boolean;
 }
 
+const CONTEXT_MENU_MARGIN_PX = 8;
+const CONTEXT_MENU_WIDTH_PX = 180;
+const CONTEXT_MENU_ITEM_HEIGHT_PX = 36;
+const CONTEXT_MENU_SEPARATOR_HEIGHT_PX = 9;
+const CONTEXT_MENU_VERTICAL_PADDING_PX = 10;
+
 function NodeIcon({ node }: { node: ExplorerNode }) {
   const Icon = nodeIconComponent(node);
   return <Icon size={13} aria-hidden className="node-icon" />;
@@ -23,8 +29,10 @@ export function ExplorerRow({
   depth,
   isExpanded,
   isSelected,
+  selectedIds,
   isInlineRenaming = false,
   onDelete,
+  onDeleteMany,
   onOpenUrl,
   onRevealInFileManager,
   onRetry,
@@ -38,8 +46,10 @@ export function ExplorerRow({
   depth: number;
   isExpanded: boolean;
   isSelected: boolean;
+  selectedIds: string[];
   isInlineRenaming?: boolean;
   onDelete(nodeId: string, cascade: boolean): void;
+  onDeleteMany(nodeIds: string[]): void;
   onOpenUrl(nodeId: string): void;
   onRevealInFileManager(nodeId: string): void;
   onRetry(nodeId: string): void;
@@ -58,6 +68,9 @@ export function ExplorerRow({
   const compactMeta = formatCompactNodeMeta(node);
   const canRevealInFileManager = node.kind === "mount" || node.kind === "file" || node.kind === "note";
   const revealLabel = fileManagerRevealLabel();
+  const deleteTargetIds = isSelected && selectedIds.length > 1 ? selectedIds : [node.id];
+  const isBatchDelete = deleteTargetIds.length > 1;
+  const deleteLabel = isBatchDelete ? `Delete ${deleteTargetIds.length} Items` : "Delete";
 
   useEffect(() => {
     if (isInlineRenaming) {
@@ -99,7 +112,7 @@ export function ExplorerRow({
   function handleContextMenu(e: MouseEvent<HTMLDivElement>) {
     e.preventDefault();
     e.stopPropagation();
-    setMenuPos({ x: e.clientX, y: e.clientY });
+    setMenuPos(contextMenuPosition(node, e.clientX, e.clientY));
   }
 
   return (
@@ -211,7 +224,7 @@ export function ExplorerRow({
             onClick={() => { setMenuPos(null); setConfirmDelete(true); }}
             type="button"
           >
-            Delete
+            {deleteLabel}
           </button>
         </div>
       ) : null}
@@ -225,7 +238,9 @@ export function ExplorerRow({
             <header className="modal-header">
               <div>
                 <p className="eyebrow">Confirm delete</p>
-                <h2 className="modal-title">{node.name}</h2>
+                <h2 className="modal-title">
+                  {isBatchDelete ? `${deleteTargetIds.length} selected items` : node.name}
+                </h2>
               </div>
               <button
                 aria-label="Cancel"
@@ -237,7 +252,11 @@ export function ExplorerRow({
               </button>
             </header>
             <div className="modal-body">
-              {node.kind === "mount" ? (
+              {isBatchDelete ? (
+                <p className="muted-copy">
+                  {`${deleteTargetIds.length} selected items will be deleted. Mounts are unlinked; regular files, folders, notes, and URLs are removed.`}
+                </p>
+              ) : node.kind === "mount" ? (
                 <p className="delete-confirm-warning">
                   Removing a mount only unlinks it from CogniOS. The source folder and its files stay on disk.
                 </p>
@@ -259,10 +278,17 @@ export function ExplorerRow({
               </button>
               <button
                 className="danger-button"
-                onClick={() => { setConfirmDelete(false); onDelete(node.id, hasChildren); }}
+                onClick={() => {
+                  setConfirmDelete(false);
+                  if (isBatchDelete) {
+                    onDeleteMany(deleteTargetIds);
+                  } else {
+                    onDelete(node.id, hasChildren);
+                  }
+                }}
                 type="button"
               >
-                Delete
+                {deleteLabel}
               </button>
             </footer>
           </div>
@@ -280,4 +306,50 @@ function fileManagerRevealLabel() {
   }
 
   return "Show in Folder";
+}
+
+function contextMenuPosition(
+  node: ExplorerNode,
+  clientX: number,
+  clientY: number
+): { x: number; y: number } {
+  const size = estimateContextMenuSize(node);
+  const viewportWidth =
+    window.innerWidth || document.documentElement.clientWidth || size.width;
+  const viewportHeight =
+    window.innerHeight || document.documentElement.clientHeight || size.height;
+  const maxX = Math.max(
+    CONTEXT_MENU_MARGIN_PX,
+    viewportWidth - size.width - CONTEXT_MENU_MARGIN_PX
+  );
+  const maxY = Math.max(
+    CONTEXT_MENU_MARGIN_PX,
+    viewportHeight - size.height - CONTEXT_MENU_MARGIN_PX
+  );
+
+  return {
+    x: clamp(clientX, CONTEXT_MENU_MARGIN_PX, maxX),
+    y: clamp(clientY, CONTEXT_MENU_MARGIN_PX, maxY),
+  };
+}
+
+function estimateContextMenuSize(node: ExplorerNode): { width: number; height: number } {
+  const canRevealInFileManager =
+    node.kind === "mount" || node.kind === "file" || node.kind === "note";
+  let itemCount = 2; // Rename, Delete
+  if (node.kind === "url") itemCount += 1;
+  if (canRevealInFileManager) itemCount += 1;
+  if (node.kind === "url" && node.state === "error") itemCount += 1;
+
+  return {
+    width: CONTEXT_MENU_WIDTH_PX,
+    height:
+      CONTEXT_MENU_VERTICAL_PADDING_PX +
+      itemCount * CONTEXT_MENU_ITEM_HEIGHT_PX +
+      CONTEXT_MENU_SEPARATOR_HEIGHT_PX,
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }

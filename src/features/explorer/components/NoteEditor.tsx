@@ -4,6 +4,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import type { ExplorerClient } from "../types/explorer";
 import { MarkdownView } from "./MarkdownView";
@@ -19,11 +20,12 @@ interface NoteEditorProps {
   initialTitle: string;
   onTitleChange(newTitle: string): void;
   flushError: string | null;
+  afterHeader?: ReactNode;
 }
 
 export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
   function NoteEditor(
-    { client, nodeId, initialTitle, onTitleChange, flushError },
+    { client, nodeId, initialTitle, onTitleChange, flushError, afterHeader },
     ref
   ) {
     const [title, setTitle] = useState(initialTitle);
@@ -145,6 +147,8 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
               </button>
             </div>
           </div>
+
+          {afterHeader ? <div className="note-editor-after-header">{afterHeader}</div> : null}
 
           {!isLoadingBody ? (
             mode === "visual" ? (

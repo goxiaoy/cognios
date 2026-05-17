@@ -7,11 +7,21 @@ const getMountSetupContext = vi.fn();
 const createFolder = vi.fn();
 const createMount = vi.fn();
 const createUrl = vi.fn();
+const getNoteContent = vi.fn();
 const readFileContent = vi.fn().mockResolvedValue("");
 const openExternal = vi.fn().mockResolvedValue(undefined);
 const showNodeInFileManager = vi.fn().mockResolvedValue(undefined);
 const listChatSessions = vi.fn();
 const getChatSession = vi.fn();
+const createVoiceNote = vi.fn();
+const getVoiceNote = vi.fn();
+const getVoiceNoteTranscript = vi.fn();
+const beginNativeVoiceNoteAudioCapture = vi.fn();
+const finishNativeVoiceNoteAudioCapture = vi.fn();
+const pauseNativeVoiceNoteAudioCapture = vi.fn();
+const resumeNativeVoiceNoteAudioCapture = vi.fn();
+const getModelsStatus = vi.fn();
+const startModelDownload = vi.fn();
 
 vi.mock("../lib/tauri/ipc", () => ({
   getExplorerSnapshot: () => getExplorerSnapshot(),
@@ -25,36 +35,26 @@ vi.mock("../lib/tauri/ipc", () => ({
   deleteNode: vi.fn(),
     reindexNode: vi.fn().mockResolvedValue({ enqueued: 0 }),
   retryUrl: vi.fn(),
-  getNoteContent: vi.fn().mockResolvedValue(""),
+  getNoteContent: (noteId: string) => getNoteContent(noteId),
   saveNoteContent: vi.fn(),
   getVoiceNoteCaptureCapability: vi.fn().mockResolvedValue({
+    manualAudioRecording: true,
     systemAudioRecording: false,
     automaticDetection: false,
-    reason: "System audio capture and meeting detection are not wired in this build.",
+    reason: "Manual microphone recording is available. Automatic meeting detection and system audio capture are not wired in this build.",
   }),
-  createVoiceNote: vi.fn().mockResolvedValue({
-    voiceNote: {
-      noteId: "voice-1",
-      status: "pending_audio",
-      captureStatus: "unsupported",
-      transcriptionStatus: "pending",
-      summaryStatus: "unavailable",
-      sourceAudioPresent: false,
-      sourceAudioPath: null,
-      sourceAudioDeletedAt: null,
-      transcriptUpdatedAt: null,
-      speakerLabels: {},
-      createdAt: "now",
-      updatedAt: "now",
-    },
-    snapshot: { roots: [] },
-  }),
+  createVoiceNote: (input: unknown) => createVoiceNote(input),
   listVoiceNotes: vi.fn().mockResolvedValue([]),
-  getVoiceNote: vi.fn().mockResolvedValue(null),
+  getVoiceNote: (input: unknown) => getVoiceNote(input),
+  getVoiceNoteTranscript: (input: unknown) => getVoiceNoteTranscript(input),
   completeVoiceNoteTranscript: vi.fn(),
   beginVoiceNoteAudioCapture: vi.fn(),
   appendVoiceNoteAudioChunk: vi.fn(),
   finishVoiceNoteAudioCapture: vi.fn(),
+  beginNativeVoiceNoteAudioCapture: (input: unknown) => beginNativeVoiceNoteAudioCapture(input),
+  finishNativeVoiceNoteAudioCapture: (input: unknown) => finishNativeVoiceNoteAudioCapture(input),
+  pauseNativeVoiceNoteAudioCapture: (input: unknown) => pauseNativeVoiceNoteAudioCapture(input),
+  resumeNativeVoiceNoteAudioCapture: (input: unknown) => resumeNativeVoiceNoteAudioCapture(input),
   renameVoiceNoteSpeaker: vi.fn(),
   deleteVoiceNoteSourceAudio: vi.fn(),
   readFileContent: (nodeId: string) => readFileContent(nodeId),
@@ -77,8 +77,8 @@ vi.mock("../lib/tauri/ipc", () => ({
     },
   }),
   getNodeIndexingStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
-  getModelsStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
-  startModelDownload: vi.fn().mockResolvedValue(undefined),
+  getModelsStatus: () => getModelsStatus(),
+  startModelDownload: (input: unknown) => startModelDownload(input),
   getNodeContent: vi.fn().mockResolvedValue({ state: "initialising" }),
   // Feature-oriented Settings (Phase 1) bridge — stubbed.
   getSearchSettings: vi.fn().mockResolvedValue({ state: "initialising" }),
@@ -132,6 +132,10 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => Promise.resolve()),
 }));
 
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (path: string) => `asset://${path}`,
+}));
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     onCloseRequested: vi.fn().mockResolvedValue(() => {}),
@@ -154,6 +158,56 @@ function clickTreeRow(name: string) {
   fireEvent.click(target);
 }
 
+function makeVoiceNote(overrides: Record<string, unknown> = {}) {
+  return {
+    noteId: "voice-1",
+    name: "2026-05-11 10.00.00",
+    status: "pending_audio",
+    captureStatus: "unsupported",
+    transcriptionStatus: "pending",
+    summaryStatus: "unavailable",
+    sourceAudioPresent: false,
+    sourceAudioPath: null,
+    sourceAudioDeletedAt: null,
+    transcriptPath: "/tmp/voice-1/transcript.md",
+    transcriptUpdatedAt: null,
+    speakerLabels: {},
+    createdAt: "now",
+    updatedAt: "now",
+    ...overrides,
+  };
+}
+
+function makeVoiceNoteNode() {
+  return {
+    id: "voice-1",
+    parentId: null,
+    name: "2026-05-11 10.00.00",
+    kind: "note",
+    isVoiceNote: true,
+    state: "ready",
+    createdAt: "now",
+    modifiedAt: "now",
+    sizeBytes: 0,
+    children: [],
+  };
+}
+
+function readyModels() {
+  return {
+    state: "ready",
+    data: {
+      roles: {
+        "audio-transcript": {
+          role: "audio-transcript",
+          state: "ready",
+          repo: "Qwen/Qwen3-ASR-0.6B",
+        },
+      },
+    },
+  };
+}
+
 async function openExplorer() {
   fireEvent.click(screen.getByRole("button", { name: /^Explorer$/i }));
   await screen.findByText(/select an item to preview/i);
@@ -167,6 +221,8 @@ describe("App", () => {
     createFolder.mockReset();
     createMount.mockReset();
     createUrl.mockReset();
+    getNoteContent.mockReset();
+    getNoteContent.mockResolvedValue("");
     readFileContent.mockReset();
     readFileContent.mockResolvedValue("");
     openExternal.mockReset();
@@ -187,6 +243,42 @@ describe("App", () => {
       messages: [],
       clusters: [],
     });
+    createVoiceNote.mockReset();
+    createVoiceNote.mockResolvedValue({
+      voiceNote: makeVoiceNote(),
+      snapshot: { roots: [makeVoiceNoteNode()] },
+    });
+    getVoiceNote.mockReset();
+    getVoiceNote.mockResolvedValue(null);
+    getVoiceNoteTranscript.mockReset();
+    getVoiceNoteTranscript.mockResolvedValue("");
+    beginNativeVoiceNoteAudioCapture.mockReset();
+    beginNativeVoiceNoteAudioCapture.mockResolvedValue(
+      makeVoiceNote({
+        status: "recording",
+        captureStatus: "recording",
+        sourceAudioPresent: true,
+        sourceAudioPath: "/tmp/source.wav",
+      })
+    );
+    finishNativeVoiceNoteAudioCapture.mockReset();
+    finishNativeVoiceNoteAudioCapture.mockResolvedValue(
+      makeVoiceNote({
+        status: "transcribing",
+        captureStatus: "completed",
+        summaryStatus: "pending",
+        sourceAudioPresent: true,
+        sourceAudioPath: "/tmp/source.wav",
+      })
+    );
+    pauseNativeVoiceNoteAudioCapture.mockReset();
+    pauseNativeVoiceNoteAudioCapture.mockResolvedValue(undefined);
+    resumeNativeVoiceNoteAudioCapture.mockReset();
+    resumeNativeVoiceNoteAudioCapture.mockResolvedValue(undefined);
+    getModelsStatus.mockReset();
+    getModelsStatus.mockResolvedValue({ state: "initialising" });
+    startModelDownload.mockReset();
+    startModelDownload.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -218,6 +310,61 @@ describe("App", () => {
       "page"
     );
     expect(screen.getByText("No selection")).toBeInTheDocument();
+  });
+
+  it("starts a voice note from the sidebar and opens its recording preview in Explorer", async () => {
+    getExplorerSnapshot.mockResolvedValue({ roots: [] });
+    getModelsStatus.mockResolvedValue(readyModels());
+    getVoiceNoteTranscript.mockResolvedValue("[00:00.000] Speaker 1: live transcript");
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Voice Note$/i }));
+
+    await waitFor(() => {
+      expect(createVoiceNote).toHaveBeenCalledWith({});
+    });
+    expect(beginNativeVoiceNoteAudioCapture).toHaveBeenCalledWith({
+      noteId: "voice-1",
+      mimeType: "audio/wav",
+      fileExtension: "wav",
+    });
+    expect(screen.getByRole("button", { name: /^Explorer$/i })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+    expect(await screen.findByRole("heading", {
+      name: "2026-05-11 10.00.00",
+    })).toBeInTheDocument();
+    expect(screen.getByText("Audio is saved locally on this device.")).toBeInTheDocument();
+    expect(await screen.findByText("[00:00.000] Speaker 1: live transcript")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Pause recording/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Stop recording/i })).toBeInTheDocument();
+  });
+
+  it("keeps source audio playback available after stopping a voice note", async () => {
+    getExplorerSnapshot.mockResolvedValue({ roots: [] });
+    getModelsStatus.mockResolvedValue(readyModels());
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Voice Note$/i }));
+    const stopButton = await screen.findByRole("button", { name: /Stop recording/i });
+    fireEvent.click(stopButton);
+
+    await waitFor(() => {
+      expect(finishNativeVoiceNoteAudioCapture).toHaveBeenCalledWith({
+        noteId: "voice-1",
+        durationMs: expect.any(Number),
+      });
+    });
+    expect(await screen.findByLabelText("Source audio playback")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Play source audio/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Playback position")).toBeInTheDocument();
+    const sourceAudio = document.querySelector(".voice-recording-audio-native");
+    expect(sourceAudio).toHaveAttribute("src", "asset:///tmp/source.wav");
+    expect(screen.queryByRole("button", { name: /Stop recording/i })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Note title")).toHaveValue("2026-05-11 10.00.00");
   });
 
   it("submits a new folder via the tree toolbar and renders it in the tree", async () => {

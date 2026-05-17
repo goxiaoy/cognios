@@ -35,6 +35,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -43,6 +44,12 @@ from .manifest import FileSpec, ModelSpec
 LOG = logging.getLogger("search_sidecar.models")
 
 CHUNK_SIZE = 64 * 1024  # 64 KiB — balances syscall overhead and memory.
+
+HF_DEFAULT_ENDPOINT = "https://huggingface.co"
+HF_CHINA_MIRROR_ENDPOINT = "https://hf-mirror.com"
+DOWNLOAD_ENDPOINT_ENV = "COGNIOS_MODEL_DOWNLOAD_ENDPOINT"
+HF_ENDPOINT_ENV = "HF_ENDPOINT"
+DOWNLOAD_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
 
 # Retry policy for transient ``DownloadFailed`` errors. Mirrors the
 # pin script's retry shape so dev + ops behave the same way against
@@ -340,13 +347,20 @@ class ModelManager:
         os.symlink(commit, tmp)
         os.replace(tmp, link)
 
-    def _build_url(self, spec: ModelSpec, file_name: str) -> str:
+    def _build_urls(self, spec: ModelSpec, file_name: str) -> tuple[str, ...]:
         # Tests inject explicit URLs via url_override; production builds
-        # the canonical HF URL from the spec.
+        # candidate HF-compatible URLs from the spec. Candidate order is
+        # policy-driven: auto mode prefers the China mirror when local
+        # environment hints point at mainland China, otherwise the
+        # official endpoint gets first try. Every candidate uses the same
+        # partial file, so a failed source can be resumed from the next.
         key = f"{spec.repo}@{spec.commit}/{file_name}"
         if key in self._url_override:
-            return self._url_override[key]
-        return f"https://huggingface.co/{spec.repo}/resolve/{spec.commit}/{file_name}"
+            return (self._url_override[key],)
+        return tuple(
+            f"{base}/{spec.repo}/resolve/{spec.commit}/{file_name}"
+            for base in _download_base_urls()
+        )
 
     def _resolve_target_paths(
         self, spec: ModelSpec, file_name: str
@@ -462,7 +476,47 @@ class ModelManager:
             )
             return
 
-        url = self._build_url(spec, file.name)
+        urls = self._build_urls(spec, file.name)
+        last_err: DownloadFailed | None = None
+        for index, url in enumerate(urls):
+            try:
+                async for event in self._download_file_from_url(
+                    spec,
+                    file,
+                    url=url,
+                    partial=partial,
+                    final=final,
+                    role_completed_bytes=role_completed_bytes,
+                    role_total_bytes=role_total_bytes,
+                ):
+                    yield event
+                return
+            except DownloadFailed as err:
+                last_err = err
+                if index + 1 >= len(urls):
+                    break
+                LOG.info(
+                    "download source failed for %s/%s (%s); trying fallback source %s",
+                    spec.role,
+                    file.name,
+                    err,
+                    _safe_download_host(urls[index + 1]),
+                )
+        if last_err is not None:
+            raise last_err
+        raise DownloadFailed(f"no download source configured for {file.name}")
+
+    async def _download_file_from_url(
+        self,
+        spec: ModelSpec,
+        file: FileSpec,
+        *,
+        url: str,
+        partial: Path,
+        final: Path,
+        role_completed_bytes: int,
+        role_total_bytes: int | None,
+    ) -> AsyncIterator[ProgressEvent]:
         headers: dict[str, str] = {}
 
         # Range-resume if we have a non-empty partial
@@ -472,7 +526,7 @@ class ModelManager:
 
         try:
             async with httpx.AsyncClient(
-                follow_redirects=True, timeout=httpx.Timeout(30.0)
+                follow_redirects=True, timeout=DOWNLOAD_TIMEOUT
             ) as client:
                 async with client.stream("GET", url, headers=headers) as resp:
                     if resp.status_code == 416:
@@ -508,10 +562,13 @@ class ModelManager:
                             "utf-8", errors="replace"
                         )
                         raise DownloadFailed(
-                            f"HTTP {resp.status_code} for {file.name}: {body_preview}"
+                            f"HTTP {resp.status_code} for {file.name} "
+                            f"from {_safe_download_host(url)}: {body_preview}"
                         )
         except httpx.HTTPError as err:
-            raise DownloadFailed(f"transport error: {err}") from err
+            raise DownloadFailed(
+                f"transport error from {_safe_download_host(url)}: {err}"
+            ) from err
 
         # Verify
         downloaded = role_completed_bytes + partial.stat().st_size
@@ -575,6 +632,82 @@ def _manifest_role_total(spec: ModelSpec) -> int | None:
             return None
         total += file.size_bytes
     return total
+
+
+def _download_base_urls() -> tuple[str, ...]:
+    """Return HuggingFace-compatible endpoint bases in failover order.
+
+    ``COGNIOS_MODEL_DOWNLOAD_ENDPOINT`` is the app-level override:
+    - ``auto`` (default): choose order from locale/timezone hints, then fail over
+    - ``china`` / ``mirror`` / ``hf-mirror``: hf-mirror first, official second
+    - ``huggingface`` / ``direct``: official first, mirror second
+    - URL value: use that endpoint only, for private proxies
+
+    ``HF_ENDPOINT`` is honoured as a lower-level override because many HF
+    users already set it in China. A custom endpoint is treated as explicit
+    and does not fall back to the official host to avoid accidental egress.
+    """
+    configured = os.getenv(DOWNLOAD_ENDPOINT_ENV)
+    if configured is not None and configured.strip():
+        return _configured_download_base_urls(configured)
+
+    hf_endpoint = os.getenv(HF_ENDPOINT_ENV)
+    if hf_endpoint is not None and hf_endpoint.strip():
+        return (_normalise_endpoint_base(hf_endpoint),)
+
+    if _looks_like_china_environment():
+        return (HF_CHINA_MIRROR_ENDPOINT, HF_DEFAULT_ENDPOINT)
+    return (HF_DEFAULT_ENDPOINT, HF_CHINA_MIRROR_ENDPOINT)
+
+
+def _configured_download_base_urls(value: str) -> tuple[str, ...]:
+    normalized = value.strip()
+    choice = normalized.lower()
+    if choice == "auto":
+        if _looks_like_china_environment():
+            return (HF_CHINA_MIRROR_ENDPOINT, HF_DEFAULT_ENDPOINT)
+        return (HF_DEFAULT_ENDPOINT, HF_CHINA_MIRROR_ENDPOINT)
+    if choice in {"china", "cn", "mirror", "hf-mirror"}:
+        return (HF_CHINA_MIRROR_ENDPOINT, HF_DEFAULT_ENDPOINT)
+    if choice in {"huggingface", "hf", "direct"}:
+        return (HF_DEFAULT_ENDPOINT, HF_CHINA_MIRROR_ENDPOINT)
+    return (_normalise_endpoint_base(normalized),)
+
+
+def _normalise_endpoint_base(value: str) -> str:
+    base = value.strip().rstrip("/")
+    if not base:
+        raise ValueError("download endpoint must not be empty")
+    if "://" not in base:
+        base = f"https://{base}"
+    return base
+
+
+def _looks_like_china_environment() -> bool:
+    probes = (
+        os.getenv("TZ", ""),
+        os.getenv("LANG", ""),
+        os.getenv("LC_ALL", ""),
+        os.getenv("LC_MESSAGES", ""),
+        os.getenv("LC_CTYPE", ""),
+    )
+    haystack = " ".join(probes).lower().replace("-", "_")
+    china_hints = (
+        "asia/shanghai",
+        "asia/beijing",
+        "asia/chongqing",
+        "asia/urumqi",
+        "asia/harbin",
+        "asia/kashgar",
+        "zh_cn",
+        "zh_hans_cn",
+    )
+    return any(hint in haystack for hint in china_hints)
+
+
+def _safe_download_host(url: str) -> str:
+    parsed = urlsplit(url)
+    return parsed.netloc or url
 
 
 def _repo_relative_path(repo: str) -> Path:

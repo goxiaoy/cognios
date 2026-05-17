@@ -11,7 +11,7 @@ Schema (single table named ``nodes``)::
     mount_id      string  nullable
     created_at    timestamp[ms]
     modified_at   timestamp[ms]
-    role          string  nullable      -- "body" | "summary" | "metadata"; legacy rows are NULL
+    role          string  nullable      -- "body" | "summary" | "metadata" | "voice_transcript"; legacy rows are NULL
     content_version string nullable     -- sidecar queue content fingerprint
 
 Chunk-id formats:
@@ -25,6 +25,9 @@ Chunk-id formats:
 - ``"<node_id>:metadata:0"`` for ``role=metadata`` chunks. These rows
   contain node names and paths so metadata-only matches can surface
   without mixing internal search text into preview content.
+- ``"<node_id>:voice_transcript:<int>"`` for ``role=voice_transcript``
+  chunks. These are the live/final voice-note transcript file, kept
+  separate from the note body's summary and action-item text.
 
 Both share the same ``node_id`` column so a single
 ``DELETE WHERE node_id = ?`` predicate still removes every chunk for
@@ -64,8 +67,10 @@ TABLE_NAME = "nodes"
 # Allowed values for the ``role`` column. Adding a new role is a code
 # change — kept as a frozenset so processors can assert membership at
 # the boundary without duplicating the typing.Literal definition on NodeChunk.role.
-Role = Literal["body", "summary", "metadata"]
-ROLE_VALUES: frozenset[str] = frozenset({"body", "summary", "metadata"})
+Role = Literal["body", "summary", "metadata", "voice_transcript"]
+ROLE_VALUES: frozenset[str] = frozenset(
+    {"body", "summary", "metadata", "voice_transcript"}
+)
 
 
 @dataclass(frozen=True)
@@ -84,6 +89,9 @@ class NodeChunk:
       typically fit in a single row today.
     - ``"metadata"`` — internal search text derived from node names
       and paths. Preview endpoints hide these rows.
+    - ``"voice_transcript"`` — transcript text for a voice note,
+      sourced from the sibling transcript file rather than the note
+      markdown body.
 
     Modality (image / audio / text) is intentionally *not* encoded
     here; if it is ever needed it goes in a separate column.
@@ -216,9 +224,12 @@ class LanceDBStore:
         """
         if role not in ROLE_VALUES:
             raise ValueError(f"role {role!r} not in {sorted(ROLE_VALUES)!r}")
-        self._table.delete(
-            f"node_id = '{_quote(node_id)}' AND role = '{_quote(role)}'"
+        role_predicate = (
+            "(role = 'body' OR role IS NULL)"
+            if role == "body"
+            else f"role = '{_quote(role)}'"
         )
+        self._table.delete(f"node_id = '{_quote(node_id)}' AND {role_predicate}")
 
     def replace_node_chunks(
         self,
@@ -299,7 +310,12 @@ class LanceDBStore:
         in_clause = ", ".join(f"'{_quote(i)}'" for i in keep_ids)
         predicate = f"node_id = '{_quote(node_id)}' AND id NOT IN ({in_clause})"
         if role is not None:
-            predicate += f" AND role = '{_quote(role)}'"
+            role_predicate = (
+                "(role = 'body' OR role IS NULL)"
+                if role == "body"
+                else f"role = '{_quote(role)}'"
+            )
+            predicate += f" AND {role_predicate}"
         self._table.delete(predicate)
 
     def count(self) -> int:

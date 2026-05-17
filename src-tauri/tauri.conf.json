@@ -25,7 +25,10 @@
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["$HOME/.cogios/search/extract/**"],
+          "allow": [
+            "$HOME/.cogios/search/extract/**",
+            "$HOME/.cogios/voice-notes/**"
+          ],
           "requireLiteralLeadingDot": false
         }
       }
