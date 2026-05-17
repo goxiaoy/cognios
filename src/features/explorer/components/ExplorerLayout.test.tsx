@@ -246,7 +246,7 @@ describe("ExplorerLayout", () => {
       updatedAt: "2026-05-14 00:31:00",
     });
     getVoiceNoteTranscript.mockResolvedValue(
-      "[00:00.000] Speaker 1: opening line\n[00:05.000] Speaker 1: synced playback line"
+      "[00:00.000 - 00:02.000] Speaker 1: opening line\n[00:05.000 - 00:07.500] Speaker 1: synced playback line"
     );
 
     renderWithProvider(client);
@@ -262,6 +262,8 @@ describe("ExplorerLayout", () => {
     expect(screen.getByRole("button", { name: /Play source audio/i })).toBeInTheDocument();
     expect(screen.getByLabelText("Note title")).toHaveValue("2026-05-14 00.30.00");
     expect(await screen.findByText("Speaker 1: opening line")).toBeInTheDocument();
+    expect(screen.getByText("00:00 - 00:02")).toBeInTheDocument();
+    expect(screen.getByText("00:05 - 00:07")).toBeInTheDocument();
     expect(document.querySelector(".voice-recording-audio-native")).toHaveAttribute(
       "src",
       "asset:///tmp/voice-1.wav"

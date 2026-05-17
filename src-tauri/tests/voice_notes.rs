@@ -238,6 +238,7 @@ fn realtime_transcript_appends_timestamped_lines_without_completing_note() {
             note_id: created.voice_note.note_id.clone(),
             transcript: "Speaker 1: first live sentence".into(),
             start_ms: 0,
+            duration_ms: 1_250,
             speaker_labels: BTreeMap::from([("speaker_1".into(), "Speaker 1".into())]),
         },
         &notes_dir,
@@ -250,6 +251,7 @@ fn realtime_transcript_appends_timestamped_lines_without_completing_note() {
             note_id: created.voice_note.note_id.clone(),
             transcript: "Speaker 1: second live sentence".into(),
             start_ms: 5_250,
+            duration_ms: 2_000,
             speaker_labels: BTreeMap::from([("speaker_1".into(), "Speaker 1".into())]),
         },
         &notes_dir,
@@ -263,10 +265,10 @@ fn realtime_transcript_appends_timestamped_lines_without_completing_note() {
     assert_eq!(second.speaker_labels["speaker_1"], "Speaker 1");
     let transcript = get_voice_note_transcript(&conn, &created.voice_note.note_id, &notes_dir)
         .expect("transcript");
-    assert!(transcript.contains("[00:00.000] Speaker 1: first live sentence"));
-    assert!(transcript.contains("[00:05.250] Speaker 1: second live sentence"));
+    assert!(transcript.contains("[00:00.000 - 00:01.250] Speaker 1: first live sentence"));
+    assert!(transcript.contains("[00:05.250 - 00:07.250] Speaker 1: second live sentence"));
     let body = get_note_content(&created.voice_note.note_id, &notes_dir).expect("body");
-    assert!(!body.contains("[00:00.000] Speaker 1: first live sentence"));
+    assert!(!body.contains("[00:00.000 - 00:01.250] Speaker 1: first live sentence"));
     assert!(
         events
             .borrow()
@@ -621,6 +623,7 @@ fn transcription_failure_preserves_existing_realtime_transcript() {
             note_id: created.voice_note.note_id.clone(),
             transcript: "Speaker 1: live transcript survived".into(),
             start_ms: 1_500,
+            duration_ms: 2_000,
             speaker_labels: BTreeMap::new(),
         },
         &notes_dir,
@@ -640,7 +643,7 @@ fn transcription_failure_preserves_existing_realtime_transcript() {
 
     let transcript = get_voice_note_transcript(&conn, &created.voice_note.note_id, &notes_dir)
         .expect("transcript");
-    assert!(transcript.contains("[00:01.500] Speaker 1: live transcript survived"));
+    assert!(transcript.contains("[00:01.500 - 00:03.500] Speaker 1: live transcript survived"));
     assert!(transcript.contains("Transcription failed: final pass failed"));
     let body = get_note_content(&created.voice_note.note_id, &notes_dir).expect("body");
     assert!(!body.contains("live transcript survived"));
@@ -664,6 +667,7 @@ fn final_transcript_without_timestamps_keeps_realtime_timestamps_for_playback_sy
             note_id: created.voice_note.note_id.clone(),
             transcript: "Speaker 1: timestamped live line".into(),
             start_ms: 2_250,
+            duration_ms: 1_500,
             speaker_labels: BTreeMap::new(),
         },
         &notes_dir,
@@ -687,7 +691,7 @@ fn final_transcript_without_timestamps_keeps_realtime_timestamps_for_playback_sy
 
     let transcript = get_voice_note_transcript(&conn, &created.voice_note.note_id, &notes_dir)
         .expect("transcript");
-    assert!(transcript.contains("[00:02.250] Speaker 1: timestamped live line"));
+    assert!(transcript.contains("[00:02.250 - 00:03.750] Speaker 1: timestamped live line"));
     assert!(!transcript.contains("Speaker 1: final transcript without timestamps"));
 }
 

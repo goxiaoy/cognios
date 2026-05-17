@@ -8,7 +8,7 @@ use crate::domain::voice_note::VoiceNoteDto;
 use crate::infrastructure::db::connection::Database;
 use crate::services::search::{
     SearchSidecarClient, SidecarEnvelope, SidecarEnvelopeState, VoiceNoteTranscriptionRequestDto,
-    VoiceNoteTranscriptionResponseDto,
+    VoiceNoteTranscriptionResponseDto, VoiceNoteWarmTranscriberResponseDto,
 };
 use crate::services::voice_notes::native_audio::{CompletedAudioSegment, NativeAudioCapture};
 use crate::services::voice_notes::{
@@ -34,7 +34,10 @@ use crate::{AppState, VfsEventEmitter};
 const TRANSCRIPTION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const TRANSCRIPTION_READY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const REALTIME_TRANSCRIPTION_SEGMENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const REALTIME_TRANSCRIPTION_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 const REALTIME_TRANSCRIPTION_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+const TRANSCRIBER_WARMUP_RETRY_INTERVAL: Duration = Duration::from_secs(1);
+const TRANSCRIBER_WARMUP_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 #[tauri::command]
 pub fn get_voice_note_capture_capability() -> CaptureCapabilityDto {
@@ -171,6 +174,7 @@ pub fn begin_native_voice_note_audio_capture(
         let _ = mark_voice_note_capture_failed_record(&conn, &input.note_id);
         return Err(error);
     }
+    spawn_voice_note_transcriber_warmup(Arc::clone(&state.search_client));
     spawn_realtime_voice_note_transcription(
         state.db.clone(),
         notes_dir,
@@ -304,6 +308,73 @@ fn spawn_realtime_voice_note_transcription(
         )
         .await;
     });
+}
+
+fn spawn_voice_note_transcriber_warmup(search_client: Arc<SearchSidecarClient>) {
+    tauri::async_runtime::spawn(async move {
+        warm_voice_note_transcriber(search_client).await;
+    });
+}
+
+async fn warm_voice_note_transcriber(search_client: Arc<SearchSidecarClient>) {
+    let started_at = Instant::now();
+    loop {
+        match search_client.warm_voice_note_transcriber().await {
+            SidecarEnvelope {
+                state: SidecarEnvelopeState::Ready,
+                data: Some(VoiceNoteWarmTranscriberResponseDto { status, error }),
+                ..
+            } => match status.as_str() {
+                "ready" => return,
+                "pending" => {
+                    if started_at.elapsed() >= TRANSCRIBER_WARMUP_READY_TIMEOUT {
+                        log::debug!(
+                            "voice note transcriber warmup timed out waiting for ASR model: {}",
+                            error.as_deref().unwrap_or("no detail provided")
+                        );
+                        return;
+                    }
+                }
+                "unavailable" | "failed" => {
+                    log::debug!(
+                        "voice note transcriber warmup {}: {}",
+                        status,
+                        error.as_deref().unwrap_or("no detail provided")
+                    );
+                    return;
+                }
+                other => {
+                    log::debug!("voice note transcriber warmup returned unknown status: {other}");
+                    return;
+                }
+            },
+            SidecarEnvelope {
+                state: SidecarEnvelopeState::Initialising,
+                ..
+            }
+            | SidecarEnvelope {
+                state: SidecarEnvelopeState::Unavailable,
+                ..
+            } => {
+                if started_at.elapsed() >= TRANSCRIBER_WARMUP_READY_TIMEOUT {
+                    log::debug!("voice note transcriber warmup could not reach the search sidecar");
+                    return;
+                }
+            }
+            SidecarEnvelope {
+                state: SidecarEnvelopeState::Ready,
+                data: None,
+                error,
+            } => {
+                log::debug!(
+                    "voice note transcriber warmup returned no response body: {}",
+                    error.as_deref().unwrap_or("no detail provided")
+                );
+                return;
+            }
+        }
+        tokio::time::sleep(TRANSCRIBER_WARMUP_RETRY_INTERVAL).await;
+    }
 }
 
 async fn run_realtime_voice_note_transcription_job(
@@ -440,7 +511,7 @@ async fn transcribe_realtime_voice_note_segment(
                 return None;
             }
         }
-        tokio::time::sleep(TRANSCRIPTION_RETRY_INTERVAL).await;
+        tokio::time::sleep(REALTIME_TRANSCRIPTION_RETRY_INTERVAL).await;
     }
 }
 
@@ -470,6 +541,7 @@ fn append_realtime_voice_note_transcript(
         note_id: note_id.to_string(),
         transcript,
         start_ms: segment.start_ms,
+        duration_ms: segment.duration_ms,
         speaker_labels: response.speaker_labels,
     };
     if let Err(error) =

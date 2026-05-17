@@ -31,6 +31,7 @@ pub use client::{
     SearchObservabilityDto, SearchResponseDto, SearchResultDto, SearchSettingsDto,
     SearchSidecarClient, SidecarEnvelope, SidecarEnvelopeState, TokenUsageSummaryDto,
     VoiceNoteTranscriptionRequestDto, VoiceNoteTranscriptionResponseDto,
+    VoiceNoteWarmTranscriberResponseDto,
 };
 pub use runtime_file::{read_runtime_file, RuntimeFile, RuntimeFileError};
 pub use settings_fallback::read_settings_file_fallback;

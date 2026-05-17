@@ -57,6 +57,43 @@ def test_transcribe_route_returns_pending_when_model_is_not_ready(tmp_path: Path
     assert body["error"] == "Qwen ASR model is not ready"
 
 
+def test_warm_transcriber_route_loads_asr_model(tmp_path: Path, monkeypatch):
+    manager = _make_manager(tmp_path)
+    _activate(manager)
+    transcriber._MODEL_CACHE.clear()
+
+    class FakeQwen3ASRModel:
+        loaded = False
+
+        @classmethod
+        def from_pretrained(cls, _checkpoint: str, **_kwargs):
+            cls.loaded = True
+            return cls()
+
+        def transcribe(self, *_args, **_kwargs):
+            raise AssertionError("warmup should not transcribe audio")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "qwen_asr",
+        SimpleNamespace(Qwen3ASRModel=FakeQwen3ASRModel),
+    )
+    app = build_app(token=TOKEN, model_manager=manager)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/voice-notes/warm-transcriber",
+            json={},
+            headers=_auth_headers(),
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ready"
+    assert body["error"] is None
+    assert FakeQwen3ASRModel.loaded is True
+
+
 def test_transcribe_route_returns_completed_transcript(
     tmp_path: Path, monkeypatch
 ):

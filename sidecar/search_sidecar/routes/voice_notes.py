@@ -14,6 +14,7 @@ from ..voice_notes.transcriber import (
     TranscriptionPending,
     TranscriptionUnavailable,
     transcribe_voice_note_audio,
+    warm_voice_note_transcriber,
 )
 
 router = APIRouter(prefix="/voice-notes", tags=["voice-notes"])
@@ -33,6 +34,11 @@ class VoiceNoteTranscribeResponse(BaseModel):
     error: str | None = None
 
 
+class VoiceNoteWarmTranscriberResponse(BaseModel):
+    status: Literal["ready", "pending", "unavailable", "failed"]
+    error: str | None = None
+
+
 def _get_manager(request: Request) -> ModelManager:
     manager = getattr(request.app.state, "model_manager", None)
     if manager is None:
@@ -41,6 +47,42 @@ def _get_manager(request: Request) -> ModelManager:
             detail="model_manager not configured on app.state",
         )
     return manager
+
+
+@router.post("/warm-transcriber")
+def warm_transcriber(request: Request) -> dict:
+    manager = _get_manager(request)
+    started_at = time.perf_counter()
+    ok = False
+    try:
+        try:
+            warm_voice_note_transcriber(manager)
+        except TranscriptionPending as err:
+            return VoiceNoteWarmTranscriberResponse(
+                status="pending",
+                error=str(err),
+            ).model_dump()
+        except TranscriptionUnavailable as err:
+            return VoiceNoteWarmTranscriberResponse(
+                status="unavailable",
+                error=str(err),
+            ).model_dump()
+        except Exception as err:
+            return VoiceNoteWarmTranscriberResponse(
+                status="failed",
+                error=str(err),
+            ).model_dump()
+
+        ok = True
+        return VoiceNoteWarmTranscriberResponse(status="ready").model_dump()
+    finally:
+        store = getattr(request.app.state, "observability_store", None)
+        if store is not None:
+            store.record_duration(
+                "voice_note_transcription_warmup",
+                int((time.perf_counter() - started_at) * 1000),
+                ok=ok,
+            )
 
 
 @router.post("/transcribe")
@@ -57,6 +99,7 @@ def transcribe_voice_note(
                 manager,
                 Path(body.audio_path),
                 language=body.language,
+                note_id=body.note_id,
             )
         except TranscriptionPending as err:
             return VoiceNoteTranscribeResponse(

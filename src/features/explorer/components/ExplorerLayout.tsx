@@ -1033,6 +1033,7 @@ function sortDirectionLabel(
 interface TranscriptCue {
   id: string;
   startMs: number;
+  endMs: number | null;
   text: string;
 }
 
@@ -1087,7 +1088,7 @@ function VoiceNoteTranscriptPlayback({
                   }
                 }}
               >
-                <time>{formatTranscriptCueTime(cue.startMs)}</time>
+                <time>{formatTranscriptCueRange(cue)}</time>
                 <p>{cue.text}</p>
               </div>
             ))
@@ -1135,14 +1136,19 @@ function parseTimestampedTranscript(transcript: string): TranscriptCue[] {
 
 function parseTranscriptCue(line: string, index: number): TranscriptCue | null {
   const trimmed = line.trim();
-  const match = /^\[(\d{1,3}:\d{2}(?:\.\d{1,3})?)\]\s*(.+)$/.exec(trimmed);
+  const match =
+    /^\[(\d{1,3}:\d{2}(?:\.\d{1,3})?)(?:\s*-\s*(\d{1,3}:\d{2}(?:\.\d{1,3})?))?\]\s*(.+)$/.exec(
+      trimmed
+    );
   if (!match) return null;
   const startMs = parseTranscriptTimestampMs(match[1]);
   if (startMs === null) return null;
+  const endMs = match[2] ? parseTranscriptTimestampMs(match[2]) : null;
   return {
     id: `${index}:${startMs}`,
     startMs,
-    text: match[2],
+    endMs,
+    text: match[3],
   };
 }
 
@@ -1169,6 +1175,12 @@ function activeTranscriptCueIndex(cues: TranscriptCue[], currentMs: number): num
     }
   }
   return activeIndex;
+}
+
+function formatTranscriptCueRange(cue: TranscriptCue): string {
+  const start = formatTranscriptCueTime(cue.startMs);
+  if (cue.endMs === null) return start;
+  return `${start} - ${formatTranscriptCueTime(cue.endMs)}`;
 }
 
 function formatTranscriptCueTime(ms: number): string {

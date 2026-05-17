@@ -33,6 +33,7 @@ use super::supervisor::{SearchSidecarSupervisor, SupervisorState};
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CHAT_MEMORY_REFRESH_TIMEOUT: Duration = Duration::from_secs(4 * 60);
 const VOICE_NOTE_TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const VOICE_NOTE_TRANSCRIBER_WARMUP_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 /// All Tauri-facing sidecar commands return one of these envelopes.
 ///
@@ -723,6 +724,14 @@ pub struct VoiceNoteTranscriptionResponseDto {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct VoiceNoteWarmTranscriberResponseDto {
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 // ----- client ------------------------------------------------------------
 
 /// Async HTTP wrapper. One instance is shared across all Tauri commands
@@ -970,6 +979,17 @@ impl SearchSidecarClient {
             "/voice-notes/transcribe",
             body,
             VOICE_NOTE_TRANSCRIPTION_TIMEOUT,
+        )
+        .await
+    }
+
+    pub async fn warm_voice_note_transcriber(
+        &self,
+    ) -> SidecarEnvelope<VoiceNoteWarmTranscriberResponseDto> {
+        self.post_envelope_with_timeout(
+            "/voice-notes/warm-transcriber",
+            &serde_json::json!({}),
+            VOICE_NOTE_TRANSCRIBER_WARMUP_TIMEOUT,
         )
         .await
     }
@@ -1449,6 +1469,21 @@ mod tests {
         let to_ts = serde_json::to_value(&parsed).unwrap();
         assert_eq!(to_ts["speakerLabels"]["speaker_1"], "Speaker 1");
         assert!(to_ts.get("speaker_labels").is_none());
+    }
+
+    #[test]
+    fn voice_note_transcriber_warmup_round_trips_between_sidecar_and_tauri() {
+        let from_python = r#"{
+            "status": "ready",
+            "error": null
+        }"#;
+        let parsed: VoiceNoteWarmTranscriberResponseDto =
+            serde_json::from_str(from_python).expect("decode response");
+        assert_eq!(parsed.status, "ready");
+        assert!(parsed.error.is_none());
+
+        let to_ts = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(to_ts["status"], "ready");
     }
 
     #[test]

@@ -103,3 +103,103 @@ def test_transcription_uses_activated_local_qwen_checkpoint(
         (manager.role_dir("audio-transcript") / "current").resolve()
     )
     assert FakeQwen3ASRModel.transcribed_audio == str(audio_path)
+
+
+def test_transcription_preserves_asr_speaker_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    manager = _make_manager(tmp_path)
+    _activate(manager)
+    audio_path = tmp_path / "source.webm"
+    audio_path.write_bytes(b"audio")
+    transcriber._MODEL_CACHE.clear()
+
+    class FakeQwen3ASRModel:
+        @classmethod
+        def from_pretrained(cls, _checkpoint: str, **_kwargs):
+            return cls()
+
+        def transcribe(self, *, audio: str, language: str | None = None):
+            return [
+                {
+                    "text": "hello from the second speaker",
+                    "language": "English",
+                    "speaker_id": "speaker_2",
+                }
+            ]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "qwen_asr",
+        SimpleNamespace(Qwen3ASRModel=FakeQwen3ASRModel),
+    )
+
+    result = transcribe_voice_note_audio(manager, audio_path)
+
+    assert result.transcript == "Speaker 2: hello from the second speaker"
+    assert result.language == "English"
+    assert result.speaker_labels == {"speaker_2": "Speaker 2"}
+
+
+def test_transcription_uses_note_local_speaker_tracker_when_asr_has_no_speaker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    manager = _make_manager(tmp_path)
+    _activate(manager)
+    audio_path = tmp_path / "source.webm"
+    audio_path.write_bytes(b"audio")
+    transcriber._MODEL_CACHE.clear()
+
+    class FakeQwen3ASRModel:
+        @classmethod
+        def from_pretrained(cls, _checkpoint: str, **_kwargs):
+            return cls()
+
+        def transcribe(self, *, audio: str, language: str | None = None):
+            return [{"text": "follow up from another voice", "language": "English"}]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "qwen_asr",
+        SimpleNamespace(Qwen3ASRModel=FakeQwen3ASRModel),
+    )
+    monkeypatch.setattr(transcriber._SPEAKER_TRACKER, "assign", lambda *_args: "speaker_2")
+
+    result = transcribe_voice_note_audio(manager, audio_path, note_id="note-1")
+
+    assert result.transcript == "Speaker 2: follow up from another voice"
+    assert result.speaker_labels == {"speaker_2": "Speaker 2"}
+
+
+def test_warm_transcriber_loads_model_without_transcribing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    manager = _make_manager(tmp_path)
+    _activate(manager)
+    transcriber._MODEL_CACHE.clear()
+
+    class FakeQwen3ASRModel:
+        loaded_checkpoint: str | None = None
+        transcribed = False
+
+        @classmethod
+        def from_pretrained(cls, checkpoint: str, **_kwargs):
+            cls.loaded_checkpoint = checkpoint
+            return cls()
+
+        def transcribe(self, *_args, **_kwargs):
+            self.__class__.transcribed = True
+            return [{"text": "should not run"}]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "qwen_asr",
+        SimpleNamespace(Qwen3ASRModel=FakeQwen3ASRModel),
+    )
+
+    transcriber.warm_voice_note_transcriber(manager)
+
+    assert FakeQwen3ASRModel.loaded_checkpoint == str(
+        (manager.role_dir("audio-transcript") / "current").resolve()
+    )
+    assert FakeQwen3ASRModel.transcribed is False

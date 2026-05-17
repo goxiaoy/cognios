@@ -88,6 +88,7 @@ pub struct AppendRealtimeTranscriptInput {
     pub note_id: String,
     pub transcript: String,
     pub start_ms: u64,
+    pub duration_ms: u64,
     pub speaker_labels: BTreeMap<String, String>,
 }
 
@@ -361,7 +362,12 @@ pub fn append_voice_note_realtime_transcript(
 
     let current_transcript = read_voice_note_transcript_file(conn, &input.note_id, notes_dir)?;
     let existing_transcript = current_transcript.trim();
-    let segment_line = format!("[{}] {}", format_timestamp(input.start_ms), transcript);
+    let segment_line = format!(
+        "[{} - {}] {}",
+        format_timestamp(input.start_ms),
+        format_timestamp(input.start_ms.saturating_add(input.duration_ms)),
+        transcript
+    );
     let replacement = if is_transcript_placeholder(existing_transcript) {
         segment_line
     } else {
@@ -791,7 +797,13 @@ fn transcript_line_timestamp_ms(line: &str) -> Option<u64> {
     let line = line.trim_start();
     let rest = line.strip_prefix('[')?;
     let end = rest.find(']')?;
-    parse_timestamp_ms(&rest[..end])
+    let range_or_timestamp = &rest[..end];
+    let start = range_or_timestamp
+        .split_once('-')
+        .map(|(start, _)| start)
+        .unwrap_or(range_or_timestamp)
+        .trim();
+    parse_timestamp_ms(start)
 }
 
 fn parse_timestamp_ms(raw: &str) -> Option<u64> {
