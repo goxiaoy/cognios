@@ -138,7 +138,7 @@ both target the no-torch path via `optimum.onnxruntime`, which keeps
 this manageable). PaddleOCR-onnx is roughly 150 MB; a compiled
 `llama-cpp-python` is ~80 MB of `_internal/llama_cpp/lib/`. **None of
 this includes model weights** (the ~4.3 GB first-run download is
-separate and lives under `~/.cogios/search/models/`).
+separate and lives under `~/.cogios/models/`).
 
 ### F-5 — Cold-start performance
 

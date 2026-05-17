@@ -6,6 +6,7 @@ import {
   Image as ImageIcon,
   Layers,
   MessageCircle,
+  Mic,
   Plus,
   Search,
   Sparkles,
@@ -34,6 +35,7 @@ const FEATURE_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
   "image-captioning": Sparkles,
   "advanced-ocr": FileSearch,
   chat: MessageCircle,
+  "voice-notes": Mic,
   "web-search": Globe,
 };
 

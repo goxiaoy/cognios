@@ -14,12 +14,13 @@ from search_sidecar.models.manifest import (
 
 def test_manifest_covers_v1_local_roles():
     """v1 ships local model files for embedding + reranker (basic OCR
-    is served by the bundled rapidocr-onnxruntime wheel) plus the
-    PP-StructureV3 advanced-OCR bundle (12 stage roles) that downloads
-    on demand when the user enables advanced OCR. Captioning stays
-    cloud-only in v1 — intentionally absent from the manifest."""
+    is served by the bundled rapidocr-onnxruntime wheel), the
+    Qwen3-ASR voice-note role, plus the PP-StructureV3 advanced-OCR
+    bundle (13 stage roles) that downloads on demand when the user
+    enables advanced OCR. Captioning stays cloud-only in v1 —
+    intentionally absent from the manifest."""
     role_ids = set(DEFAULTS.keys())
-    assert {"embedding", "reranker"}.issubset(role_ids)
+    assert {"embedding", "reranker", "audio-transcript"}.issubset(role_ids)
     advanced = {r for r in role_ids if r.startswith("advanced-ocr-")}
     assert len(advanced) == 13, f"expected 13 PP-StructureV3 stages, got {advanced}"
 

@@ -16,6 +16,7 @@ use crate::services::mounts::watcher::{MountWatcherRegistry, VfsChangeEvent};
 use crate::services::search::{SearchSidecarClient, SearchSidecarSupervisor};
 use crate::services::url_indexing::cache::ensure_cache_dir;
 use crate::services::url_indexing::queue::UrlJobRunner;
+use crate::services::voice_notes::native_audio::NativeAudioCapture;
 
 const VFS_EVENT_NAME: &str = "vfs://changed";
 
@@ -29,6 +30,7 @@ pub struct AppState {
     pub emitter: VfsEventEmitter,
     pub search_sidecar: Arc<SearchSidecarSupervisor>,
     pub search_client: Arc<SearchSidecarClient>,
+    pub voice_note_audio_capture: Arc<NativeAudioCapture>,
     pub shutdown_requested: Arc<AtomicBool>,
 }
 
@@ -331,6 +333,7 @@ pub fn run() {
                 emitter,
                 search_sidecar,
                 search_client,
+                voice_note_audio_capture: Arc::new(NativeAudioCapture::new()),
                 shutdown_requested: Arc::new(AtomicBool::new(false)),
             });
 
@@ -347,6 +350,21 @@ pub fn run() {
             commands::notes::create_note,
             commands::notes::get_note_content,
             commands::notes::save_note_content,
+            commands::voice_notes::get_voice_note_capture_capability,
+            commands::voice_notes::create_voice_note,
+            commands::voice_notes::list_voice_notes,
+            commands::voice_notes::get_voice_note,
+            commands::voice_notes::get_voice_note_transcript,
+            commands::voice_notes::complete_voice_note_transcript,
+            commands::voice_notes::begin_voice_note_audio_capture,
+            commands::voice_notes::append_voice_note_audio_chunk,
+            commands::voice_notes::finish_voice_note_audio_capture,
+            commands::voice_notes::begin_native_voice_note_audio_capture,
+            commands::voice_notes::finish_native_voice_note_audio_capture,
+            commands::voice_notes::pause_native_voice_note_audio_capture,
+            commands::voice_notes::resume_native_voice_note_audio_capture,
+            commands::voice_notes::rename_voice_note_speaker,
+            commands::voice_notes::delete_voice_note_source_audio,
             commands::files::read_file_content,
             commands::files::show_node_in_file_manager,
             commands::files::show_node_extract_artifacts,

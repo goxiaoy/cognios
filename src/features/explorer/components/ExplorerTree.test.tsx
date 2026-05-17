@@ -34,6 +34,7 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
     nodes: tree as never,
     pendingInlineRenameId: null,
     onDelete: vi.fn(),
+    onDeleteMany: vi.fn(),
     onInlineRename: vi.fn(),
     onOpenUrl: vi.fn(),
     onRevealInFileManager: vi.fn(),
@@ -141,5 +142,40 @@ describe("ExplorerTree", () => {
     fireEvent.click(screen.getByRole("button", { name: /show in folder|show in finder|show in explorer/i }));
 
     expect(onRevealInFileManager).toHaveBeenCalledWith("child");
+  });
+
+  it("keeps the context menu inside the viewport near the bottom edge", () => {
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 180,
+    });
+    render(<ExplorerTree {...defaultProps()} />);
+
+    fireEvent.contextMenu(screen.getByText("Readme.md"), {
+      clientX: 24,
+      clientY: 172,
+    });
+
+    const menu = document.querySelector(".tree-context-menu") as HTMLElement;
+    expect(menu).toBeTruthy();
+    expect(parseFloat(menu.style.top)).toBeLessThanOrEqual(45);
+  });
+
+  it("offers batch delete when right-clicking a multi-selected row", () => {
+    const onDeleteMany = vi.fn();
+    render(
+      <ExplorerTree
+        {...defaultProps({
+          onDeleteMany,
+          selectedIds: ["root", "child"],
+        })}
+      />
+    );
+
+    fireEvent.contextMenu(screen.getByText("Readme.md"));
+    fireEvent.click(screen.getByRole("button", { name: /Delete 2 Items/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Delete 2 Items/i }));
+
+    expect(onDeleteMany).toHaveBeenCalledWith(["root", "child"]);
   });
 });

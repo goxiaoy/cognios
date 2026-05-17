@@ -73,6 +73,7 @@ Crash safety:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import sqlite3
 import threading
@@ -86,6 +87,8 @@ from typing import Optional
 from .migrations import run_migrations
 
 LOG = logging.getLogger("search_sidecar.index.queue")
+CONTENT_HASH_CHUNK_SIZE = 1024 * 1024
+CONTENT_HASH_DIGEST_SIZE = 16
 
 
 # Bounded retry for transient errors during the advanced-OCR
@@ -915,11 +918,36 @@ def _content_version(
     kind: str, path_value: str | None, fallback_modified_at: str
 ) -> str:
     if path_value:
+        path = Path(path_value)
         try:
-            stat = Path(path_value).stat()
-            return f"stat:{stat.st_size}:{stat.st_mtime_ns}"
+            file_hash = _file_content_hash(path)
+            version = f"hash:blake2b:{file_hash}"
+            if kind == "note":
+                transcript_path = (
+                    path.parent.parent
+                    / "voice-notes"
+                    / path.stem
+                    / "transcript.md"
+                )
+                try:
+                    transcript_hash = _file_content_hash(transcript_path)
+                    version += (
+                        f"|voice_transcript:"
+                        f"blake2b:{transcript_hash}"
+                    )
+                except OSError:
+                    pass
+            return version
         except OSError:
             pass
     if kind in {"folder", "mount", "directory"}:
         return f"container:{kind}"
     return f"event:{fallback_modified_at}"
+
+
+def _file_content_hash(path: Path) -> str:
+    digest = hashlib.blake2b(digest_size=CONTENT_HASH_DIGEST_SIZE)
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(CONTENT_HASH_CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

@@ -36,6 +36,17 @@ import type {
   StartModelDownloadInput,
 } from "../contracts/search";
 import type {
+  AppendVoiceNoteAudioChunkInput,
+  BeginVoiceNoteAudioCaptureInput,
+  CaptureCapability,
+  CompleteVoiceNoteTranscriptInput,
+  CreatedVoiceNote,
+  CreateVoiceNoteInput,
+  FinishVoiceNoteAudioCaptureInput,
+  RenameVoiceNoteSpeakerInput,
+  VoiceNote,
+} from "../contracts/voiceNote";
+import type {
   CreateFolderInput,
   DuplicateMountError,
   CreateMountInput,
@@ -118,6 +129,82 @@ export async function saveNoteContent(
   body: string
 ): Promise<void> {
   return invoke<void>("save_note_content", { input: { noteId, body } });
+}
+
+export async function getVoiceNoteCaptureCapability(): Promise<CaptureCapability> {
+  return invoke<CaptureCapability>("get_voice_note_capture_capability");
+}
+
+export async function createVoiceNote(
+  input: CreateVoiceNoteInput = {}
+): Promise<CreatedVoiceNote> {
+  return invoke<CreatedVoiceNote>("create_voice_note", { input });
+}
+
+export async function listVoiceNotes(): Promise<VoiceNote[]> {
+  return invoke<VoiceNote[]>("list_voice_notes");
+}
+
+export async function getVoiceNote(noteId: string): Promise<VoiceNote | null> {
+  return invoke<VoiceNote | null>("get_voice_note", { input: { noteId } });
+}
+
+export async function getVoiceNoteTranscript(noteId: string): Promise<string> {
+  return invoke<string>("get_voice_note_transcript", { input: { noteId } });
+}
+
+export async function completeVoiceNoteTranscript(
+  input: CompleteVoiceNoteTranscriptInput
+): Promise<VoiceNote> {
+  return invoke<VoiceNote>("complete_voice_note_transcript", { input });
+}
+
+export async function beginVoiceNoteAudioCapture(
+  input: BeginVoiceNoteAudioCaptureInput
+): Promise<VoiceNote> {
+  return invoke<VoiceNote>("begin_voice_note_audio_capture", { input });
+}
+
+export async function appendVoiceNoteAudioChunk(
+  input: AppendVoiceNoteAudioChunkInput
+): Promise<void> {
+  return invoke<void>("append_voice_note_audio_chunk", { input });
+}
+
+export async function finishVoiceNoteAudioCapture(
+  input: FinishVoiceNoteAudioCaptureInput
+): Promise<VoiceNote> {
+  return invoke<VoiceNote>("finish_voice_note_audio_capture", { input });
+}
+
+export async function beginNativeVoiceNoteAudioCapture(
+  input: BeginVoiceNoteAudioCaptureInput
+): Promise<VoiceNote> {
+  return invoke<VoiceNote>("begin_native_voice_note_audio_capture", { input });
+}
+
+export async function finishNativeVoiceNoteAudioCapture(
+  input: FinishVoiceNoteAudioCaptureInput
+): Promise<VoiceNote> {
+  return invoke<VoiceNote>("finish_native_voice_note_audio_capture", { input });
+}
+
+export async function pauseNativeVoiceNoteAudioCapture(noteId: string): Promise<void> {
+  return invoke<void>("pause_native_voice_note_audio_capture", { input: { noteId } });
+}
+
+export async function resumeNativeVoiceNoteAudioCapture(noteId: string): Promise<void> {
+  return invoke<void>("resume_native_voice_note_audio_capture", { input: { noteId } });
+}
+
+export async function renameVoiceNoteSpeaker(
+  input: RenameVoiceNoteSpeakerInput
+): Promise<VoiceNote> {
+  return invoke<VoiceNote>("rename_voice_note_speaker", { input });
+}
+
+export async function deleteVoiceNoteSourceAudio(noteId: string): Promise<VoiceNote> {
+  return invoke<VoiceNote>("delete_voice_note_source_audio", { input: { noteId } });
 }
 
 export async function retryUrl(input: RetryUrlInput): Promise<void> {

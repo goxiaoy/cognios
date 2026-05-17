@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExplorerLayout } from "./ExplorerLayout";
 import { ExplorerStoreProvider } from "../store/ExplorerStoreContext";
 
+const getVoiceNote = vi.fn();
+const getVoiceNoteTranscript = vi.fn();
+
 function renderWithProvider(client: unknown) {
   const typed = client as Parameters<typeof ExplorerStoreProvider>[0]["client"];
   return render(
@@ -17,6 +20,10 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => Promise.resolve()),
 }));
 
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (path: string) => `asset://${path}`,
+}));
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     onCloseRequested: vi.fn().mockResolvedValue(() => {}),
@@ -26,6 +33,13 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 vi.mock("@tauri-apps/plugin-shell", () => ({
   open: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../../voice-notes/api/voiceNoteClient", () => ({
+  voiceNoteClient: {
+    get: (noteId: string) => getVoiceNote(noteId),
+    getTranscript: (noteId: string) => getVoiceNoteTranscript(noteId),
+  },
 }));
 
 function makeClient(): ExplorerClient {
@@ -70,8 +84,8 @@ function makeClient(): ExplorerClient {
     reindexNode: vi.fn().mockResolvedValue({ enqueued: 0 }),
     retryUrl: vi.fn(),
     getNodeThumbnail: vi.fn(),
-    getNoteContent: vi.fn(),
-    saveNoteContent: vi.fn(),
+    getNoteContent: vi.fn().mockResolvedValue(""),
+    saveNoteContent: vi.fn().mockResolvedValue(undefined),
     readFileContent: vi.fn(),
     showNodeInFileManager: vi.fn(),
     showNodeExtractArtifacts: vi.fn(),
@@ -81,6 +95,11 @@ function makeClient(): ExplorerClient {
 describe("ExplorerLayout", () => {
   beforeEach(() => {
     document.body.classList.remove("is-resizing-pane");
+    Element.prototype.scrollIntoView = vi.fn();
+    getVoiceNote.mockReset();
+    getVoiceNote.mockResolvedValue(null);
+    getVoiceNoteTranscript.mockReset();
+    getVoiceNoteTranscript.mockResolvedValue("");
   });
 
   afterEach(() => {
@@ -135,5 +154,81 @@ describe("ExplorerLayout", () => {
     expect(treeScroll.scrollTop).toBe(14);
     expect(inspectorScroll.scrollTop).toBe(21);
     expect(detailScroll.scrollTop).toBe(55);
+  });
+
+  it("shows source audio playback when opening an existing voice note", async () => {
+    const client = makeClient();
+    vi.mocked(client.getExplorerSnapshot).mockResolvedValue({
+      roots: [
+        {
+          id: "voice-1",
+          parentId: null,
+          name: "2026-05-14 00.30.00",
+          kind: "note",
+          isVoiceNote: true,
+          state: "ready",
+          createdAt: "2026-05-14 00:30:00",
+          modifiedAt: "2026-05-14 00:31:00",
+          sizeBytes: 1024,
+          children: [],
+        },
+      ],
+    });
+    getVoiceNote.mockResolvedValue({
+      noteId: "voice-1",
+      name: "2026-05-14 00.30.00",
+      status: "completed",
+      captureStatus: "completed",
+      transcriptionStatus: "completed",
+      summaryStatus: "ready",
+      sourceAudioPresent: true,
+      sourceAudioPath: "/tmp/voice-1.wav",
+      sourceAudioDeletedAt: null,
+      transcriptPath: "/tmp/voice-1/transcript.md",
+      transcriptUpdatedAt: "2026-05-14 00:31:00",
+      speakerLabels: {},
+      createdAt: "2026-05-14 00:30:00",
+      updatedAt: "2026-05-14 00:31:00",
+    });
+    getVoiceNoteTranscript.mockResolvedValue(
+      "[00:00.000] Speaker 1: opening line\n[00:05.000] Speaker 1: synced playback line"
+    );
+
+    renderWithProvider(client);
+
+    fireEvent.click(await screen.findByRole("button", {
+      name: /2026-05-14 00\.30\.00/i,
+    }));
+
+    await waitFor(() => {
+      expect(getVoiceNote).toHaveBeenCalledWith("voice-1");
+    });
+    expect(await screen.findByLabelText("Source audio playback")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Play source audio/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Note title")).toHaveValue("2026-05-14 00.30.00");
+    expect(await screen.findByText("Speaker 1: opening line")).toBeInTheDocument();
+    expect(document.querySelector(".voice-recording-audio-native")).toHaveAttribute(
+      "src",
+      "asset:///tmp/voice-1.wav"
+    );
+
+    const audio = document.querySelector(".voice-recording-audio-native") as HTMLAudioElement;
+    Object.defineProperty(audio, "duration", { configurable: true, value: 10 });
+    Object.defineProperty(audio, "currentTime", {
+      configurable: true,
+      writable: true,
+      value: 5.1,
+    });
+    fireEvent.loadedMetadata(audio);
+    fireEvent.play(audio);
+    fireEvent.timeUpdate(audio);
+
+    await waitFor(() => {
+      expect(screen.getByText("Speaker 1: synced playback line").closest(".voice-note-transcript-sync-line")).toHaveAttribute(
+        "aria-current",
+        "true"
+      );
+    });
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 });

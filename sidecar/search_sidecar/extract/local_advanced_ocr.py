@@ -68,7 +68,7 @@ class PpStructureV3Extractor:
     directory holding its inference files (``inference.json`` /
     ``inference.pdmodel`` / ``inference.pdiparams``). The factory
     builds this map from :class:`ModelManager`'s file layout
-    (``<storage>/search/models/<role>/<commit>/``) so the local
+    (``<storage>/models/<namespace>/<repo>/<commit>/``) so the local
     pipeline never reaches HuggingFace at runtime.
 
     Construction is deferred to the first call: paddleocr's pipeline

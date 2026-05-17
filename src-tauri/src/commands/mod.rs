@@ -8,6 +8,7 @@ pub mod search_settings;
 pub mod secrets;
 pub mod thumbnails;
 pub mod urls;
+pub mod voice_notes;
 
 use std::sync::Arc;
 

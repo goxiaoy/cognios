@@ -2,17 +2,18 @@
 
 Storage layout::
 
-    <storage>/search/models/
-      <role>/
-        current -> <commit>          # symlink, set after activation
-        license.accepted             # presence-only sentinel
-        <commit>/
-          <file1>
-          <file2>
-        <commit>/                    # an older commit, still on disk
-          ...
-        tmp/                         # in-progress downloads
-          <file>.partial
+    <storage>/models/
+      <repo namespace>/
+        <repo name>/
+          current -> <commit>        # symlink, set after activation
+          license.accepted           # presence-only sentinel
+          <commit>/
+            <file1>
+            <file2>
+          <commit>/                  # an older commit, still on disk
+            ...
+          tmp/                       # in-progress downloads
+            <file>.partial
 
 Download is HTTP GET with ``Range: bytes=N-`` resume when a ``.partial``
 exists. Each file is verified end-to-end against the manifest's SHA-256
@@ -34,14 +35,21 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator
+from urllib.parse import urlsplit
 
 import httpx
 
-from .manifest import ModelSpec
+from .manifest import FileSpec, ModelSpec
 
 LOG = logging.getLogger("search_sidecar.models")
 
 CHUNK_SIZE = 64 * 1024  # 64 KiB — balances syscall overhead and memory.
+
+HF_DEFAULT_ENDPOINT = "https://huggingface.co"
+HF_CHINA_MIRROR_ENDPOINT = "https://hf-mirror.com"
+DOWNLOAD_ENDPOINT_ENV = "COGNIOS_MODEL_DOWNLOAD_ENDPOINT"
+HF_ENDPOINT_ENV = "HF_ENDPOINT"
+DOWNLOAD_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
 
 # Retry policy for transient ``DownloadFailed`` errors. Mirrors the
 # pin script's retry shape so dev + ops behave the same way against
@@ -97,7 +105,7 @@ class RoleStatus:
 
 
 class ModelManager:
-    """Orchestrates the model lifecycle for the four roles.
+    """Orchestrates the model lifecycle for the manifest roles.
 
     The manager is constructed once at sidecar startup with the active
     manifest (defaults at ``models.manifest.DEFAULTS``). Tests inject a
@@ -132,8 +140,10 @@ class ModelManager:
         # Tests pass {repo+commit+filename -> URL} to point at a fixture
         # HTTP server. Production passes None (manager builds HF URLs).
         self._url_override = dict(url_override or {})
-        self._models_root = storage_dir / "search" / "models"
+        self._models_root = storage_dir / "models"
+        self._legacy_models_root = storage_dir / "search" / "models"
         self._models_root.mkdir(parents=True, exist_ok=True)
+        self._migrate_legacy_model_dirs()
         self._inflight: set[str] = set()
         self._lock = asyncio.Lock()
         # Lazy semaphore creation: ``asyncio.Semaphore`` binds to
@@ -148,7 +158,7 @@ class ModelManager:
         return self._manifest
 
     def role_dir(self, role: str) -> Path:
-        return self._models_root / role
+        return self._repo_dir(self._spec(role))
 
     def commit_dir(self, role: str, commit: str) -> Path:
         return self.role_dir(role) / commit
@@ -231,6 +241,87 @@ class ModelManager:
         except KeyError as err:
             raise KeyError(f"unknown role: {role!r}") from err
 
+    def _repo_dir(self, spec: ModelSpec) -> Path:
+        return self._models_root / _repo_relative_path(spec.repo)
+
+    def _migrate_legacy_model_dirs(self) -> None:
+        """Move old ``search/models/<role>`` folders to repo paths.
+
+        Older builds used role names as the persistent directory name,
+        which collapsed upstream identifiers like ``Qwen/Qwen3-ASR-0.6B``
+        into app-specific names such as ``audio-transcript``. Keep the
+        public role API but store files under the original HF namespace
+        path so users can inspect and reuse downloaded models directly.
+        """
+        legacy_root = self._legacy_models_root
+        if not legacy_root.exists():
+            return
+        for role, spec in self._manifest.items():
+            legacy_dir = legacy_root / role
+            if not legacy_dir.exists() and not legacy_dir.is_symlink():
+                continue
+            target_dir = self._repo_dir(spec)
+            try:
+                self._move_or_merge_legacy_dir(legacy_dir, target_dir)
+            except OSError as err:
+                LOG.warning(
+                    "failed to migrate model directory for %s from %s to %s: %s",
+                    role,
+                    legacy_dir,
+                    target_dir,
+                    err,
+                )
+        self._prune_empty_legacy_model_dirs()
+
+    def _move_or_merge_legacy_dir(self, source: Path, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists() and not target.is_symlink():
+            source.rename(target)
+            LOG.info("migrated model directory %s -> %s", source, target)
+            return
+        if source.is_dir() and target.is_dir():
+            self._merge_directory_contents(source, target)
+            return
+        LOG.warning(
+            "leaving legacy model path in place because target already exists: %s -> %s",
+            source,
+            target,
+        )
+
+    def _merge_directory_contents(self, source: Path, target: Path) -> None:
+        for child in source.iterdir():
+            destination = target / child.name
+            if not destination.exists() and not destination.is_symlink():
+                child.rename(destination)
+                continue
+            if child.is_dir() and destination.is_dir() and not child.is_symlink():
+                self._merge_directory_contents(child, destination)
+                continue
+            if _same_legacy_content(child, destination):
+                _remove_duplicate_legacy_path(child)
+                continue
+            LOG.warning(
+                "leaving legacy model path in place because target already exists: %s",
+                child,
+            )
+        try:
+            source.rmdir()
+        except OSError:
+            pass
+
+    def _prune_empty_legacy_model_dirs(self) -> None:
+        ds_store = self._legacy_models_root / ".DS_Store"
+        if ds_store.is_file():
+            try:
+                ds_store.unlink()
+            except OSError:
+                pass
+        for path in (self._legacy_models_root, self._legacy_models_root.parent):
+            try:
+                path.rmdir()
+            except OSError:
+                pass
+
     def _read_current(self, role: str) -> str | None:
         link = self.role_dir(role) / "current"
         if not link.exists() and not link.is_symlink():
@@ -243,7 +334,7 @@ class ModelManager:
         return target
 
     def _activate(self, role: str, commit: str) -> None:
-        """Atomically point ``<role>/current`` at ``<commit>``.
+        """Atomically point the role's ``current`` link at ``<commit>``.
 
         Implementation: write the new symlink to ``current.tmp`` and
         ``os.replace`` it onto ``current``. ``os.replace`` of a symlink
@@ -256,13 +347,20 @@ class ModelManager:
         os.symlink(commit, tmp)
         os.replace(tmp, link)
 
-    def _build_url(self, spec: ModelSpec, file_name: str) -> str:
+    def _build_urls(self, spec: ModelSpec, file_name: str) -> tuple[str, ...]:
         # Tests inject explicit URLs via url_override; production builds
-        # the canonical HF URL from the spec.
+        # candidate HF-compatible URLs from the spec. Candidate order is
+        # policy-driven: auto mode prefers the China mirror when local
+        # environment hints point at mainland China, otherwise the
+        # official endpoint gets first try. Every candidate uses the same
+        # partial file, so a failed source can be resumed from the next.
         key = f"{spec.repo}@{spec.commit}/{file_name}"
         if key in self._url_override:
-            return self._url_override[key]
-        return f"https://huggingface.co/{spec.repo}/resolve/{spec.commit}/{file_name}"
+            return (self._url_override[key],)
+        return tuple(
+            f"{base}/{spec.repo}/resolve/{spec.commit}/{file_name}"
+            for base in _download_base_urls()
+        )
 
     def _resolve_target_paths(
         self, spec: ModelSpec, file_name: str
@@ -303,9 +401,17 @@ class ModelManager:
         last_err: Exception | None = None
         for attempt in range(MAX_DOWNLOAD_ATTEMPTS):
             try:
+                role_total = _manifest_role_total(spec)
+                completed_bytes = 0
                 for file in spec.files:
-                    async for ev in self._download_file(spec, file):
+                    async for ev in self._download_file(
+                        spec,
+                        file,
+                        role_completed_bytes=completed_bytes,
+                        role_total_bytes=role_total,
+                    ):
                         yield ev
+                    completed_bytes += self._completed_file_bytes(spec, file)
                 self._activate(spec.role, spec.commit)
                 yield ProgressEvent(role=spec.role, state="ready")
                 return
@@ -349,22 +455,68 @@ class ModelManager:
         )
 
     async def _download_file(
-        self, spec: ModelSpec, file
+        self,
+        spec: ModelSpec,
+        file: FileSpec,
+        *,
+        role_completed_bytes: int,
+        role_total_bytes: int | None,
     ) -> AsyncIterator[ProgressEvent]:
         partial, final = self._resolve_target_paths(spec, file.name)
 
         # If final is already present + verifies, skip.
         if final.exists() and _file_sha256(final) == file.sha256:
+            downloaded = role_completed_bytes + final.stat().st_size
             yield ProgressEvent(
                 role=spec.role,
                 state="verifying",
                 file=file.name,
-                bytes_downloaded=final.stat().st_size,
-                bytes_total=final.stat().st_size,
+                bytes_downloaded=downloaded,
+                bytes_total=role_total_bytes or downloaded,
             )
             return
 
-        url = self._build_url(spec, file.name)
+        urls = self._build_urls(spec, file.name)
+        last_err: DownloadFailed | None = None
+        for index, url in enumerate(urls):
+            try:
+                async for event in self._download_file_from_url(
+                    spec,
+                    file,
+                    url=url,
+                    partial=partial,
+                    final=final,
+                    role_completed_bytes=role_completed_bytes,
+                    role_total_bytes=role_total_bytes,
+                ):
+                    yield event
+                return
+            except DownloadFailed as err:
+                last_err = err
+                if index + 1 >= len(urls):
+                    break
+                LOG.info(
+                    "download source failed for %s/%s (%s); trying fallback source %s",
+                    spec.role,
+                    file.name,
+                    err,
+                    _safe_download_host(urls[index + 1]),
+                )
+        if last_err is not None:
+            raise last_err
+        raise DownloadFailed(f"no download source configured for {file.name}")
+
+    async def _download_file_from_url(
+        self,
+        spec: ModelSpec,
+        file: FileSpec,
+        *,
+        url: str,
+        partial: Path,
+        final: Path,
+        role_completed_bytes: int,
+        role_total_bytes: int | None,
+    ) -> AsyncIterator[ProgressEvent]:
         headers: dict[str, str] = {}
 
         # Range-resume if we have a non-empty partial
@@ -374,7 +526,7 @@ class ModelManager:
 
         try:
             async with httpx.AsyncClient(
-                follow_redirects=True, timeout=httpx.Timeout(30.0)
+                follow_redirects=True, timeout=DOWNLOAD_TIMEOUT
             ) as client:
                 async with client.stream("GET", url, headers=headers) as resp:
                     if resp.status_code == 416:
@@ -396,26 +548,36 @@ class ModelManager:
                                     role=spec.role,
                                     state="downloading",
                                     file=file.name,
-                                    bytes_downloaded=bytes_downloaded,
-                                    bytes_total=total,
+                                    bytes_downloaded=role_completed_bytes
+                                    + bytes_downloaded,
+                                    bytes_total=role_total_bytes
+                                    or (
+                                        role_completed_bytes + total
+                                        if total is not None
+                                        else None
+                                    ),
                                 )
                     else:
                         body_preview = (await resp.aread())[:200].decode(
                             "utf-8", errors="replace"
                         )
                         raise DownloadFailed(
-                            f"HTTP {resp.status_code} for {file.name}: {body_preview}"
+                            f"HTTP {resp.status_code} for {file.name} "
+                            f"from {_safe_download_host(url)}: {body_preview}"
                         )
         except httpx.HTTPError as err:
-            raise DownloadFailed(f"transport error: {err}") from err
+            raise DownloadFailed(
+                f"transport error from {_safe_download_host(url)}: {err}"
+            ) from err
 
         # Verify
+        downloaded = role_completed_bytes + partial.stat().st_size
         yield ProgressEvent(
             role=spec.role,
             state="verifying",
             file=file.name,
-            bytes_downloaded=partial.stat().st_size,
-            bytes_total=partial.stat().st_size,
+            bytes_downloaded=downloaded,
+            bytes_total=role_total_bytes or downloaded,
         )
         actual = _file_sha256(partial)
         if actual != file.sha256:
@@ -430,6 +592,14 @@ class ModelManager:
 
         # Atomic rename into commit folder
         os.replace(partial, final)
+
+    def _completed_file_bytes(self, spec: ModelSpec, file: FileSpec) -> int:
+        _, final = self._resolve_target_paths(spec, file.name)
+        if final.exists():
+            return final.stat().st_size
+        if file.size_bytes is not None:
+            return file.size_bytes
+        return 0
 
 
 def _file_sha256(path: Path) -> str:
@@ -453,3 +623,112 @@ def _expected_total(resp: httpx.Response, offset: int) -> int | None:
     if resp.status_code == 206:
         return offset + n
     return n
+
+
+def _manifest_role_total(spec: ModelSpec) -> int | None:
+    total = 0
+    for file in spec.files:
+        if file.size_bytes is None:
+            return None
+        total += file.size_bytes
+    return total
+
+
+def _download_base_urls() -> tuple[str, ...]:
+    """Return HuggingFace-compatible endpoint bases in failover order.
+
+    ``COGNIOS_MODEL_DOWNLOAD_ENDPOINT`` is the app-level override:
+    - ``auto`` (default): choose order from locale/timezone hints, then fail over
+    - ``china`` / ``mirror`` / ``hf-mirror``: hf-mirror first, official second
+    - ``huggingface`` / ``direct``: official first, mirror second
+    - URL value: use that endpoint only, for private proxies
+
+    ``HF_ENDPOINT`` is honoured as a lower-level override because many HF
+    users already set it in China. A custom endpoint is treated as explicit
+    and does not fall back to the official host to avoid accidental egress.
+    """
+    configured = os.getenv(DOWNLOAD_ENDPOINT_ENV)
+    if configured is not None and configured.strip():
+        return _configured_download_base_urls(configured)
+
+    hf_endpoint = os.getenv(HF_ENDPOINT_ENV)
+    if hf_endpoint is not None and hf_endpoint.strip():
+        return (_normalise_endpoint_base(hf_endpoint),)
+
+    if _looks_like_china_environment():
+        return (HF_CHINA_MIRROR_ENDPOINT, HF_DEFAULT_ENDPOINT)
+    return (HF_DEFAULT_ENDPOINT, HF_CHINA_MIRROR_ENDPOINT)
+
+
+def _configured_download_base_urls(value: str) -> tuple[str, ...]:
+    normalized = value.strip()
+    choice = normalized.lower()
+    if choice == "auto":
+        if _looks_like_china_environment():
+            return (HF_CHINA_MIRROR_ENDPOINT, HF_DEFAULT_ENDPOINT)
+        return (HF_DEFAULT_ENDPOINT, HF_CHINA_MIRROR_ENDPOINT)
+    if choice in {"china", "cn", "mirror", "hf-mirror"}:
+        return (HF_CHINA_MIRROR_ENDPOINT, HF_DEFAULT_ENDPOINT)
+    if choice in {"huggingface", "hf", "direct"}:
+        return (HF_DEFAULT_ENDPOINT, HF_CHINA_MIRROR_ENDPOINT)
+    return (_normalise_endpoint_base(normalized),)
+
+
+def _normalise_endpoint_base(value: str) -> str:
+    base = value.strip().rstrip("/")
+    if not base:
+        raise ValueError("download endpoint must not be empty")
+    if "://" not in base:
+        base = f"https://{base}"
+    return base
+
+
+def _looks_like_china_environment() -> bool:
+    probes = (
+        os.getenv("TZ", ""),
+        os.getenv("LANG", ""),
+        os.getenv("LC_ALL", ""),
+        os.getenv("LC_MESSAGES", ""),
+        os.getenv("LC_CTYPE", ""),
+    )
+    haystack = " ".join(probes).lower().replace("-", "_")
+    china_hints = (
+        "asia/shanghai",
+        "asia/beijing",
+        "asia/chongqing",
+        "asia/urumqi",
+        "asia/harbin",
+        "asia/kashgar",
+        "zh_cn",
+        "zh_hans_cn",
+    )
+    return any(hint in haystack for hint in china_hints)
+
+
+def _safe_download_host(url: str) -> str:
+    parsed = urlsplit(url)
+    return parsed.netloc or url
+
+
+def _repo_relative_path(repo: str) -> Path:
+    parts = tuple(repo.split("/"))
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError(f"invalid model repo path: {repo!r}")
+    return Path(*parts)
+
+
+def _same_legacy_content(source: Path, destination: Path) -> bool:
+    if source.is_symlink() or destination.is_symlink():
+        if not source.is_symlink() or not destination.is_symlink():
+            return False
+        return os.readlink(source) == os.readlink(destination)
+    if source.is_file() and destination.is_file():
+        if source.stat().st_size != destination.stat().st_size:
+            return False
+        return _file_sha256(source) == _file_sha256(destination)
+    return False
+
+
+def _remove_duplicate_legacy_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()

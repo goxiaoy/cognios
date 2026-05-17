@@ -3,6 +3,7 @@ import {
   Files,
   Home,
   MessageCircle,
+  Mic,
   Search,
   Settings,
 } from "lucide-react";
@@ -23,11 +24,15 @@ const NAV_ITEMS: NavItem[] = [
 
 export function AppSidebar({
   activeSection,
+  isVoiceNoteStarting = false,
   onSelect,
+  onNewVoiceNote,
   onOpenSearch,
 }: {
   activeSection: AppSection;
+  isVoiceNoteStarting?: boolean;
   onSelect(section: AppSection): void;
+  onNewVoiceNote(): void;
   onOpenSearch(): void;
 }) {
   const isSettingsActive = activeSection === "settings";
@@ -40,6 +45,16 @@ export function AppSidebar({
           <p className="app-brand-copy">Personal knowledge OS</p>
         </div>
       </div>
+
+      <button
+        className="app-voice-note-button"
+        disabled={isVoiceNoteStarting}
+        onClick={onNewVoiceNote}
+        type="button"
+      >
+        <Mic size={15} aria-hidden="true" />
+        <span>Voice Note</span>
+      </button>
 
       <div className="app-ops">
         <button

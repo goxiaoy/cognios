@@ -123,9 +123,10 @@ def get_node_content(node_id: str, request: Request) -> dict:
 
     Returns the raw user-visible chunk array (each entry tagged with
     its ``role`` — ``"body"`` for literal content, ``"summary"`` for
-    generated descriptions like image captions) plus a ``joined``
-    field. Internal ``"metadata"`` rows power title/path search and
-    are intentionally hidden from this preview endpoint.
+    generated descriptions like image captions, or
+    ``"voice_transcript"`` for voice-note transcript files) plus a
+    ``joined`` field. Internal ``"metadata"`` rows power title/path
+    search and are intentionally hidden from this preview endpoint.
 
     Chunks are sorted via ``_chunk_index_key``: body rows first (by
     numeric chunk-index ascending), then summary rows (also by
@@ -218,7 +219,8 @@ def _extract_artifact_content(
 def _chunk_index_key(row: dict) -> tuple[int, int, str]:
     """Sort key for chunk rows: ``(role_rank, chunk_index, id)``.
 
-    Body chunks (rank 0) sort before summary chunks (rank 1); within
+    Body chunks (rank 0) sort before voice transcript chunks (rank 1)
+    and summary chunks (rank 2); within
     each role, the integer chunk-index suffix gives stable order so
     a 12-chunk document doesn't end up as ``[0, 1, 10, 11, 2, ...]``
     lexicographically. The role column is the primary discriminator
@@ -236,7 +238,13 @@ def _chunk_index_key(row: dict) -> tuple[int, int, str]:
     except ValueError:
         idx = 0
     role = role_or_default(row)
-    rank = 2 if role == "metadata" else 1 if role == "summary" else 0
+    role_rank = {
+        "body": 0,
+        "voice_transcript": 1,
+        "summary": 2,
+        "metadata": 3,
+    }
+    rank = role_rank.get(role, 0)
     return (rank, idx, chunk_id)
 
 

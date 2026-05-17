@@ -6,3 +6,4 @@ pub mod notes;
 pub mod search;
 pub mod secure_storage;
 pub mod url_indexing;
+pub mod voice_notes;

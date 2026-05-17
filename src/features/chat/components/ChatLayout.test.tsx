@@ -325,7 +325,10 @@ describe("ChatLayout", () => {
 
     render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
 
-    expect(await screen.findByRole("button", { name: "事故复盘" })).toBeInTheDocument();
+    const sidebar = await screen.findByRole("complementary", { name: /chat sessions/i });
+    expect(within(sidebar).getByRole("button", { name: "事故复盘" })).toBeInTheDocument();
+    expect(within(sidebar).queryByRole("heading", { name: "Chats" })).not.toBeInTheDocument();
+    expect(within(sidebar).getByRole("button", { name: "Start new chat" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "New chat" })).toBeInTheDocument();
     expect(client.getSession).not.toHaveBeenCalled();
   });

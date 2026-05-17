@@ -5,14 +5,17 @@ import {
   presetOwnsRole,
 } from "../../features/settings/data/providerPresets";
 import type { SearchClient } from "../../features/search/types/search";
+import {
+  startModelDownloadsInPriorityOrder,
+} from "../../features/search/modelDownloadPriority";
 
 const POLL_INTERVAL_MS = 500;
 const POLL_TIMEOUT_MS = 30_000;
 
 /**
  * Headless model bootstrap. Walks every feature in settings and,
- * for each enabled feature bound to a local provider, fires
- * ``startModelDownload`` for any owned role whose model isn't
+ * for each enabled feature bound to a startup-eligible local provider,
+ * fires ``startModelDownload`` for any owned role whose model isn't
  * already on disk.
  *
  * Generic over the feature catalog rather than hardcoding
@@ -21,6 +24,10 @@ const POLL_TIMEOUT_MS = 30_000;
  * picked up here on the next app launch (FeatureRow fires the
  * same logic on the *bind* event; this hook covers cold-starts
  * where the binding was set in a prior session).
+ *
+ * Voice Notes is a required feature, so its Qwen ASR model joins the
+ * same startup queue as the embedding and reranker models. Priority
+ * ordering still keeps ``embedding`` before ``reranker`` before ASR.
  *
  * One-shot per app session: polls ``client.settings()`` until the
  * sidecar reports ``ready``, then reads ``modelsStatus`` once and
@@ -49,13 +56,6 @@ export function useAutoModelDownload(client: SearchClient): void {
           if (Date.now() < deadline) {
             timer = window.setTimeout(attempt, POLL_INTERVAL_MS);
           }
-          return;
-        }
-        // Honor any pre-Unit-13 ``firstRunSkipped`` flag so users
-        // who explicitly cancelled before don't suddenly get
-        // surprise downloads on the next launch.
-        if (env.data.firstRunSkipped) {
-          firedRef.current = true;
           return;
         }
         // Collect the set of provider ids any enabled feature is
@@ -99,22 +99,21 @@ export function useAutoModelDownload(client: SearchClient): void {
           }
         }
         firedRef.current = true;
-        // Fire all pending roles in parallel — each
-        // ``startModelDownload`` opens its own SSE stream that stays
-        // alive until the download completes. ``await``ing them in
+        const pendingByPriority = pendingRoles
+          .map((roleId) => allRoles[roleId])
+          .filter((role): role is NonNullable<typeof role> => Boolean(role));
+        // Fire all pending roles in priority order — embedding before
+        // reranker before ASR. Each ``startModelDownload`` opens its
+        // own SSE stream that stays alive until the download completes.
+        // ``await``ing each in
         // sequence would let only one stream open at a time, which
         // defeats the sidecar's concurrency cap (the manager wants
         // to see all N requests so it can park N-2 on the semaphore
-        // and emit ``queued`` frames). We don't await the resolved
-        // promises here — the dock surfaces progress via the live
+        // and emit ``queued`` frames). The sorted fire order decides
+        // which requests claim the first slots. We don't await the
+        // resolved promises here — the dock surfaces progress via the live
         // ``models/progress`` Tauri events.
-        for (const role of pendingRoles) {
-          void client.startModelDownload({ role }).catch(() => {
-            // The DownloadDock will display any persistent error
-            // via the polled models envelope — we don't surface
-            // anything from here.
-          });
-        }
+        void startModelDownloadsInPriorityOrder(client, pendingByPriority);
       } catch {
         if (!cancelled && Date.now() < deadline) {
           timer = window.setTimeout(attempt, POLL_INTERVAL_MS);

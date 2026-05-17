@@ -38,6 +38,7 @@ describe("FeaturesList", () => {
       "Semantic search",
       "Result reranking",
       "Image OCR",
+      "Voice notes",
     ]);
   });
 });

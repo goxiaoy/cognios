@@ -6,7 +6,8 @@
  * values to the sidecar's response would catch drift in CI.
  *
  * Capability vocabulary v1: ``embedding`` / ``reranking`` / ``vision``
- * / ``ocr`` / ``advanced-ocr`` / ``chat`` / ``web-search``.
+ * / ``ocr`` / ``advanced-ocr`` / ``audio-transcript`` / ``chat`` /
+ * ``web-search``.
  */
 
 export type ProviderType = "local" | "cloud";
@@ -17,6 +18,7 @@ export type Capability =
   | "vision"
   | "ocr"
   | "advanced-ocr"
+  | "audio-transcript"
   | "chat"
   | "web-search";
 
@@ -93,6 +95,17 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     // Prefix match — every ``advanced-ocr-*`` stage role belongs
     // to this provider.
     localRoleId: "advanced-ocr-",
+  },
+  {
+    providerId: "local-qwen-asr",
+    displayName: "Local Qwen ASR",
+    providerType: "local",
+    capabilities: ["audio-transcript"],
+    defaultModelPerCapability: {
+      "audio-transcript": "Qwen3-ASR-0.6B",
+    },
+    authKind: "none",
+    localRoleId: "audio-transcript",
   },
   {
     providerId: "local-ollama",
@@ -183,8 +196,8 @@ export function presetOwnsRole(preset: ProviderPreset, role: string): boolean {
 }
 
 /** UI display order for features. User-configurable capabilities
- * come first; built-in mandatory pipeline stages sit at the end so
- * the Settings page leads with choices the user can act on. */
+ * come first; mandatory pipeline stages sit at the end so the
+ * Settings page leads with choices the user can act on. */
 export interface FeatureMeta {
   featureId: string;
   displayName: string;
@@ -264,6 +277,15 @@ export const FEATURE_CATALOG: readonly FeatureMeta[] = [
       "Local PaddleOCR ships bundled with no download; cloud providers " +
       "transcribe via vision API.",
     capability: "ocr",
+    mandatory: true,
+    comingSoon: false,
+  },
+  {
+    featureId: "voice-notes",
+    displayName: "Voice notes",
+    description:
+      "Required. Transcribes meeting audio locally with Qwen3-ASR 0.6B. The model downloads automatically on startup.",
+    capability: "audio-transcript",
     mandatory: true,
     comingSoon: false,
   },

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -179,6 +180,124 @@ def test_non_forced_enqueue_new_content_version_requeues(tmp_path: Path):
         assert fetched is not None
         assert fetched.state == JobState.PENDING
         assert fetched.content_version == f"event:{second.isoformat()}"
+    finally:
+        queue.close()
+
+
+def test_note_content_version_includes_voice_transcript_file(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        node_id = "aaa"
+        notes_dir = tmp_path / "notes"
+        notes_dir.mkdir()
+        note_path = notes_dir / f"{node_id}.md"
+        note_path.write_text("## Summary\n\nInitial")
+        transcript_dir = tmp_path / "voice-notes" / node_id
+        transcript_dir.mkdir(parents=True)
+        transcript_path = transcript_dir / "transcript.md"
+        transcript_path.write_text("first transcript")
+
+        queue.enqueue(
+            node_id=node_id,
+            kind="note",
+            name="A",
+            absolute_content_path=str(note_path),
+        )
+        queue.claim_next()
+        queue.mark_indexed(node_id)
+        first_version = queue.get(node_id).content_version
+
+        transcript_path.write_text("second transcript")
+        queue.enqueue(
+            node_id=node_id,
+            kind="note",
+            name="A",
+            absolute_content_path=str(note_path),
+            force=False,
+        )
+
+        fetched = queue.get(node_id)
+        assert fetched is not None
+        assert fetched.state == JobState.PENDING
+        assert fetched.content_version != first_version
+        assert "voice_transcript:blake2b:" in (fetched.content_version or "")
+    finally:
+        queue.close()
+
+
+def test_content_path_metadata_update_does_not_requeue_when_hash_same(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        note_path = tmp_path / "note.md"
+        note_path.write_text("same content")
+        first = datetime(2026, 5, 8, tzinfo=timezone.utc)
+        second = datetime(2026, 5, 9, tzinfo=timezone.utc)
+
+        queue.enqueue(
+            node_id="aaa",
+            kind="note",
+            name="A",
+            absolute_content_path=str(note_path),
+            modified_at=first,
+        )
+        queue.claim_next()
+        queue.mark_indexed("aaa")
+        indexed = queue.get("aaa")
+        assert indexed is not None
+        first_version = indexed.content_version
+
+        queue.enqueue(
+            node_id="aaa",
+            kind="note",
+            name="A renamed",
+            absolute_content_path=str(note_path),
+            modified_at=second,
+            force=False,
+        )
+
+        fetched = queue.get("aaa")
+        assert fetched is not None
+        assert fetched.state == JobState.INDEXED
+        assert fetched.name == "A renamed"
+        assert fetched.content_version == first_version
+        assert (fetched.content_version or "").startswith("hash:blake2b:")
+    finally:
+        queue.close()
+
+
+def test_content_version_detects_content_change_even_when_mtime_is_unchanged(tmp_path: Path):
+    queue = open_queue(tmp_path / "queue.db")
+    try:
+        note_path = tmp_path / "note.md"
+        note_path.write_text("first content")
+        original_stat = note_path.stat()
+
+        queue.enqueue(
+            node_id="aaa",
+            kind="note",
+            name="A",
+            absolute_content_path=str(note_path),
+        )
+        queue.claim_next()
+        queue.mark_indexed("aaa")
+        indexed = queue.get("aaa")
+        assert indexed is not None
+        first_version = indexed.content_version
+
+        note_path.write_text("second content")
+        os.utime(note_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+        queue.enqueue(
+            node_id="aaa",
+            kind="note",
+            name="A",
+            absolute_content_path=str(note_path),
+            force=False,
+        )
+
+        fetched = queue.get("aaa")
+        assert fetched is not None
+        assert fetched.state == JobState.PENDING
+        assert fetched.content_version != first_version
     finally:
         queue.close()
 

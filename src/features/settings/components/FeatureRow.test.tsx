@@ -19,10 +19,10 @@ const RERANKING = FEATURE_CATALOG.find((m) => m.featureId === "result-reranking"
 const OCR = FEATURE_CATALOG.find((m) => m.featureId === "image-ocr")!;
 const CAPTIONING = FEATURE_CATALOG.find((m) => m.featureId === "image-captioning")!;
 const CHAT = FEATURE_CATALOG.find((m) => m.featureId === "chat")!;
+const VOICE_NOTES = FEATURE_CATALOG.find((m) => m.featureId === "voice-notes")!;
 
-// Synthetic optional/non-coming-soon feature for toggle-path tests —
-// every catalog entry is currently either mandatory or coming-soon, so
-// the toggle render path is exercised against a stand-in.
+// Synthetic optional/non-coming-soon feature for toggle-path tests
+// with a stable reranking-capable provider surface.
 const OPTIONAL_TEST_FEATURE = {
   featureId: "result-reranking",
   displayName: "Result reranking (test)",
@@ -97,6 +97,21 @@ describe("FeatureRow", () => {
       />
     );
     expect(screen.queryByText("Required")).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
+  });
+
+  it("hides the toggle for required voice notes and defaults to Qwen ASR", () => {
+    expect(VOICE_NOTES.mandatory).toBe(true);
+    render(
+      <FeatureRow
+        meta={VOICE_NOTES}
+        config={{ enabled: true, providerId: "local-qwen-asr" }}
+        settings={baseSettings()}
+        client={makeStubSearchClient()}
+        onSettingsChange={vi.fn()}
+      />
+    );
+    expect(screen.getByText("Qwen ASR")).toBeInTheDocument();
     expect(screen.queryByRole("switch")).toBeNull();
   });
 

@@ -11,6 +11,17 @@ pub fn save_note_content(
     notes_dir: &Path,
     emitter: &dyn Fn(VfsChangeEvent),
 ) -> Result<(), String> {
+    write_note_content(conn, note_id, body, notes_dir)?;
+    emit_note_saved(note_id, emitter);
+    Ok(())
+}
+
+pub fn write_note_content(
+    conn: &Connection,
+    note_id: &str,
+    body: &str,
+    notes_dir: &Path,
+) -> Result<(), String> {
     let note_path = notes_dir.join(format!("{note_id}.md"));
     std::fs::write(&note_path, body.as_bytes()).map_err(|error| error.to_string())?;
 
@@ -21,10 +32,13 @@ pub fn save_note_content(
     )
     .map_err(|error| error.to_string())?;
 
+    Ok(())
+}
+
+pub fn emit_note_saved(note_id: &str, emitter: &dyn Fn(VfsChangeEvent)) {
     emitter(VfsChangeEvent {
         mount_id: note_id.to_string(),
         reason: "node-saved".to_string(),
         ..Default::default()
     });
-    Ok(())
 }

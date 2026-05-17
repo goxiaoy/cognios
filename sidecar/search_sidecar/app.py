@@ -22,6 +22,7 @@ from .routes import models as models_routes
 from .routes import observability as observability_routes
 from .routes import search as search_routes
 from .routes import settings as settings_routes
+from .routes import voice_notes as voice_notes_routes
 from .observability import ObservabilityStore
 
 if TYPE_CHECKING:
@@ -83,6 +84,7 @@ def build_app(
     app.include_router(chat_routes.router)
     app.include_router(observability_routes.router)
     app.include_router(settings_routes.router)
+    app.include_router(voice_notes_routes.router)
 
     app.state.observability_store = observability_store or ObservabilityStore()
 

@@ -6,14 +6,18 @@ import {
   FileText,
   Folder,
   Globe,
-  HardDrive
+  HardDrive,
+  Mic2
 } from "lucide-react";
 import type { ExplorerNode } from "../types/explorer";
 
 const DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
-  year: "numeric"
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit"
 });
 const RELATIVE_DAY = 24 * 60 * 60 * 1000;
 
@@ -28,12 +32,12 @@ export function formatNodeKindLabel(node: ExplorerNode) {
     case "file":
       return fileBadgeFromName(node.name);
     case "note":
-      return "NOTE";
+      return node.isVoiceNote ? "VOICE NOTE" : "NOTE";
   }
 }
 
 export function formatInspectorKindLabel(node: ExplorerNode) {
-  return `${formatNodeKindLabel(node)} · ${node.name.toUpperCase()}`;
+  return formatNodeKindLabel(node);
 }
 
 export function formatNodeDate(value: string) {
@@ -100,7 +104,7 @@ export function nodeGlyph(node: ExplorerNode) {
     case "file":
       return glyphFromName(node.name);
     case "note":
-      return "¶";
+      return node.isVoiceNote ? "♬" : "¶";
   }
 }
 
@@ -140,7 +144,7 @@ export function nodeIconComponent(node: ExplorerNode): React.ComponentType<{ siz
     case "folder": return Folder;
     case "mount":  return HardDrive;
     case "url":       return Globe;
-    case "note":      return FileText;
+    case "note":      return node.isVoiceNote ? Mic2 : FileText;
     case "file": {
       const ext = extensionOf(node.name);
       if (IMAGE_EXTENSIONS.has(ext))    return FileImage;

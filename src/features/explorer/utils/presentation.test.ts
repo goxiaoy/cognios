@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatCompactNodeMeta,
+  formatNodeDate,
   formatTreeDisclosurePath,
 } from "./presentation";
 import type { ExplorerNode } from "../types/explorer";
@@ -94,5 +95,9 @@ describe("presentation compact tree helpers", () => {
         })
       )
     ).toBe("");
+  });
+
+  it("formats node dates with second precision", () => {
+    expect(formatNodeDate("2026-04-26T10:11:12")).toMatch(/10[:：]11[:：]12/);
   });
 });

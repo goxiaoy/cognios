@@ -17,8 +17,18 @@ pub struct CreateFolderInput {
 pub fn list_snapshot(conn: &Connection) -> rusqlite::Result<ExplorerSnapshotDto> {
     let mut stmt = conn.prepare(
         "
-        SELECT id, parent_id, name, kind, state, created_at, updated_at, size_bytes
+        SELECT
+          nodes.id,
+          nodes.parent_id,
+          nodes.name,
+          nodes.kind,
+          nodes.state,
+          nodes.created_at,
+          nodes.updated_at,
+          nodes.size_bytes,
+          voice_notes.note_id IS NOT NULL AS is_voice_note
         FROM nodes
+        LEFT JOIN voice_notes ON voice_notes.note_id = nodes.id
         ORDER BY parent_id IS NOT NULL, name COLLATE NOCASE ASC
         ",
     )?;
@@ -34,6 +44,7 @@ pub fn list_snapshot(conn: &Connection) -> rusqlite::Result<ExplorerSnapshotDto>
                 created_at: row.get(5)?,
                 updated_at: row.get(6)?,
                 size_bytes: row.get(7)?,
+                is_voice_note: row.get::<_, i64>(8)? != 0,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -221,6 +232,7 @@ mod tests {
             created_at: "2026-05-09T00:00:00Z".to_string(),
             updated_at: "2026-05-09T00:00:00Z".to_string(),
             size_bytes: 0,
+            is_voice_note: false,
         }
     }
 

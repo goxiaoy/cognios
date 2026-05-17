@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import http.server
+import os
 import socket
 import threading
 from contextlib import contextmanager
@@ -129,8 +130,15 @@ def _make_spec(role: str, files: dict[str, bytes]) -> ModelSpec:
         role=role,
         repo="fixture/repo",
         commit="abc123",
-        files=tuple(FileSpec(name=name, sha256=_sha256(body)) for name, body in files.items()),
+        files=tuple(
+            FileSpec(name=name, sha256=_sha256(body), size_bytes=len(body))
+            for name, body in files.items()
+        ),
     )
+
+
+def _repo_dir(storage_dir: Path, spec: ModelSpec) -> Path:
+    return storage_dir / "models" / Path(*spec.repo.split("/"))
 
 
 def _make_manager(
@@ -192,6 +200,58 @@ async def test_download_happy_path(tmp_path: Path):
     assert not list((manager.role_dir("embedding") / "tmp").iterdir())
 
 
+async def test_role_dir_uses_manifest_repo_path(tmp_path: Path):
+    spec = _make_spec("audio-transcript", {"a.bin": b"x"})
+    manager = ModelManager(
+        storage_dir=tmp_path,
+        manifest={"audio-transcript": spec},
+    )
+
+    assert manager.role_dir("audio-transcript") == (
+        tmp_path / "models" / "fixture" / "repo"
+    )
+
+
+async def test_constructor_migrates_legacy_role_dir_to_repo_path(
+    tmp_path: Path,
+):
+    spec = _make_spec("embedding", {"a.bin": b"x"})
+    legacy_dir = tmp_path / "search" / "models" / "embedding"
+    commit_dir = legacy_dir / "abc123"
+    commit_dir.mkdir(parents=True, exist_ok=True)
+    (commit_dir / "a.bin").write_bytes(b"x")
+    os.symlink("abc123", legacy_dir / "current")
+
+    manager = ModelManager(storage_dir=tmp_path, manifest={"embedding": spec})
+
+    migrated_dir = tmp_path / "models" / "fixture" / "repo"
+    assert manager.role_dir("embedding") == migrated_dir
+    assert not legacy_dir.exists()
+    assert (migrated_dir / "abc123" / "a.bin").read_bytes() == b"x"
+    current = migrated_dir / "current"
+    assert current.is_symlink()
+    assert os.readlink(current) == "abc123"
+
+
+async def test_download_progress_reports_role_total_across_files(tmp_path: Path):
+    file_a = b"a" * 1024
+    file_b = b"b" * 2048
+    served = {"/a.bin": file_a, "/b.bin": file_b}
+    spec = _make_spec("embedding", {"a.bin": file_a, "b.bin": file_b})
+
+    with fixture_server(served) as base_url:
+        manager = _make_manager(tmp_path, spec, base_url=base_url)
+        events = await _drain(manager.download("embedding"))
+
+    progress_events = [event for event in events if event.state == "downloading"]
+    assert progress_events, events
+    assert {event.bytes_total for event in progress_events} == {
+        len(file_a) + len(file_b)
+    }
+    assert progress_events[-1].bytes_downloaded == len(file_a) + len(file_b)
+    assert progress_events[-1].bytes_total == len(file_a) + len(file_b)
+
+
 async def test_download_404_emits_error_event(tmp_path: Path):
     spec = _make_spec("embedding", {"a.bin": b"x"})
     with fixture_server({}, not_found={"/a.bin"}) as base_url:
@@ -234,7 +294,7 @@ async def test_download_resumes_from_existing_partial(tmp_path: Path):
 
     # Pre-seed a partial with the first half
     half = full[: len(full) // 2]
-    manager_dir = tmp_path / "search" / "models" / "embedding" / "tmp"
+    manager_dir = _repo_dir(tmp_path, spec) / "tmp"
     manager_dir.mkdir(parents=True, exist_ok=True)
     (manager_dir / "a.bin.partial").write_bytes(half)
 
@@ -248,6 +308,37 @@ async def test_download_resumes_from_existing_partial(tmp_path: Path):
     assert final.read_bytes() == full
 
 
+async def test_download_falls_back_to_next_source_and_keeps_partial(
+    tmp_path: Path, monkeypatch
+):
+    full = b"abcdefghij" * 1000
+    spec = _make_spec("embedding", {"a.bin": full})
+
+    half = full[: len(full) // 2]
+    manager_dir = _repo_dir(tmp_path, spec) / "tmp"
+    manager_dir.mkdir(parents=True, exist_ok=True)
+    (manager_dir / "a.bin.partial").write_bytes(half)
+
+    with fixture_server(
+        {"/mirror/a.bin": full},
+        not_found={"/direct/a.bin"},
+    ) as base_url:
+        manager = ModelManager(storage_dir=tmp_path, manifest={"embedding": spec})
+        monkeypatch.setattr(
+            manager,
+            "_build_urls",
+            lambda _spec, _file_name: (
+                f"{base_url}/direct/a.bin",
+                f"{base_url}/mirror/a.bin",
+            ),
+        )
+        events = await _drain(manager.download("embedding"))
+
+    assert events[-1].state == "ready", events
+    final = manager.commit_dir("embedding", "abc123") / "a.bin"
+    assert final.read_bytes() == full
+
+
 async def test_download_handles_server_ignoring_range(tmp_path: Path):
     """If the server returns 200 instead of 206, manager should restart
     from byte 0 (overwrite the partial)."""
@@ -256,7 +347,7 @@ async def test_download_handles_server_ignoring_range(tmp_path: Path):
     spec = _make_spec("embedding", {"a.bin": full})
 
     # Partial with garbage that does not match the actual file
-    manager_dir = tmp_path / "search" / "models" / "embedding" / "tmp"
+    manager_dir = _repo_dir(tmp_path, spec) / "tmp"
     manager_dir.mkdir(parents=True, exist_ok=True)
     (manager_dir / "a.bin.partial").write_bytes(b"garbage" * 30)
 
@@ -274,9 +365,7 @@ async def test_skips_download_when_final_already_verified(tmp_path: Path):
     body = b"already here"
     spec = _make_spec("embedding", {"a.bin": body})
     # Pre-place the final file at the commit dir
-    final = (
-        tmp_path / "search" / "models" / "embedding" / "abc123" / "a.bin"
-    )
+    final = _repo_dir(tmp_path, spec) / "abc123" / "a.bin"
     final.parent.mkdir(parents=True, exist_ok=True)
     final.write_bytes(body)
 
@@ -355,13 +444,13 @@ async def test_transient_download_failure_is_retried(
         real = m._download_file
         attempts = {"n": 0}
 
-        async def flaky_download_file(spec_, file_):
+        async def flaky_download_file(spec_, file_, **kwargs):
             attempts["n"] += 1
             if attempts["n"] <= 2:
                 raise manager_mod.DownloadFailed(
                     f"simulated transport failure (attempt {attempts['n']})"
                 )
-            async for ev in real(spec_, file_):
+            async for ev in real(spec_, file_, **kwargs):
                 yield ev
 
         monkeypatch.setattr(m, "_download_file", flaky_download_file)
@@ -413,7 +502,7 @@ async def test_concurrent_downloads_capped_at_max(tmp_path: Path):
     for role, body in bodies.items():
         specs[role] = ModelSpec(
             role=role,
-            repo="fixture/repo",
+            repo=f"fixture/{role}",
             commit="abc123",
             files=(FileSpec(name="a.bin", sha256=_sha256(body)),),
         )
@@ -424,16 +513,13 @@ async def test_concurrent_downloads_capped_at_max(tmp_path: Path):
             storage_dir=tmp_path,
             manifest=specs,
             url_override={
-                f"fixture/repo@abc123/a.bin": f"{base_url}/role-0",
+                f"fixture/{role}@abc123/a.bin": f"{base_url}/{role}"
+                for role in bodies
             },
         )
         # Force the cap low so the test is deterministic against
         # tiny payloads that complete near-instantly.
         manager._download_slot = _asyncio.Semaphore(2)
-        # Override URL per-role so each role hits its own served body.
-        manager._url_override = {
-            f"fixture/repo@abc123/a.bin": f"{base_url}/role-0",
-        }
 
         # Track how many downloads are simultaneously inside the
         # semaphore. The downloader's first frame fires immediately
@@ -456,16 +542,7 @@ async def test_concurrent_downloads_capped_at_max(tmp_path: Path):
                         active_count -= 1
             return events
 
-        # Re-point each role's URL at the per-role served path.
-        manager._url_override = {
-            f"fixture/repo@abc123/a.bin": f"{base_url}/role-0",
-            **{
-                f"fixture/repo@abc123/a.bin@{role}": f"{base_url}/{role}"
-                for role in bodies
-            },
-        }
-        # Simpler: same URL per role works because each role's spec
-        # is identical here. Drive 3 concurrent downloads.
+        # Drive 3 concurrent downloads.
         results = await _asyncio.gather(
             *[run_one(role) for role in bodies]
         )
@@ -484,3 +561,42 @@ async def test_concurrent_downloads_capped_at_max(tmp_path: Path):
             for role_events in results
         )
         assert queued_seen, "expected at least one ``queued`` frame from the third caller"
+
+
+def test_download_base_urls_auto_prefers_china_mirror_for_china_locale(
+    monkeypatch,
+):
+    from search_sidecar.models import manager as manager_mod
+
+    monkeypatch.delenv(manager_mod.DOWNLOAD_ENDPOINT_ENV, raising=False)
+    monkeypatch.delenv(manager_mod.HF_ENDPOINT_ENV, raising=False)
+    monkeypatch.setenv("TZ", "Asia/Shanghai")
+    monkeypatch.setenv("LANG", "zh_CN.UTF-8")
+
+    assert manager_mod._download_base_urls() == (
+        manager_mod.HF_CHINA_MIRROR_ENDPOINT,
+        manager_mod.HF_DEFAULT_ENDPOINT,
+    )
+
+
+def test_download_base_urls_honours_explicit_hf_endpoint(monkeypatch):
+    from search_sidecar.models import manager as manager_mod
+
+    monkeypatch.delenv(manager_mod.DOWNLOAD_ENDPOINT_ENV, raising=False)
+    monkeypatch.setenv(manager_mod.HF_ENDPOINT_ENV, "https://hf-mirror.com/")
+
+    assert manager_mod._download_base_urls() == ("https://hf-mirror.com",)
+
+
+def test_download_base_urls_honours_app_endpoint_modes(monkeypatch):
+    from search_sidecar.models import manager as manager_mod
+
+    monkeypatch.delenv(manager_mod.HF_ENDPOINT_ENV, raising=False)
+    monkeypatch.setenv(manager_mod.DOWNLOAD_ENDPOINT_ENV, "china")
+    assert manager_mod._download_base_urls() == (
+        manager_mod.HF_CHINA_MIRROR_ENDPOINT,
+        manager_mod.HF_DEFAULT_ENDPOINT,
+    )
+
+    monkeypatch.setenv(manager_mod.DOWNLOAD_ENDPOINT_ENV, "https://models.example.test/hf/")
+    assert manager_mod._download_base_urls() == ("https://models.example.test/hf",)

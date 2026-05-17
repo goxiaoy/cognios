@@ -12,7 +12,7 @@ deps; both share one switch).
 
 A typical model directory layout (matches the per-role tree
 :class:`ModelManager` writes under
-``<storage>/search/models/reranker/<commit>/``)::
+``<storage>/models/onnx-community/gte-multilingual-reranker-base/<commit>/``)::
 
     <model_dir>/
       onnx/

@@ -624,10 +624,9 @@ export function ChatLayout({
       {hasSessionHistory ? (
         <aside className="chat-session-list" aria-label="Chat sessions">
           <div className="chat-section-head chat-sidebar-head">
-            <h2>Chats</h2>
             <button
               type="button"
-              className="icon-button"
+              className="icon-button chat-new-session-button"
               onClick={createNewSession}
               aria-label="Start new chat"
               disabled={busy || currentChatIsEmpty}

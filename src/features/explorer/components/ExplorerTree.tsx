@@ -7,6 +7,7 @@ interface ExplorerTreeProps {
   nodes: ExplorerNode[];
   pendingInlineRenameId: string | null;
   onDelete(nodeId: string, cascade: boolean): void;
+  onDeleteMany(nodeIds: string[]): void;
   onOpenUrl(nodeId: string): void;
   onRevealInFileManager(nodeId: string): void;
   onRetry(nodeId: string): void;
@@ -23,6 +24,7 @@ export function ExplorerTree({
   nodes,
   pendingInlineRenameId,
   onDelete,
+  onDeleteMany,
   onOpenUrl,
   onRevealInFileManager,
   onRetry,
@@ -48,6 +50,7 @@ export function ExplorerTree({
             node={node}
             pendingInlineRenameId={pendingInlineRenameId}
             onDelete={onDelete}
+            onDeleteMany={onDeleteMany}
             onOpenUrl={onOpenUrl}
             onRevealInFileManager={onRevealInFileManager}
             onRetry={onRetry}
@@ -69,6 +72,7 @@ function TreeBranch({
   node,
   pendingInlineRenameId,
   onDelete,
+  onDeleteMany,
   onOpenUrl,
   onRevealInFileManager,
   onRetry,
@@ -84,6 +88,7 @@ function TreeBranch({
   node: ExplorerNode;
   pendingInlineRenameId: string | null;
   onDelete(nodeId: string, cascade: boolean): void;
+  onDeleteMany(nodeIds: string[]): void;
   onOpenUrl(nodeId: string): void;
   onRevealInFileManager(nodeId: string): void;
   onRetry(nodeId: string): void;
@@ -104,8 +109,10 @@ function TreeBranch({
         isExpanded={isExpanded}
         isInlineRenaming={node.id === pendingInlineRenameId}
         isSelected={selectedSet.has(node.id)}
+        selectedIds={[...selectedSet]}
         node={node}
         onDelete={onDelete}
+        onDeleteMany={onDeleteMany}
         onOpenUrl={onOpenUrl}
         onRevealInFileManager={onRevealInFileManager}
         onInlineRename={onInlineRename}
@@ -126,6 +133,7 @@ function TreeBranch({
               node={child}
               pendingInlineRenameId={pendingInlineRenameId}
               onDelete={onDelete}
+              onDeleteMany={onDeleteMany}
               onOpenUrl={onOpenUrl}
               onRevealInFileManager={onRevealInFileManager}
               onRetry={onRetry}
