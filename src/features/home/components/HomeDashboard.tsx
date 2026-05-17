@@ -1,8 +1,20 @@
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import {
   Activity,
   Boxes,
   Database,
+  FileSearch,
+  FileText,
+  FolderOpen,
+  MessageCircle,
+  Mic2,
+  X,
 } from "lucide-react";
 import {
   Bar,
@@ -21,10 +33,26 @@ import type {
   LatencyTrendPoint,
   ModelsStatus,
   SearchObservability,
+  SearchSettings,
   SidecarEnvelope,
 } from "../../../lib/contracts/search";
+import {
+  CHAT_PROVIDER_PRESETS,
+  ChatProviderSetup,
+  DEFAULT_CHAT_PROVIDER_ID,
+} from "../../chat/components/ChatProviderSetup";
+import type { ExplorerNode } from "../../explorer/types/explorer";
 import type { SearchClient } from "../../search/types/search";
+import { FeatureRow } from "../../settings/components/FeatureRow";
+import { FEATURE_CATALOG } from "../../settings/data/providerPresets";
 import { useSearchSubsystemStatus } from "../../settings/hooks/useSearchSubsystemStatus";
+import {
+  advancedOcrPromptFingerprint,
+  chatPromptFingerprint,
+  isWorkspaceEmpty,
+  shouldPromptForAdvancedOcr,
+  shouldPromptForChatProvider,
+} from "../utils/onboardingSignals";
 
 const POLL_INTERVAL_MS = 5_000;
 const METRICS_WINDOW_DAYS = 30;
@@ -53,8 +81,25 @@ const TOKEN_SERIES_COLORS = [
 const CHART_ACCENT = "var(--accent)";
 const CHART_MUTED = "var(--muted)";
 const CHART_LINE = "var(--line)";
+const ADVANCED_OCR_META = FEATURE_CATALOG.find(
+  (meta) => meta.featureId === "advanced-ocr"
+);
 
-export function HomeDashboard({ client }: { client: SearchClient }) {
+interface HomeDashboardProps {
+  client: SearchClient;
+  workspaceNodes?: ExplorerNode[];
+  onCreateNote?(): void;
+  onMountFolder?(): void;
+  onStartVoiceNote?(): void;
+}
+
+export function HomeDashboard({
+  client,
+  workspaceNodes,
+  onCreateNote,
+  onMountFolder,
+  onStartVoiceNote,
+}: HomeDashboardProps) {
   const { models, indexing } = useSearchSubsystemStatus(client);
   const [recentObservability, setRecentObservability] =
     useState<SidecarEnvelope<SearchObservability> | null>(null);
@@ -66,6 +111,14 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
     useState<LatencyMetricKey>("p99Ms");
   const [latencyCategory, setLatencyCategory] =
     useState<LatencyCategoryKey | null>(null);
+  const [settings, setSettings] = useState<SearchSettings | null>(null);
+  const [dismissedPromptFingerprints, setDismissedPromptFingerprints] =
+    useState<Record<string, string>>({});
+  const [chatSetupOpen, setChatSetupOpen] = useState(false);
+  const [advancedOcrSetupOpen, setAdvancedOcrSetupOpen] = useState(false);
+  const [selectedChatProviderId, setSelectedChatProviderId] = useState(
+    DEFAULT_CHAT_PROVIDER_ID
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -109,6 +162,45 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
     };
   }, [client, recentIndexDays]);
 
+  const workspaceIsEmpty = workspaceNodes
+    ? isWorkspaceEmpty(workspaceNodes)
+    : false;
+
+  useEffect(() => {
+    if (!workspaceNodes || workspaceIsEmpty) {
+      setSettings(null);
+      return;
+    }
+
+    let cancelled = false;
+    void client
+      .settings()
+      .then((env) => {
+        if (!cancelled && env.state === "ready" && env.data) {
+          setSettings(env.data);
+        } else if (!cancelled) {
+          setSettings(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setSettings(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, workspaceIsEmpty, workspaceNodes]);
+
+  useEffect(() => {
+    const providerId = settings?.features.chat?.providerId;
+    if (
+      providerId &&
+      CHAT_PROVIDER_PRESETS.some((preset) => preset.providerId === providerId)
+    ) {
+      setSelectedChatProviderId(providerId);
+    }
+  }, [settings]);
+
   const indexData = readyData(indexing);
   const modelData = readyData(models);
   const recentObservabilityData = readyData(recentObservability);
@@ -119,8 +211,33 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
   const recentLoading = recentObservability === null;
   const metricsLoading = metricsObservability === null;
 
+  if (workspaceIsEmpty) {
+    return (
+      <section className="home-dashboard" aria-label="Home onboarding">
+        <EmptyNodeLaunchpad
+          onCreateNote={onCreateNote}
+          onMountFolder={onMountFolder}
+          onStartVoiceNote={onStartVoiceNote}
+        />
+      </section>
+    );
+  }
+
   return (
     <section className="home-dashboard" aria-label="Home statistics">
+      {workspaceNodes ? (
+        <HomeSecondaryPrompts
+          dismissedPromptFingerprints={dismissedPromptFingerprints}
+          nodes={workspaceNodes}
+          onDismiss={(key, fingerprint) =>
+            dismissPrompt(key, fingerprint, setDismissedPromptFingerprints)
+          }
+          onSetUpAdvancedOcr={() => setAdvancedOcrSetupOpen(true)}
+          onSetUpChat={() => setChatSetupOpen(true)}
+          settings={settings}
+        />
+      ) : null}
+
       <section className="home-kpi-grid" aria-label="Current status">
         <StatTile
           icon={<Database size={17} aria-hidden="true" />}
@@ -221,8 +338,282 @@ export function HomeDashboard({ client }: { client: SearchClient }) {
           <TokenUsage observability={metricsObservabilityData} loading={metricsLoading} />
         </section>
       </div>
+
+      {chatSetupOpen && settings ? (
+        <HomeSetupModal title="Set up Chat" onClose={() => setChatSetupOpen(false)}>
+          <ChatProviderSetup
+            client={client}
+            providerStatus={null}
+            selectedProviderId={selectedChatProviderId}
+            settings={settings}
+            onSelectedProviderChange={setSelectedChatProviderId}
+            onSettingsChange={setSettings}
+          />
+        </HomeSetupModal>
+      ) : null}
+
+      {advancedOcrSetupOpen && settings && ADVANCED_OCR_META ? (
+        <HomeSetupModal
+          title="Set up Advanced OCR"
+          onClose={() => setAdvancedOcrSetupOpen(false)}
+        >
+          <ul className="home-feature-setup-list">
+            <FeatureRow
+              client={client}
+              config={settings.features["advanced-ocr"]}
+              meta={ADVANCED_OCR_META}
+              settings={settings}
+              onSettingsChange={setSettings}
+            />
+          </ul>
+        </HomeSetupModal>
+      ) : null}
     </section>
   );
+}
+
+function EmptyNodeLaunchpad({
+  onCreateNote,
+  onMountFolder,
+  onStartVoiceNote,
+}: {
+  onCreateNote?(): void;
+  onMountFolder?(): void;
+  onStartVoiceNote?(): void;
+}) {
+  return (
+    <section className="home-onboarding" aria-label="Create first content">
+      <div className="home-onboarding-copy">
+        <p className="home-onboarding-kicker">Start with local content</p>
+        <h2>Build your first memory node</h2>
+        <p>
+          Add a folder, write a note, or capture a voice note. You can still
+          use the rest of CogniOS while this workspace is empty.
+        </p>
+      </div>
+      <div className="home-onboarding-actions" aria-label="First content actions">
+        <button
+          type="button"
+          className="home-onboarding-action"
+          onClick={onMountFolder}
+        >
+          <FolderOpen size={18} aria-hidden="true" />
+          <span>
+            <strong>Mount Folder</strong>
+            <small>Link local files</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          className="home-onboarding-action"
+          onClick={onCreateNote}
+        >
+          <FileText size={18} aria-hidden="true" />
+          <span>
+            <strong>Create Note</strong>
+            <small>Write markdown locally</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          className="home-onboarding-action"
+          onClick={onStartVoiceNote}
+        >
+          <Mic2 size={18} aria-hidden="true" />
+          <span>
+            <strong>Voice Note</strong>
+            <small>Capture a meeting or thought</small>
+          </span>
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function HomeSecondaryPrompts({
+  dismissedPromptFingerprints,
+  nodes,
+  onDismiss,
+  onSetUpAdvancedOcr,
+  onSetUpChat,
+  settings,
+}: {
+  dismissedPromptFingerprints: Record<string, string>;
+  nodes: ExplorerNode[];
+  onDismiss(key: string, fingerprint: string): void;
+  onSetUpAdvancedOcr(): void;
+  onSetUpChat(): void;
+  settings: SearchSettings | null;
+}) {
+  const chatFingerprint = chatPromptFingerprint(settings);
+  const ocrFingerprint = advancedOcrPromptFingerprint(nodes, settings);
+  const showChat =
+    shouldPromptForChatProvider(settings) &&
+    !isPromptDismissed("chat-provider", chatFingerprint, dismissedPromptFingerprints);
+  const showAdvancedOcr =
+    shouldPromptForAdvancedOcr(nodes, settings) &&
+    !isPromptDismissed("advanced-ocr", ocrFingerprint, dismissedPromptFingerprints);
+
+  if (!showChat && !showAdvancedOcr) return null;
+
+  return (
+    <section className="home-secondary-prompts" aria-label="Next steps">
+      {showChat ? (
+        <SecondaryPrompt
+          actionLabel="Set up Chat"
+          copy="Chat needs a configured provider before it can answer with your local context."
+          fingerprint={chatFingerprint}
+          icon={<MessageCircle size={16} aria-hidden="true" />}
+          promptKey="chat-provider"
+          title="Configure Chat provider"
+          onAction={onSetUpChat}
+          onDismiss={onDismiss}
+        />
+      ) : null}
+      {showAdvancedOcr ? (
+        <SecondaryPrompt
+          actionLabel="Set up OCR"
+          copy="Advanced OCR can improve extraction for PDFs and images, with extra model download and indexing cost."
+          fingerprint={ocrFingerprint}
+          icon={<FileSearch size={16} aria-hidden="true" />}
+          promptKey="advanced-ocr"
+          title="Improve OCR for documents"
+          onAction={onSetUpAdvancedOcr}
+          onDismiss={onDismiss}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function SecondaryPrompt({
+  actionLabel,
+  copy,
+  fingerprint,
+  icon,
+  promptKey,
+  title,
+  onAction,
+  onDismiss,
+}: {
+  actionLabel: string;
+  copy: string;
+  fingerprint: string;
+  icon: ReactNode;
+  promptKey: string;
+  title: string;
+  onAction?(): void;
+  onDismiss(key: string, fingerprint: string): void;
+}) {
+  return (
+    <article className="home-secondary-prompt">
+      <div className="home-secondary-prompt-icon">{icon}</div>
+      <div className="home-secondary-prompt-copy">
+        <h3>{title}</h3>
+        <p>{copy}</p>
+      </div>
+      <div className="home-secondary-prompt-actions">
+        <button
+          type="button"
+          className="home-secondary-prompt-action"
+          onClick={onAction}
+        >
+          {actionLabel}
+        </button>
+        <button
+          type="button"
+          className="home-secondary-prompt-dismiss"
+          aria-label={`Dismiss ${title}`}
+          onClick={() => onDismiss(promptKey, fingerprint)}
+        >
+          <X size={14} aria-hidden="true" />
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function HomeSetupModal({
+  children,
+  title,
+  onClose,
+}: {
+  children: ReactNode;
+  title: string;
+  onClose(): void;
+}) {
+  return (
+    <div
+      className="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="modal home-setup-modal">
+        <header className="modal-header">
+          <div>
+            <p className="eyebrow">Home setup</p>
+            <h2 className="modal-title">{title}</h2>
+          </div>
+          <button
+            aria-label="Close"
+            className="modal-close"
+            onClick={onClose}
+            type="button"
+          >
+            x
+          </button>
+        </header>
+        <div className="modal-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function isPromptDismissed(
+  key: string,
+  fingerprint: string,
+  dismissedPromptFingerprints: Record<string, string>
+): boolean {
+  if (dismissedPromptFingerprints[key] === fingerprint) return true;
+  return readDismissedPromptFingerprint(key) === fingerprint;
+}
+
+function dismissPrompt(
+  key: string,
+  fingerprint: string,
+  setDismissedPromptFingerprints: Dispatch<
+    SetStateAction<Record<string, string>>
+  >
+) {
+  writeDismissedPromptFingerprint(key, fingerprint);
+  setDismissedPromptFingerprints((current) => ({
+    ...current,
+    [key]: fingerprint,
+  }));
+}
+
+function dismissedPromptStorageKey(key: string): string {
+  return `cognios.homeOnboarding.dismissed.${key}`;
+}
+
+function readDismissedPromptFingerprint(key: string): string | null {
+  try {
+    return window.localStorage.getItem(dismissedPromptStorageKey(key));
+  } catch {
+    return null;
+  }
+}
+
+function writeDismissedPromptFingerprint(key: string, fingerprint: string) {
+  try {
+    window.localStorage.setItem(dismissedPromptStorageKey(key), fingerprint);
+  } catch {
+    // localStorage may be unavailable in privacy modes; dismissal can stay session-only.
+  }
 }
 
 function StatTile({

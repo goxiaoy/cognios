@@ -644,6 +644,44 @@ pub fn delete_voice_note_source_audio(
         .ok_or_else(|| "voice note metadata missing after source audio deletion".to_string())
 }
 
+pub fn delete_voice_note_artifacts(
+    conn: &Connection,
+    note_id: &str,
+    notes_dir: &Path,
+) -> Result<(), String> {
+    let paths = conn
+        .query_row(
+            "
+            SELECT source_audio_path, transcript_path
+            FROM voice_notes
+            WHERE note_id = ?1
+            ",
+            [note_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>("source_audio_path")?,
+                    row.get::<_, Option<String>>("transcript_path")?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+
+    if let Some((source_audio_path, transcript_path)) = paths {
+        remove_file_if_exists(source_audio_path.as_deref())?;
+        remove_file_if_exists(transcript_path.as_deref())?;
+    }
+
+    if let Some(storage_dir) = notes_dir.parent() {
+        let artifact_dir = voice_note_audio_dir(storage_dir, note_id)?;
+        if artifact_dir.exists() {
+            fs::remove_dir_all(&artifact_dir).map_err(|error| error.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
 fn render_completed_voice_note_body(
     existing_body: &str,
     input: &CompleteVoiceNoteTranscriptInput,
@@ -965,6 +1003,17 @@ pub fn mark_voice_note_capture_failed(conn: &Connection, note_id: &str) -> Resul
     )
     .map(|_| ())
     .map_err(|error| error.to_string())
+}
+
+fn remove_file_if_exists(path: Option<&str>) -> Result<(), String> {
+    let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) else {
+        return Ok(());
+    };
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 fn format_duration(duration_ms: u64) -> String {

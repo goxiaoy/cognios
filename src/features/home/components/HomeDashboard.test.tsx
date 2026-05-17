@@ -12,8 +12,10 @@ import type {
   IndexStatus,
   ModelsStatus,
   SearchObservability,
+  SearchSettings,
   SidecarEnvelope,
 } from "../../../lib/contracts/search";
+import type { ExplorerNode } from "../../explorer/types/explorer";
 import type { SearchClient } from "../../search/types/search";
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -22,9 +24,11 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 afterEach(() => {
   cleanup();
+  window.localStorage?.removeItem?.("cognios.homeOnboarding.dismissed.chat-provider");
+  window.localStorage?.removeItem?.("cognios.homeOnboarding.dismissed.advanced-ocr");
 });
 
-function makeClient(): SearchClient {
+function makeClient(settings = makeSettings()): SearchClient {
   return {
     search: vi.fn(),
     indexStatus: vi.fn().mockResolvedValue({
@@ -111,14 +115,7 @@ function makeClient(): SearchClient {
     startModelDownload: vi.fn(),
     settings: vi.fn().mockResolvedValue({
       state: "ready",
-      data: {
-        version: 1,
-        providers: { "local-gte": { providerId: "local-gte", enabled: true, modelPerCapability: {} } },
-        features: {},
-        cloudConsentAcked: [],
-        firstRunSkipped: false,
-        needsRestart: false,
-      },
+      data: settings,
     }),
     updateSettings: vi.fn(),
     restartSidecar: vi.fn(),
@@ -127,6 +124,48 @@ function makeClient(): SearchClient {
     hasProviderSecret: vi.fn(),
     deleteProviderSecret: vi.fn(),
     testChatProvider: vi.fn(),
+  };
+}
+
+function makeSettings(overrides: Partial<SearchSettings> = {}): SearchSettings {
+  return {
+    version: 1,
+    providers: {
+      "local-ollama": {
+        providerId: "local-ollama",
+        enabled: true,
+        baseUrl: "http://127.0.0.1:11434",
+        modelPerCapability: {},
+      },
+      "local-paddleocr-advanced": {
+        providerId: "local-paddleocr-advanced",
+        enabled: true,
+        modelPerCapability: {},
+      },
+    },
+    features: {
+      chat: { enabled: true, providerId: "local-ollama" },
+      "advanced-ocr": { enabled: false, providerId: null },
+    },
+    cloudConsentAcked: [],
+    firstRunSkipped: false,
+    needsRestart: false,
+    ...overrides,
+  };
+}
+
+function node(overrides: Partial<ExplorerNode> = {}): ExplorerNode {
+  return {
+    id: "node-1",
+    parentId: null,
+    name: "note.md",
+    kind: "note",
+    state: "ready",
+    createdAt: "2026-05-17 00:00:00",
+    modifiedAt: "2026-05-17 00:00:00",
+    sizeBytes: 0,
+    children: [],
+    ...overrides,
   };
 }
 
@@ -150,6 +189,36 @@ function observabilityWindows(client: SearchClient): number[] {
 }
 
 describe("HomeDashboard", () => {
+  it("renders first-content actions while the workspace is empty", () => {
+    const client = makeLoadingClient();
+    const onMountFolder = vi.fn();
+    const onCreateNote = vi.fn();
+    const onStartVoiceNote = vi.fn();
+
+    render(
+      <HomeDashboard
+        client={client}
+        workspaceNodes={[]}
+        onMountFolder={onMountFolder}
+        onCreateNote={onCreateNote}
+        onStartVoiceNote={onStartVoiceNote}
+      />
+    );
+
+    expect(
+      screen.getByRole("heading", { name: /Build your first memory node/i })
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Indexed items loading")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Mount Folder/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Create Note/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Voice Note/i }));
+
+    expect(onMountFolder).toHaveBeenCalledTimes(1);
+    expect(onCreateNote).toHaveBeenCalledTimes(1);
+    expect(onStartVoiceNote).toHaveBeenCalledTimes(1);
+  });
+
   it("shows skeleton placeholders while Home data is loading", () => {
     const client = makeLoadingClient();
     render(<HomeDashboard client={client} />);
@@ -218,6 +287,120 @@ describe("HomeDashboard", () => {
       "aria-pressed",
       "true"
     );
+  });
+
+  it("shows secondary prompts only after content exists and settings make them relevant", async () => {
+    const settings = makeSettings({
+      features: {
+        chat: { enabled: false, providerId: null },
+        "advanced-ocr": { enabled: false, providerId: null },
+      },
+    });
+    const client = makeClient(settings);
+    render(
+      <HomeDashboard
+        client={client}
+        workspaceNodes={[node({ id: "scan-1", kind: "file", name: "scan.pdf" })]}
+      />
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: /Configure Chat provider/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /Improve OCR for documents/i })
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Set up Chat$/i }));
+    expect(
+      await screen.findByRole("dialog", { name: /^Set up Chat$/i })
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Close$/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^Set up OCR$/i }));
+    expect(
+      await screen.findByRole("dialog", { name: /^Set up Advanced OCR$/i })
+    ).toBeInTheDocument();
+  });
+
+  it("places the Chat provider prompt above the status cards", async () => {
+    const client = makeClient(
+      makeSettings({
+        features: {
+          chat: { enabled: false, providerId: null },
+          "advanced-ocr": { enabled: false, providerId: null },
+        },
+      })
+    );
+
+    render(<HomeDashboard client={client} workspaceNodes={[node()]} />);
+
+    const prompt = await screen.findByRole("heading", {
+      name: /Configure Chat provider/i,
+    });
+    const indexedItems = screen.getByText("Indexed items");
+
+    expect(
+      prompt.compareDocumentPosition(indexedItems) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("does not show secondary prompts while settings are unavailable", async () => {
+    const client = {
+      ...makeClient(),
+      settings: vi.fn().mockResolvedValue({ state: "unavailable", error: "down" }),
+    };
+    render(
+      <HomeDashboard
+        client={client}
+        workspaceNodes={[node({ id: "scan-1", kind: "file", name: "scan.pdf" })]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(client.settings).toHaveBeenCalled();
+    });
+    expect(screen.queryByText(/Configure Chat provider/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Improve OCR for documents/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Recent indexing")).toBeInTheDocument();
+  });
+
+  it("keeps dismissed secondary prompts hidden until their relevance changes", async () => {
+    const settings = makeSettings({
+      features: {
+        chat: { enabled: true, providerId: "local-ollama" },
+        "advanced-ocr": { enabled: false, providerId: null },
+      },
+    });
+    const client = makeClient(settings);
+    const { rerender } = render(
+      <HomeDashboard
+        client={client}
+        workspaceNodes={[node({ id: "scan-1", kind: "file", name: "scan.pdf" })]}
+      />
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: /Improve OCR for documents/i })
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: /Dismiss Improve OCR for documents/i })
+    );
+    expect(
+      screen.queryByRole("heading", { name: /Improve OCR for documents/i })
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <HomeDashboard
+        client={client}
+        workspaceNodes={[node({ id: "scan-2", kind: "file", name: "other.pdf" })]}
+      />
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: /Improve OCR for documents/i })
+    ).toBeInTheDocument();
   });
 
   it("switches the latency chart percentile", async () => {

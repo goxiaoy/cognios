@@ -70,6 +70,7 @@ export function SearchPalette({
     () => collectMountNodes(store.snapshot.roots),
     [store.snapshot.roots]
   );
+  const workspaceIsEmpty = store.snapshot.roots.length === 0;
 
   // Build the list of items the keyboard navigates over. When the
   // query is empty (and no filters are applied) we render the
@@ -132,6 +133,9 @@ export function SearchPalette({
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (isImeCompositionKeyEvent(event)) {
+        return;
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         close();
@@ -271,6 +275,7 @@ export function SearchPalette({
           activate={activate}
           recentNodes={recentNodes}
           results={state.results}
+          workspaceIsEmpty={workspaceIsEmpty}
           hasMore={state.nextCursor !== null}
           onLoadMore={() => void loadMore()}
         />
@@ -304,6 +309,7 @@ function PaletteBody({
   activate,
   recentNodes,
   results,
+  workspaceIsEmpty,
   hasMore,
   onLoadMore,
 }: {
@@ -321,6 +327,7 @@ function PaletteBody({
   activate(item: NavigableItem): void;
   recentNodes: ReturnType<typeof useRecentNodes>;
   results: SearchResult[];
+  workspaceIsEmpty: boolean;
   hasMore: boolean;
   onLoadMore(): void;
 }) {
@@ -328,8 +335,9 @@ function PaletteBody({
     if (recentNodes.length === 0) {
       return (
         <div className="search-palette-empty muted-copy">
-          Start typing or apply a filter to search across notes, URLs, and
-          mounted files.
+          {workspaceIsEmpty
+            ? "Add content first: mount a folder, create a note, or record a voice note."
+            : "Start typing or apply a filter to search across notes, URLs, and mounted files."}
         </div>
       );
     }
@@ -466,6 +474,10 @@ function selectionFromItem(item: NavigableItem): SearchPaletteSelection {
     name: item.label,
     kind: item.nodeKind,
   };
+}
+
+function isImeCompositionKeyEvent(event: React.KeyboardEvent<HTMLInputElement>) {
+  return event.nativeEvent.isComposing || event.keyCode === 229;
 }
 
 function liveRegionMessage(

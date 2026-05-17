@@ -42,17 +42,17 @@ import { MarkdownRenderer } from "../../explorer/components/MarkdownRenderer";
 import { useOptionalExplorerStoreContext } from "../../explorer/store/ExplorerStoreContext";
 import { SearchPalette, type SearchPaletteSelection } from "../../search/components/SearchPalette";
 import type { SearchClient } from "../../search/types/search";
-import { ProviderEditor } from "../../settings/components/ProviderEditor";
-import { PROVIDER_PRESETS, type ProviderPreset } from "../../settings/data/providerPresets";
 import type { ChatClient } from "../api/chatClient";
+import {
+  CHAT_PROVIDER_PRESETS,
+  ChatProviderSetup,
+  DEFAULT_CHAT_PROVIDER_ID,
+} from "./ChatProviderSetup";
 
 const CONTEXT_CONTENT_LIMIT = 8_000;
 const CHAT_TURN_EVENT = "chat/turn";
 const CHAT_MEMORY_EVENT = "chat/session-memory";
-const DEFAULT_CHAT_PROVIDER_ID = "local-ollama";
-const chatProviderPresets = PROVIDER_PRESETS.filter((preset) =>
-  preset.capabilities.includes("chat")
-);
+const chatProviderPresets = CHAT_PROVIDER_PRESETS;
 
 interface OptimisticUserMessage {
   id: string;
@@ -77,11 +77,13 @@ export function ChatLayout({
   searchClient,
   visible = true,
   onActivateSource,
+  workspaceIsEmpty = false,
 }: {
   client: ChatClient;
   searchClient: SearchClient;
   visible?: boolean;
   onActivateSource?: () => void;
+  workspaceIsEmpty?: boolean;
 }) {
   const explorerStore = useOptionalExplorerStoreContext();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -704,8 +706,12 @@ export function ChatLayout({
           {transcript.length === 0 && optimisticTranscript.length === 0 && !turn ? (
             <div className="chat-empty">
               <Search size={24} aria-hidden="true" />
-              <h3>Ask CogniOS</h3>
-              <p>Timeline, costs, causes, evidence gaps.</p>
+              <h3>{workspaceIsEmpty ? "Add content first" : "Ask CogniOS"}</h3>
+              <p>
+                {workspaceIsEmpty
+                  ? "Mount a folder, create a note, or record a voice note before asking grounded questions."
+                  : "Timeline, costs, causes, evidence gaps."}
+              </p>
             </div>
           ) : null}
           {transcript.map((message) => {
@@ -1008,87 +1014,6 @@ function AssistantLoading() {
       </span>
     </div>
   );
-}
-
-function ChatProviderSetup({
-  settings,
-  selectedProviderId,
-  providerStatus,
-  client,
-  onSelectedProviderChange,
-  onSettingsChange,
-}: {
-  settings: SearchSettings;
-  selectedProviderId: string;
-  providerStatus: string | null;
-  client: SearchClient;
-  onSelectedProviderChange: (providerId: string) => void;
-  onSettingsChange: (next: SearchSettings) => void;
-}) {
-  const selectedPreset =
-    chatProviderPresets.find((preset) => preset.providerId === selectedProviderId) ??
-    chatProviderPresets[0];
-
-  if (!selectedPreset) return null;
-
-  const editorSettings = settingsWithChatProvider(settings, selectedPreset);
-
-  return (
-    <section className="chat-provider-setup" aria-label="Set up chat provider">
-      <div className="chat-provider-setup-head">
-        <div>
-          <p className="chat-provider-setup-kicker">Provider required</p>
-          <h3>Set up Chat before sending</h3>
-        </div>
-        <AppSelect
-          label="Provider"
-          value={selectedPreset.providerId}
-          onChange={onSelectedProviderChange}
-          options={chatProviderPresets.map((preset) => ({
-            value: preset.providerId,
-            label: providerDisplayName(preset),
-          }))}
-          className="chat-provider-picker"
-        />
-      </div>
-      <p className="chat-provider-setup-copy">
-        Choose a provider, save it here, then send your first message.
-      </p>
-      {providerStatus ? (
-        <p className="chat-provider-setup-note">{providerStatus}</p>
-      ) : null}
-      <ProviderEditor
-        key={selectedPreset.providerId}
-        preset={selectedPreset}
-        config={editorSettings.providers[selectedPreset.providerId] ?? null}
-        settings={editorSettings}
-        client={client}
-        onSettingsChange={onSettingsChange}
-        onClose={() => {}}
-        allowRemove={false}
-      />
-    </section>
-  );
-}
-
-function settingsWithChatProvider(
-  settings: SearchSettings,
-  preset: ProviderPreset
-): SearchSettings {
-  return {
-    ...settings,
-    features: {
-      ...settings.features,
-      chat: {
-        enabled: true,
-        providerId: preset.providerId,
-      },
-    },
-  };
-}
-
-function providerDisplayName(preset: ProviderPreset): string {
-  return preset.displayName.replace(/^Local\s+/, "");
 }
 
 function ChatMessageBody({

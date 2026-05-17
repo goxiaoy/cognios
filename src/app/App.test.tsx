@@ -6,6 +6,7 @@ const getExplorerSnapshot = vi.fn();
 const getMountSetupContext = vi.fn();
 const createFolder = vi.fn();
 const createMount = vi.fn();
+const createNote = vi.fn();
 const createUrl = vi.fn();
 const getNoteContent = vi.fn();
 const readFileContent = vi.fn().mockResolvedValue("");
@@ -29,7 +30,7 @@ vi.mock("../lib/tauri/ipc", () => ({
   getNodeThumbnail: vi.fn().mockResolvedValue("data:image/png;base64,AA=="),
   createFolder: (input: unknown) => createFolder(input),
   createMount: (input: unknown) => createMount(input),
-  createNote: vi.fn(),
+  createNote: (input: unknown) => createNote(input),
   createUrl: (input: unknown) => createUrl(input),
   renameNode: vi.fn(),
   deleteNode: vi.fn(),
@@ -220,6 +221,7 @@ describe("App", () => {
     getMountSetupContext.mockResolvedValue({ suggestedFolders: [], existingMounts: [] });
     createFolder.mockReset();
     createMount.mockReset();
+    createNote.mockReset();
     createUrl.mockReset();
     getNoteContent.mockReset();
     getNoteContent.mockResolvedValue("");
@@ -294,8 +296,85 @@ describe("App", () => {
       "aria-current",
       "page"
     );
+    expect(await screen.findByRole("heading", {
+      name: /Build your first memory node/i,
+    })).toBeInTheDocument();
+    const actions = within(screen.getByLabelText("First content actions"));
+    expect(actions.getByRole("button", { name: /Mount Folder/i })).toBeInTheDocument();
+    expect(actions.getByRole("button", { name: /Create Note/i })).toBeInTheDocument();
+    expect(actions.getByRole("button", { name: /Voice Note/i })).toBeInTheDocument();
+    expect(screen.queryByText("Recent indexing")).not.toBeInTheDocument();
+  });
+
+  it("starts the mount flow from the empty Home launchpad", async () => {
+    getExplorerSnapshot.mockResolvedValue({ roots: [] });
+
+    render(<App />);
+
+    const actions = within(await screen.findByLabelText("First content actions"));
+    fireEvent.click(actions.getByRole("button", { name: /Mount Folder/i }));
+
+    expect(screen.getByRole("button", { name: /^Home$/i })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+    expect(await screen.findByRole("dialog", { name: /Mount folder/i })).toBeInTheDocument();
+    expect(createMount).not.toHaveBeenCalled();
+  });
+
+  it("creates a note from the empty Home launchpad", async () => {
+    getExplorerSnapshot.mockResolvedValue({ roots: [] });
+    createNote.mockResolvedValue({
+      roots: [
+        {
+          id: "note-1",
+          parentId: null,
+          name: "Untitled",
+          kind: "note",
+          state: "ready",
+          createdAt: "2026-05-17 00:00:00",
+          modifiedAt: "2026-05-17 00:00:00",
+          sizeBytes: 0,
+          children: [],
+        },
+      ],
+    });
+
+    render(<App />);
+
+    const actions = within(await screen.findByLabelText("First content actions"));
+    fireEvent.click(actions.getByRole("button", { name: /Create Note/i }));
+
+    await waitFor(() => {
+      expect(createNote).toHaveBeenCalledWith({ parentId: undefined });
+    });
+    expect(screen.getByRole("button", { name: /^Home$/i })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
     expect(await screen.findByText("Indexed items")).toBeInTheDocument();
-    expect(screen.getByText("Recent indexing")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /Build your first memory node/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("starts a voice note from the empty Home launchpad", async () => {
+    getExplorerSnapshot.mockResolvedValue({ roots: [] });
+    getModelsStatus.mockResolvedValue(readyModels());
+
+    render(<App />);
+
+    const actions = within(await screen.findByLabelText("First content actions"));
+    fireEvent.click(actions.getByRole("button", { name: /Voice Note/i }));
+
+    await waitFor(() => {
+      expect(createVoiceNote).toHaveBeenCalledWith({});
+    });
+    expect(screen.getByRole("button", { name: /^Home$/i })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+    expect(await screen.findByText("Indexed items")).toBeInTheDocument();
   });
 
   it("renders the Explorer welcome state from the Explorer navigation item", async () => {

@@ -8,8 +8,21 @@ import {
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
+import {
+  ArrowDown,
+  ArrowUp,
+  CalendarPlus,
+  Clock3,
+  LetterText,
+  type LucideIcon,
+} from "lucide-react";
 import type { ExistingMount, ExplorerClient, ExplorerNode, MountSetupContext } from "../types/explorer";
 import { isPdfNode } from "../utils/presentation";
+import {
+  DEFAULT_EXPLORER_TREE_SORT,
+  sortExplorerTree,
+  type ExplorerTreeSort,
+} from "../utils/treeSort";
 import type { CreateAction } from "./CreateMenu";
 import type { SelectModifiers } from "./ExplorerRow";
 import { useExplorerEvents } from "../hooks/useExplorerEvents";
@@ -39,6 +52,18 @@ import { error as logError } from "../../../lib/logger";
 const DEFAULT_TREE_WIDTH = 240;
 const MIN_TREE_WIDTH = 208;
 const MAX_TREE_WIDTH = 520;
+type ExplorerTreeSortField = "created" | "modified" | "name";
+type ExplorerTreeSortDirection = "asc" | "desc";
+
+const TREE_SORT_FIELDS: Array<{
+  field: ExplorerTreeSortField;
+  label: string;
+  icon: LucideIcon;
+}> = [
+  { field: "created", label: "Created", icon: CalendarPlus },
+  { field: "modified", label: "Modified", icon: Clock3 },
+  { field: "name", label: "Name", icon: LetterText },
+];
 
 export function ExplorerLayout({
   active,
@@ -69,6 +94,7 @@ export function ExplorerLayout({
   const [mountSetupError, setMountSetupError] = useState<string | null>(null);
   const [mountSubmitting, setMountSubmitting] = useState(false);
   const [treeWidth, setTreeWidth] = useState(DEFAULT_TREE_WIDTH);
+  const [treeSort, setTreeSort] = useState<ExplorerTreeSort>(DEFAULT_EXPLORER_TREE_SORT);
   const [openedVoiceNote, setOpenedVoiceNote] = useState<VoiceNote | null>(null);
   const [openedVoiceNoteId, setOpenedVoiceNoteId] = useState<string | null>(null);
   const [liveVoiceNoteTranscript, setLiveVoiceNoteTranscript] = useState("");
@@ -253,6 +279,10 @@ export function ExplorerLayout({
     store.activeImagePreview ??
     cannotPreviewNode ??
     null;
+  const sortedTreeRoots = useMemo(
+    () => sortExplorerTree(store.snapshot.roots, treeSort),
+    [store.snapshot, treeSort]
+  );
 
   // Compute breadcrumb path to the active file's parent from the snapshot.
   // The preview title already renders the active file name.
@@ -283,9 +313,9 @@ export function ExplorerLayout({
         for (const child of node.children) visit(child);
       }
     }
-    store.snapshot.roots.forEach(visit);
+    sortedTreeRoots.forEach(visit);
     return ordered;
-  }, [store.snapshot, store.expandedIds]);
+  }, [sortedTreeRoots, store.expandedIds]);
 
   // Layout-level wrapper that flushes any open note before delegating to the
   // store. Required because store.activateArtifact is synchronous and has no
@@ -710,7 +740,7 @@ export function ExplorerLayout({
         <aside className="tree-sidebar">
           <ExplorerTree
             expandedIds={store.expandedIds}
-            nodes={store.snapshot.roots}
+            nodes={sortedTreeRoots}
             onDelete={handleDeleteById}
             onDeleteMany={handleDeleteMany}
             onInlineRename={handleInlineRename}
@@ -726,7 +756,12 @@ export function ExplorerLayout({
             onToggle={store.toggleNode}
             pendingInlineRenameId={store.pendingInlineRenameId}
             selectedIds={store.selectedArtifactIds}
-            toolbar={<CreateMenu onSelect={handleCreateSelect} />}
+            toolbar={
+              <>
+                <CreateMenu onSelect={handleCreateSelect} />
+                <ExplorerSortControls value={treeSort} onChange={setTreeSort} />
+              </>
+            }
           />
         </aside>
 
@@ -922,6 +957,77 @@ function clampTreeWidth(nextWidth: number, workspace: HTMLDivElement | null) {
   const maxWidth = Math.min(MAX_TREE_WIDTH, maxWidthFromViewport);
 
   return Math.max(MIN_TREE_WIDTH, Math.min(nextWidth, maxWidth));
+}
+
+function ExplorerSortControls({
+  value,
+  onChange,
+}: {
+  value: ExplorerTreeSort;
+  onChange(value: ExplorerTreeSort): void;
+}) {
+  const { field, direction } = splitTreeSort(value);
+  const DirectionIcon = direction === "desc" ? ArrowDown : ArrowUp;
+  const directionLabel = sortDirectionLabel(field, direction);
+
+  return (
+    <div className="explorer-sort-controls" role="group" aria-label="File tree sort">
+      <span className="sr-only">Sort file tree</span>
+      <div className="explorer-sort-field-group" role="group" aria-label="Sort field">
+        {TREE_SORT_FIELDS.map(({ field: optionField, label, icon: Icon }) => {
+          const active = optionField === field;
+          return (
+            <button
+              key={optionField}
+              type="button"
+              aria-label={`Sort by ${label}`}
+              aria-pressed={active}
+              className={`explorer-sort-button${active ? " is-active" : ""}`}
+              onClick={() => onChange(joinTreeSort(optionField, direction))}
+              title={`Sort by ${label}`}
+            >
+              <Icon size={14} aria-hidden="true" />
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        aria-label={`Sort direction: ${directionLabel}`}
+        className="explorer-sort-button explorer-sort-direction-button"
+        onClick={() => onChange(joinTreeSort(field, direction === "desc" ? "asc" : "desc"))}
+        title={directionLabel}
+      >
+        <DirectionIcon size={14} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function splitTreeSort(sort: ExplorerTreeSort): {
+  field: ExplorerTreeSortField;
+  direction: ExplorerTreeSortDirection;
+} {
+  const [field, direction] = sort.split("-") as [
+    ExplorerTreeSortField,
+    ExplorerTreeSortDirection,
+  ];
+  return { field, direction };
+}
+
+function joinTreeSort(
+  field: ExplorerTreeSortField,
+  direction: ExplorerTreeSortDirection
+): ExplorerTreeSort {
+  return `${field}-${direction}` as ExplorerTreeSort;
+}
+
+function sortDirectionLabel(
+  field: ExplorerTreeSortField,
+  direction: ExplorerTreeSortDirection
+) {
+  if (field === "name") return direction === "desc" ? "Z to A" : "A to Z";
+  return direction === "desc" ? "Newest first" : "Oldest first";
 }
 
 interface TranscriptCue {

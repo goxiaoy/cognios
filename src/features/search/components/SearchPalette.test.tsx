@@ -1,9 +1,16 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { act } from "react";
+import { act, useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ExplorerStoreProvider } from "../../explorer/store/ExplorerStoreContext";
-import type { ExplorerClient } from "../../explorer/types/explorer";
+import {
+  ExplorerStoreProvider,
+  useExplorerStoreContext,
+} from "../../explorer/store/ExplorerStoreContext";
+import type {
+  ExplorerClient,
+  ExplorerNode,
+  ExplorerSnapshot,
+} from "../../explorer/types/explorer";
 import { SearchPalette } from "./SearchPalette";
 import type { SearchClient } from "../types/search";
 
@@ -61,11 +68,13 @@ function makeSearchClient(overrides: Partial<SearchClient> = {}): SearchClient {
 function renderPalette(opts: {
   searchClient?: SearchClient;
   explorerClient?: ExplorerClient;
+  snapshot?: ExplorerSnapshot;
   onClose?: () => void;
   onActivate?: () => void;
 } = {}) {
   return render(
     <ExplorerStoreProvider client={opts.explorerClient ?? makeExplorerClient()}>
+      {opts.snapshot ? <SnapshotLoader snapshot={opts.snapshot} /> : null}
       <SearchPalette
         client={opts.searchClient ?? makeSearchClient()}
         onClose={opts.onClose ?? vi.fn()}
@@ -73,6 +82,32 @@ function renderPalette(opts: {
       />
     </ExplorerStoreProvider>
   );
+}
+
+function SnapshotLoader({ snapshot }: { snapshot: ExplorerSnapshot }) {
+  const store = useExplorerStoreContext();
+  const appliedRef = useRef(false);
+  useEffect(() => {
+    if (appliedRef.current) return;
+    appliedRef.current = true;
+    store.applySnapshot(snapshot);
+  }, [snapshot, store]);
+  return null;
+}
+
+function node(overrides: Partial<ExplorerNode> = {}): ExplorerNode {
+  return {
+    id: "note-1",
+    parentId: null,
+    name: "note.md",
+    kind: "note",
+    state: "ready",
+    createdAt: "2026-05-17 00:00:00",
+    modifiedAt: "2026-05-17 00:00:00",
+    sizeBytes: 0,
+    children: [],
+    ...overrides,
+  };
 }
 
 afterEach(() => cleanup());
@@ -89,9 +124,17 @@ describe("SearchPalette", () => {
     renderPalette();
     await waitFor(() => {
       expect(
-        screen.getByText(/start typing or apply a filter/i)
+        screen.getByText(/add content first/i)
       ).toBeInTheDocument();
     });
+  });
+
+  it("shows recent nodes instead of empty-workspace guidance when nodes exist", async () => {
+    renderPalette({ snapshot: { roots: [node()] } });
+    await waitFor(() => {
+      expect(screen.getByText("note.md")).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/add content first/i)).not.toBeInTheDocument();
   });
 
   // Note: a "renders the recently-modified list" test belongs in the
@@ -191,6 +234,44 @@ describe("SearchPalette", () => {
 
     expect(onActivate).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not activate a result when Enter confirms an IME composition", async () => {
+    const onActivate = vi.fn();
+    const onClose = vi.fn();
+    const searchClient = makeSearchClient({
+      search: vi.fn().mockResolvedValue({
+        state: "ready",
+        data: {
+          results: [
+            {
+              nodeId: "abc",
+              kind: "note",
+              name: "OAuth.md",
+              score: 1,
+              snippet: "x",
+              matchedIn: "content",
+            },
+          ],
+          degraded: true,
+          partial: null,
+          state: "ready",
+        },
+      }),
+    });
+
+    renderPalette({ searchClient, onClose, onActivate });
+    const input = screen.getByRole("combobox");
+    fireEvent.change(input, { target: { value: "pin" } });
+
+    await waitFor(() => {
+      expect(screen.getByText("OAuth.md")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+
+    expect(onActivate).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("shows the unavailable state when the sidecar is unreachable", async () => {

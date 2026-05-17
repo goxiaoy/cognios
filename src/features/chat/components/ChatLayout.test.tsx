@@ -1201,4 +1201,21 @@ describe("ChatLayout", () => {
       expect(client.getModels).toHaveBeenCalledTimes(2);
     });
   });
+
+  it("does not present chat as the primary first action when the workspace is empty", async () => {
+    render(
+      <ChatLayout
+        client={makeClient()}
+        searchClient={makeSearchClient()}
+        workspaceIsEmpty
+      />
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: /Add content first/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Mount a folder, create a note, or record a voice note/i)
+    ).toBeInTheDocument();
+  });
 });

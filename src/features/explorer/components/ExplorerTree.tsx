@@ -41,27 +41,33 @@ export function ExplorerTree({
   return (
     <div className="explorer-tree-container">
       {toolbar ? <div className="explorer-tree-toolbar">{toolbar}</div> : null}
-      <div className="explorer-tree" role="tree">
-        {nodes.map((node) => (
-          <TreeBranch
-            ancestorNodes={[]}
-            expandedSet={expandedSet}
-            key={node.id}
-            node={node}
-            pendingInlineRenameId={pendingInlineRenameId}
-            onDelete={onDelete}
-            onDeleteMany={onDeleteMany}
-            onOpenUrl={onOpenUrl}
-            onRevealInFileManager={onRevealInFileManager}
-            onRetry={onRetry}
-            onSelect={onSelect}
-            onToggle={onToggle}
-            onInlineRename={onInlineRename}
-            onStartRename={onStartRename}
-            selectedSet={selectedSet}
-          />
-        ))}
-      </div>
+      {nodes.length === 0 ? (
+        <div className="explorer-tree-empty" role="status">
+          Mount a folder or create a note to add your first node.
+        </div>
+      ) : (
+        <div className="explorer-tree" role="tree">
+          {nodes.map((node) => (
+            <TreeBranch
+              ancestorNodes={[]}
+              expandedSet={expandedSet}
+              key={node.id}
+              node={node}
+              pendingInlineRenameId={pendingInlineRenameId}
+              onDelete={onDelete}
+              onDeleteMany={onDeleteMany}
+              onOpenUrl={onOpenUrl}
+              onRevealInFileManager={onRevealInFileManager}
+              onRetry={onRetry}
+              onSelect={onSelect}
+              onToggle={onToggle}
+              onInlineRename={onInlineRename}
+              onStartRename={onStartRename}
+              selectedSet={selectedSet}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

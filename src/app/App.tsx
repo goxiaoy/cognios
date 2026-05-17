@@ -12,10 +12,12 @@ import { chatClient } from "../features/chat/api/chatClient";
 import { ChatLayout } from "../features/chat/components/ChatLayout";
 import { explorerClient } from "../features/explorer/api/explorerClient";
 import { ExplorerLayout } from "../features/explorer/components/ExplorerLayout";
+import { MountModal } from "../features/explorer/components/MountModal";
 import {
   ExplorerStoreProvider,
   useExplorerStoreContext,
 } from "../features/explorer/store/ExplorerStoreContext";
+import type { MountSetupContext } from "../features/explorer/types/explorer";
 import { HomeDashboard } from "../features/home/components/HomeDashboard";
 import { searchClient } from "../features/search/api/searchClient";
 import { SearchPalette } from "../features/search/components/SearchPalette";
@@ -78,6 +80,11 @@ function AppShell() {
     nodeId: string;
     serial: number;
   } | null>(null);
+  const [homeMountOpen, setHomeMountOpen] = useState(false);
+  const [homeMountSetupContext, setHomeMountSetupContext] =
+    useState<MountSetupContext | null>(null);
+  const [homeMountSetupError, setHomeMountSetupError] = useState<string | null>(null);
+  const [homeMountSubmitting, setHomeMountSubmitting] = useState(false);
   const [activeVoiceNote, setActiveVoiceNote] = useState<ActiveVoiceNote | null>(null);
   const voiceNoteRecordingRef = useRef<VoiceNoteRecording | null>(null);
   const voiceNoteFocusSerial = useRef(0);
@@ -126,9 +133,75 @@ function AppShell() {
     setVoiceNoteFocusRequest(null);
   }, []);
 
-  const startVoiceNoteRecording = useCallback(async () => {
+  useEffect(() => {
+    if (!homeMountOpen) return;
+    let cancelled = false;
+    setHomeMountSetupError(null);
+    setHomeMountSetupContext(null);
+
+    void explorerClient
+      .getMountSetupContext()
+      .then((context) => {
+        if (!cancelled) setHomeMountSetupContext(context);
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setHomeMountSetupError(
+            cause instanceof Error ? cause.message : "Failed to load suggested folders."
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [homeMountOpen]);
+
+  const closeHomeMount = useCallback(() => {
+    setHomeMountOpen(false);
+    setHomeMountSetupContext(null);
+    setHomeMountSetupError(null);
+  }, []);
+
+  const createHomeNote = useCallback(async () => {
+    const snapshot = await explorerStore.runAction("note", () =>
+      explorerClient.createNote({ parentId: undefined })
+    );
+    if (snapshot) explorerStore.applySnapshot(snapshot);
+  }, [explorerStore]);
+
+  const submitHomeMount = useCallback(
+    async (args: { path: string; name: string; ignoreConfig: string }) => {
+      setHomeMountSubmitting(true);
+      explorerStore.setError(null);
+      try {
+        const snapshot = await explorerClient.createMount({
+          path: args.path,
+          parentId: undefined,
+          ignoreConfig: args.ignoreConfig || undefined,
+        });
+        explorerStore.applySnapshot(snapshot);
+        closeHomeMount();
+      } finally {
+        setHomeMountSubmitting(false);
+      }
+    },
+    [closeHomeMount, explorerStore]
+  );
+
+  const revealHomeMount = useCallback(
+    (nodeId: string) => {
+      explorerStore.selectArtifact(nodeId, false);
+      explorerStore.expandNode(nodeId);
+      closeHomeMount();
+    },
+    [closeHomeMount, explorerStore]
+  );
+
+  const startVoiceNoteRecording = useCallback(async (options: { focus?: boolean } = {}) => {
+    const shouldFocusExplorer = options.focus ?? true;
     if (activeVoiceNote && !isTerminalVoiceNotePhase(activeVoiceNote.phase)) {
-      focusExplorerNode(activeVoiceNote.note.noteId);
+      if (shouldFocusExplorer) focusExplorerNode(activeVoiceNote.note.noteId);
       return;
     }
 
@@ -137,7 +210,7 @@ function AppShell() {
       await ensureAsrReadyForVoiceNote(searchClient);
       const created = await voiceNoteClient.create({});
       explorerStore.applySnapshot(created.snapshot);
-      focusExplorerNode(created.voiceNote.noteId);
+      if (shouldFocusExplorer) focusExplorerNode(created.voiceNote.noteId);
       setActiveVoiceNote({
         note: created.voiceNote,
         phase: "preparing",
@@ -329,7 +402,17 @@ function AppShell() {
 
           {activeSection === "home" ? (
             <section className="home-page-panel">
-              <HomeDashboard client={searchClient} />
+              <HomeDashboard
+                client={searchClient}
+                workspaceNodes={explorerStore.snapshot.roots}
+                onCreateNote={() => {
+                  void createHomeNote();
+                }}
+                onMountFolder={() => setHomeMountOpen(true)}
+                onStartVoiceNote={() => {
+                  void startVoiceNoteRecording({ focus: false });
+                }}
+              />
             </section>
           ) : null}
 
@@ -338,6 +421,7 @@ function AppShell() {
               <ChatLayout
                 client={chatClient}
                 searchClient={searchClient}
+                workspaceIsEmpty={explorerStore.snapshot.roots.length === 0}
                 visible={activeSection === "chat"}
                 onActivateSource={focusExplorer}
               />
@@ -354,6 +438,17 @@ function AppShell() {
           ) : null}
         </div>
       </div>
+
+      {homeMountOpen ? (
+        <MountModal
+          isSubmitting={homeMountSubmitting}
+          onClose={closeHomeMount}
+          onRevealMount={revealHomeMount}
+          onSubmit={submitHomeMount}
+          setupContext={homeMountSetupContext}
+          setupError={homeMountSetupError}
+        />
+      ) : null}
 
       {paletteOpen ? (
         <SearchPalette

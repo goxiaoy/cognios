@@ -6,7 +6,9 @@ import { ExplorerStoreProvider } from "../store/ExplorerStoreContext";
 const getVoiceNote = vi.fn();
 const getVoiceNoteTranscript = vi.fn();
 
-function renderWithProvider(client: unknown) {
+function renderWithProvider(
+  client: unknown
+) {
   const typed = client as Parameters<typeof ExplorerStoreProvider>[0]["client"];
   return render(
     <ExplorerStoreProvider client={typed}>
@@ -133,6 +135,19 @@ describe("ExplorerLayout", () => {
     });
   });
 
+  it("shows a lightweight empty tree state while keeping create controls available", async () => {
+    const client = makeClient();
+    vi.mocked(client.getExplorerSnapshot).mockResolvedValue({ roots: [] });
+
+    renderWithProvider(client);
+
+    expect(
+      await screen.findByText(/Mount a folder or create a note/i)
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^New$/i })).toBeInTheDocument();
+    expect(screen.getByText("No selection")).toBeInTheDocument();
+  });
+
   it("keeps pane scroll containers independent", async () => {
     const { container } = renderWithProvider(makeClient());
 
@@ -154,6 +169,46 @@ describe("ExplorerLayout", () => {
     expect(treeScroll.scrollTop).toBe(14);
     expect(inspectorScroll.scrollTop).toBe(21);
     expect(detailScroll.scrollTop).toBe(55);
+  });
+
+  it("switches file tree sorting with icon controls", async () => {
+    const client = makeClient();
+    vi.mocked(client.getExplorerSnapshot).mockResolvedValue({
+      roots: [
+        {
+          id: "alpha",
+          parentId: null,
+          name: "Alpha",
+          kind: "mount",
+          state: "ready",
+          createdAt: "2026-04-20 00:00:00",
+          modifiedAt: "2026-04-22 00:00:00",
+          sizeBytes: 0,
+          children: [],
+        },
+        {
+          id: "zeta",
+          parentId: null,
+          name: "Zeta",
+          kind: "mount",
+          state: "ready",
+          createdAt: "2026-04-26 00:00:00",
+          modifiedAt: "2026-04-21 00:00:00",
+          sizeBytes: 0,
+          children: [],
+        },
+      ],
+    });
+    const { container } = renderWithProvider(client);
+
+    await screen.findByText("Alpha");
+    expect(treeRowNames(container)).toEqual(["Zeta", "Alpha"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort by Name" }));
+    expect(treeRowNames(container)).toEqual(["Zeta", "Alpha"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort direction: Z to A" }));
+    expect(treeRowNames(container)).toEqual(["Alpha", "Zeta"]);
   });
 
   it("shows source audio playback when opening an existing voice note", async () => {
@@ -232,3 +287,9 @@ describe("ExplorerLayout", () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 });
+
+function treeRowNames(container: HTMLElement): string[] {
+  return Array.from(container.querySelectorAll(".node-name")).map(
+    (element) => element.textContent ?? ""
+  );
+}

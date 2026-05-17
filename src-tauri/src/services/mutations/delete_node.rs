@@ -10,6 +10,7 @@ use crate::infrastructure::db::mount_repository::reconcile_mount;
 use crate::infrastructure::db::node_repository::{list_snapshot, touch_node_modified_at};
 use crate::infrastructure::db::url_repository::delete_url_artifacts;
 use crate::services::mounts::watcher::VfsChangeEvent;
+use crate::services::voice_notes::delete_voice_note_artifacts;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,12 +66,7 @@ pub fn delete_node(
             if note_path.exists() {
                 fs::remove_file(&note_path).map_err(|error| error.to_string())?;
             }
-            if let Some(storage_dir) = notes_dir.parent() {
-                let voice_note_dir = storage_dir.join("voice-notes").join(&input.node_id);
-                if voice_note_dir.exists() {
-                    fs::remove_dir_all(&voice_note_dir).map_err(|error| error.to_string())?;
-                }
-            }
+            delete_voice_note_artifacts(conn, &input.node_id, notes_dir)?;
             conn.execute("DELETE FROM nodes WHERE id = ?1", [&input.node_id])
                 .map_err(|error| error.to_string())?;
             touch_node_modified_at(conn, node.parent_id.as_deref())

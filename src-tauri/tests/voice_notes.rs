@@ -7,6 +7,7 @@ use tempfile::tempdir;
 
 use cognios_lib::infrastructure::db::connection::open_database;
 use cognios_lib::services::mounts::watcher::VfsChangeEvent;
+use cognios_lib::services::mutations::delete_node::{delete_node, DeleteNodeInput};
 use cognios_lib::services::notes::get_note_content::get_note_content;
 use cognios_lib::services::notes::save_note_content::save_note_content;
 use cognios_lib::services::voice_notes::{
@@ -496,6 +497,67 @@ fn delete_source_audio_preserves_transcript_content() {
                 && event.reason == "node-saved"),
         "source audio deletion should refresh indexed note content"
     );
+}
+
+#[test]
+fn deleting_voice_note_node_removes_attached_audio_and_transcript_artifacts() {
+    let (app_dir, db_path, notes_dir) = setup();
+    let mut conn = open_database(&db_path).expect("database");
+    let created = create_voice_note(
+        &mut conn,
+        &CreateVoiceNoteInput { parent_id: None },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("create voice note");
+    let note_id = created.voice_note.note_id.clone();
+    let artifact_dir = app_dir.path().join("voice-notes").join(&note_id);
+    assert!(artifact_dir.exists(), "default artifact dir exists");
+
+    let external_audio_path = app_dir.path().join("attached-source.wav");
+    let external_transcript_path = app_dir.path().join("attached-transcript.md");
+    fs::write(&external_audio_path, b"recording").expect("external source audio");
+    fs::write(&external_transcript_path, "transcript").expect("external transcript");
+    conn.execute(
+        "
+        UPDATE voice_notes
+        SET source_audio_path = ?2, transcript_path = ?3
+        WHERE note_id = ?1
+        ",
+        params![
+            &note_id,
+            external_audio_path.to_string_lossy().to_string(),
+            external_transcript_path.to_string_lossy().to_string()
+        ],
+    )
+    .expect("attach artifact paths");
+
+    delete_node(
+        &mut conn,
+        &DeleteNodeInput {
+            node_id: note_id.clone(),
+            cascade: None,
+        },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("delete voice note");
+
+    assert!(!notes_dir.join(format!("{note_id}.md")).exists());
+    assert!(!artifact_dir.exists(), "default artifact dir removed");
+    assert!(!external_audio_path.exists(), "source recording removed");
+    assert!(
+        !external_transcript_path.exists(),
+        "transcript artifact removed"
+    );
+    let remaining: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM voice_notes WHERE note_id = ?1",
+            [&note_id],
+            |row| row.get(0),
+        )
+        .expect("voice note count");
+    assert_eq!(remaining, 0, "voice note metadata removed by node delete");
 }
 
 #[test]
