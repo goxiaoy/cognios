@@ -5,6 +5,8 @@ import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-
 interface SelectOption {
   value: string;
   label: string;
+  disabled?: boolean;
+  disabledReason?: string | null;
 }
 
 export function AppSelect({
@@ -24,7 +26,7 @@ export function AppSelect({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(() =>
-    Math.max(0, options.findIndex((option) => option.value === value))
+    initialActiveIndex(options, value)
   );
   const selected = options.find((option) => option.value === value) ?? options[0];
 
@@ -32,10 +34,11 @@ export function AppSelect({
 
   useEffect(() => {
     if (!open) return;
-    setActiveIndex(Math.max(0, options.findIndex((option) => option.value === value)));
+    setActiveIndex(initialActiveIndex(options, value));
   }, [open, options, value]);
 
   function choose(option: SelectOption) {
+    if (option.disabled) return;
     onChange(option.value);
     setOpen(false);
   }
@@ -50,7 +53,7 @@ export function AppSelect({
       setOpen(true);
       setActiveIndex((index) => {
         const delta = event.key === "ArrowDown" ? 1 : -1;
-        return (index + delta + options.length) % options.length;
+        return nextEnabledIndex(options, index, delta);
       });
       return;
     }
@@ -88,17 +91,47 @@ export function AppSelect({
               type="button"
               role="option"
               aria-selected={option.value === value}
-              className={`app-select-option${index === activeIndex ? " is-active" : ""}`}
-              onMouseEnter={() => setActiveIndex(index)}
+              aria-disabled={option.disabled || undefined}
+              className={`app-select-option${index === activeIndex ? " is-active" : ""}${option.disabled ? " is-disabled" : ""}`}
+              title={option.disabledReason ?? undefined}
+              onMouseEnter={() => {
+                if (!option.disabled) setActiveIndex(index);
+              }}
               onClick={() => choose(option)}
             >
-              {option.label}
+              <span>{option.label}</span>
+              {option.disabledReason ? (
+                <span className="app-select-option-reason">{option.disabledReason}</span>
+              ) : null}
             </button>
           ))}
         </div>
       ) : null}
     </div>
   );
+}
+
+function initialActiveIndex(options: SelectOption[], value: string): number {
+  const selectedIndex = options.findIndex((option) => option.value === value);
+  if (selectedIndex >= 0 && !options[selectedIndex]?.disabled) return selectedIndex;
+  const firstEnabled = options.findIndex((option) => !option.disabled);
+  return Math.max(0, firstEnabled);
+}
+
+function nextEnabledIndex(
+  options: SelectOption[],
+  currentIndex: number,
+  delta: 1 | -1
+): number {
+  if (options.length === 0 || options.every((option) => option.disabled)) {
+    return Math.max(0, currentIndex);
+  }
+  let index = currentIndex;
+  for (let checked = 0; checked < options.length; checked += 1) {
+    index = (index + delta + options.length) % options.length;
+    if (!options[index]?.disabled) return index;
+  }
+  return Math.max(0, currentIndex);
 }
 
 export function AppDatePicker({

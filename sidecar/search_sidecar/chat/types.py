@@ -47,6 +47,8 @@ class ChatProviderError(RuntimeError):
 class ChatModel:
     id: str
     name: str
+    supports_agentic: bool = True
+    unavailable_reason: str | None = None
 
 
 @dataclass(frozen=True)

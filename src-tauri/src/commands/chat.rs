@@ -483,6 +483,7 @@ fn persist_turn_response(
         let metadata_json = serde_json::json!({
             "stage": data.state,
             "citations": data.citations,
+            "toolEvents": data.tool_events,
             "provider": data.provider,
             "warnings": data.warnings,
         })

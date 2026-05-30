@@ -159,7 +159,7 @@ describe("FeatureRow", () => {
       })
     );
     // Modal shows local-gte + openai (both declare embedding); does
-    // NOT show qwen-dashscope (vision only) or local-gemma. The
+    // NOT show qwen-dashscope (no embedding) or local-gemma. The
     // "Local " prefix is stripped in the chooser rows.
     const dialog = screen.getByRole("dialog");
     const choices = Array.from(

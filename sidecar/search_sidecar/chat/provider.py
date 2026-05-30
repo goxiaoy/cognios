@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Protocol
 
+from .agent_runtime import AgenticProvider
 from .types import ChatGeneration, ChatGenerationChunk, ChatGenerationRequest, ChatModelList
 
 
@@ -22,3 +23,6 @@ class ChatProvider(Protocol):
 
     def list_models(self) -> ChatModelList:
         """Return provider-supported chat models, preferably cached."""
+
+    def agentic_provider(self, model: str | None = None) -> AgenticProvider | None:
+        """Return a native tool-calling model adapter when supported."""

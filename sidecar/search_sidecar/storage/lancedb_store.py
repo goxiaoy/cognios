@@ -391,6 +391,44 @@ class LanceDBStore:
             .to_list()
         )
 
+    def scan_mount_nodes(
+        self,
+        mount_id: str,
+        *,
+        limit: int = 100,
+        kinds: set[str] | None = None,
+    ) -> list[dict]:
+        """Return distinct indexed nodes that belong to one mount."""
+        if self._table.count_rows() == 0:
+            return []
+        rows = (
+            self._table.search()
+            .where(f"mount_id = '{_quote(mount_id)}'")
+            .limit(max(limit * 20, limit))
+            .to_list()
+        )
+        by_node_id: dict[str, dict] = {}
+        for row in rows:
+            node_id = row.get("node_id")
+            if not node_id or node_id in by_node_id:
+                continue
+            kind = row.get("kind") or ""
+            if kinds is not None and kind not in kinds:
+                continue
+            by_node_id[node_id] = {
+                "node_id": node_id,
+                "kind": kind,
+                "name": row.get("name") or node_id,
+                "mount_id": row.get("mount_id"),
+                "modified_at": row.get("modified_at"),
+            }
+            if len(by_node_id) >= limit:
+                break
+        return sorted(
+            by_node_id.values(),
+            key=lambda row: (str(row.get("name") or ""), str(row.get("node_id") or "")),
+        )
+
     def update_node_metadata(
         self,
         node_id: str,

@@ -3967,7 +3967,8 @@ body.is-resizing-pane {
 }
 
 .app-select-option {
-  display: block;
+  display: grid;
+  gap: 0.12rem;
   width: 100%;
   min-height: 1.85rem;
   padding: 0.35rem 0.55rem;
@@ -3980,7 +3981,7 @@ body.is-resizing-pane {
   box-shadow: none;
 }
 
-.app-select-option:hover,
+.app-select-option:not(.is-disabled):hover,
 .app-select-option.is-active {
   background: var(--paper-2);
   color: var(--ink);
@@ -3988,9 +3989,22 @@ body.is-resizing-pane {
   transform: none;
 }
 
-.app-select-option[aria-selected="true"] {
+.app-select-option[aria-selected="true"]:not(.is-disabled) {
   background: color-mix(in srgb, var(--accent) 12%, var(--paper));
   color: var(--accent-ink);
+}
+
+.app-select-option.is-disabled {
+  cursor: not-allowed;
+  color: var(--muted);
+  opacity: 0.64;
+}
+
+.app-select-option-reason {
+  color: var(--muted);
+  font: 500 0.68rem var(--font-body);
+  line-height: 1.25;
+  white-space: normal;
 }
 
 .app-date-button {
@@ -6640,6 +6654,12 @@ button.chat-runtime-pill:not(:disabled):hover {
   bottom: calc(100% + 0.35rem);
 }
 
+.chat-model-unavailable {
+  max-width: min(42vw, 22rem);
+  color: var(--muted);
+  font: 500 0.72rem var(--font-body);
+}
+
 .chat-error {
   grid-row: 2;
   display: flex;
@@ -6735,6 +6755,37 @@ button.chat-runtime-pill:not(:disabled):hover {
   min-height: 1.65rem;
   color: var(--muted);
   font: 500 0.82rem var(--font-mono);
+}
+
+.chat-tool-activity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.55rem;
+}
+
+.chat-tool-activity-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  max-width: min(100%, 34rem);
+  padding: 0.22rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--muted);
+  font: 500 0.72rem var(--font-mono);
+}
+
+.chat-tool-activity-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-tool-activity-item[data-status="error"] {
+  border-color: color-mix(in srgb, var(--danger, #c0392b) 35%, var(--line));
+  color: var(--danger, #c0392b);
 }
 
 .chat-loading-dots {

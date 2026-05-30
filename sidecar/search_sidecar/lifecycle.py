@@ -30,9 +30,11 @@ import uvicorn
 
 from .app import build_app
 from .auth import generate_token
+from .chat.agent_runtime import PydanticAgentRuntime
 from .chat.factory import select_chat_provider
 from .chat.orchestrator import ChatOrchestrator
 from .chat.retrieval import ChatRetrieval
+from .chat.tools import CogniosChatToolsetFactory
 from .embeddings import reembed_stale_chunks, select_embedder
 from .extract import (
     select_advanced_ocr_extractor,
@@ -40,6 +42,7 @@ from .extract import (
     select_ocr_extractor,
 )
 from .index import IndexingRunner
+from .index.content import NodeContentReader
 from .index.dispatch import Dispatcher
 from .index.processors.image import SUPPORTED_EXTENSIONS as IMAGE_EXTENSIONS
 from .index.processors.pdf import SUPPORTED_EXTENSIONS as PDF_EXTENSIONS
@@ -178,6 +181,14 @@ def serve(storage_dir: Path) -> int:
             web_search_provider=select_web_search_provider(settings),
         ),
         chat_provider=select_chat_provider(settings),
+        agent_runtime=PydanticAgentRuntime(),
+        toolset_factory=CogniosChatToolsetFactory(
+            search_orchestrator=search_orchestrator,
+            content_reader=NodeContentReader(
+                store=lancedb_store,
+                extract_dir=search_dir / "extract",
+            ),
+        ),
     )
 
     app = build_app(

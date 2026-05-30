@@ -319,7 +319,14 @@ def test_chat_models_route_returns_cached_provider_models():
     body = resp.json()
     assert body["state"] == "ready"
     assert body["provider_id"] == "test-provider"
-    assert body["models"] == [{"id": "test-model", "name": "test-model"}]
+    assert body["models"] == [
+        {
+            "id": "test-model",
+            "name": "test-model",
+            "supports_agentic": True,
+            "unavailable_reason": None,
+        }
+    ]
     assert body["cache_expires_at"] == 123.0
 
 
@@ -363,7 +370,14 @@ def test_chat_provider_test_route_probes_ollama_base_url(monkeypatch):
     assert captured == {"base_url": "http://ollama.test", "closed": True}
     assert body["state"] == "ready"
     assert body["provider_id"] == "local-ollama"
-    assert body["models"] == [{"id": "qwen2.5:7b", "name": "qwen2.5:7b"}]
+    assert body["models"] == [
+        {
+            "id": "qwen2.5:7b",
+            "name": "qwen2.5:7b",
+            "supports_agentic": True,
+            "unavailable_reason": None,
+        }
+    ]
     assert body["cache_expires_at"] == 456.0
 
 

@@ -150,6 +150,8 @@ export interface ChatTurnResponse {
     | "needs_redirect"
     | "provider_unavailable"
     | "provider_error"
+    | "unsupported_agentic_provider"
+    | "tool_limit_exceeded"
     | "ready"
     | string;
   clusters: ChatTurnCluster[];
@@ -157,6 +159,7 @@ export interface ChatTurnResponse {
   citations: unknown[];
   warnings: string[];
   provider?: unknown;
+  toolEvents?: unknown[];
 }
 
 export interface ChatTurnStreamEvent {
@@ -166,6 +169,7 @@ export interface ChatTurnStreamEvent {
   clusters?: ChatTurnCluster[];
   citations?: unknown[];
   warnings?: string[];
+  toolEvents?: unknown[];
   error?: string | null;
 }
 
@@ -177,6 +181,8 @@ export interface ChatTurnStreamPayload {
 export interface ChatModel {
   id: string;
   name: string;
+  supportsAgentic?: boolean;
+  unavailableReason?: string | null;
 }
 
 export interface ChatModelsResponse {

@@ -25,6 +25,7 @@ def _make_chunk(
     *,
     role: str = "body",
     content_version: str | None = None,
+    mount_id: str | None = None,
 ) -> NodeChunk:
     return NodeChunk(
         id=f"{node_id}:{idx}",
@@ -35,6 +36,7 @@ def _make_chunk(
         vector=[0.0] * EMBEDDING_DIMENSION,
         role=role,
         content_version=content_version,
+        mount_id=mount_id,
     )
 
 
@@ -78,6 +80,32 @@ def test_delete_by_node_id_removes_all_chunks(tmp_path: Path):
     store.delete_by_node_id("node-a")
     assert store.count() == 1
     assert store.list_node_ids() == {"node-b"}
+
+
+def test_scan_mount_nodes_returns_distinct_readable_nodes(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    store.upsert(
+        [
+            _make_chunk("note-a", idx=0, text="a", mount_id="mount-1"),
+            _make_chunk("note-a", idx=1, text="a2", mount_id="mount-1"),
+            NodeChunk(
+                id="folder-1:metadata:0",
+                node_id="folder-1",
+                kind="folder",
+                name="Folder",
+                text="Folder",
+                vector=[0.0] * EMBEDDING_DIMENSION,
+                mount_id="mount-1",
+                role="metadata",
+            ),
+            _make_chunk("note-b", idx=0, text="b", mount_id="mount-1"),
+            _make_chunk("note-c", idx=0, text="c", mount_id="mount-2"),
+        ]
+    )
+
+    rows = store.scan_mount_nodes("mount-1", kinds={"note"})
+
+    assert [row["node_id"] for row in rows] == ["note-a", "note-b"]
 
 
 def test_delete_chunks_by_role_preserves_summary(tmp_path: Path):

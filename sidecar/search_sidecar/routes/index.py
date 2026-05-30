@@ -13,11 +13,11 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from ..index.extract_artifacts import read_image_preview_artifacts
+from ..index.content import NodeContentReader
 from ..index.processors.image import SUPPORTED_EXTENSIONS as IMAGE_EXTENSIONS
 from ..index.processors.pdf import SUPPORTED_EXTENSIONS as PDF_EXTENSIONS
 from ..index.queue import IndexingQueue, JobState
-from ..storage import LanceDBStore, role_or_default
+from ..storage import LanceDBStore
 
 router = APIRouter(prefix="/index", tags=["index"])
 ENHANCEMENT_EXTENSIONS = IMAGE_EXTENSIONS + PDF_EXTENSIONS
@@ -148,104 +148,10 @@ def get_node_content(node_id: str, request: Request) -> dict:
     that have nothing in lancedb yet (image-only PDF, image with no
     extractors wired, fresh node before the runner drains).
     """
-    artifact_chunks, artifact_assets = _extract_artifact_content(node_id, request)
-    if artifact_chunks:
-        joined = "\n\n".join(
-            c["text"] for c in artifact_chunks if c["text"].strip()
-        )
-        return {
-            "node_id": node_id,
-            "kind": "file",
-            "chunks": artifact_chunks,
-            "joined": joined,
-            "assets": artifact_assets,
-        }
-
-    store = _get_store(request)
-    if store is None:
-        return {
-            "node_id": node_id,
-            "kind": None,
-            "chunks": [],
-            "joined": "",
-            "assets": {},
-        }
-    rows = store.scan(node_id)
-    rows_sorted = sorted(rows, key=_chunk_index_key)
-    chunks = []
-    for row in rows_sorted:
-        role = role_or_default(row)
-        if role == "metadata":
-            continue
-        chunks.append(
-            {
-                "id": row.get("id"),
-                "role": role,
-                "text": row.get("text") or "",
-            }
-        )
-    joined = "\n\n".join(c["text"] for c in chunks if c["text"].strip())
-    kind = rows_sorted[0].get("kind") if rows_sorted else None
-    return {
-        "node_id": node_id,
-        "kind": kind,
-        "chunks": chunks,
-        "joined": joined,
-        "assets": {},
-    }
-
-
-def _extract_artifact_content(
-    node_id: str,
-    request: Request,
-) -> tuple[list[dict], dict[str, str]]:
-    artifacts = read_image_preview_artifacts(_get_extract_dir(request), node_id)
-    chunks: list[dict] = []
-    assets: dict[str, str] = {}
-    for artifact in artifacts:
-        chunks.append(
-            {
-                "id": f"{node_id}:extract:{artifact.kind}",
-                "role": artifact.role,
-                "text": artifact.text,
-            }
-        )
-        assets.update(
-            {source: str(path) for source, path in artifact.assets.items()}
-        )
-    return chunks, assets
-
-
-def _chunk_index_key(row: dict) -> tuple[int, int, str]:
-    """Sort key for chunk rows: ``(role_rank, chunk_index, id)``.
-
-    Body chunks (rank 0) sort before voice transcript chunks (rank 1)
-    and summary chunks (rank 2); within
-    each role, the integer chunk-index suffix gives stable order so
-    a 12-chunk document doesn't end up as ``[0, 1, 10, 11, 2, ...]``
-    lexicographically. The role column is the primary discriminator
-    rather than parsing the id, so a node id that happens to end in
-    ``:summary`` cannot be misclassified.
-
-    The trailing ``id`` tiebreaker keeps order deterministic when
-    multiple rows fall back to ``idx=0`` (legacy or non-conforming
-    ids whose suffix doesn't parse as an integer).
-    """
-    chunk_id = row.get("id") or ""
-    _, _, suffix = chunk_id.rpartition(":")
-    try:
-        idx = int(suffix)
-    except ValueError:
-        idx = 0
-    role = role_or_default(row)
-    role_rank = {
-        "body": 0,
-        "voice_transcript": 1,
-        "summary": 2,
-        "metadata": 3,
-    }
-    rank = role_rank.get(role, 0)
-    return (rank, idx, chunk_id)
+    return NodeContentReader(
+        store=_get_store(request),
+        extract_dir=_get_extract_dir(request),
+    ).read(node_id).to_dict()
 
 
 @router.get("/changes")

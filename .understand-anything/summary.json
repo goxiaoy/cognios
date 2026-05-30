@@ -1,0 +1,62 @@
+{
+  "project": {
+    "name": "cognios",
+    "languages": [
+      "css",
+      "html",
+      "icns",
+      "json",
+      "markdown",
+      "python",
+      "rust",
+      "shell",
+      "sql",
+      "toml",
+      "typescript",
+      "unknown",
+      "xml"
+    ],
+    "frameworks": [
+      "React",
+      "Vite",
+      "Vitest"
+    ],
+    "description": "CogniOS Note: this project has over 100 source files; consider scoping analysis to a subdirectory for faster results.",
+    "analyzedAt": "2026-05-28T15:30:51.478Z",
+    "gitCommitHash": "f861b4738d178ea07cb82e607b2d90e4d93dee9d"
+  },
+  "filesAnalyzed": 409,
+  "categories": {
+    "config": 15,
+    "docs": 42,
+    "markup": 3,
+    "code": 340,
+    "script": 1,
+    "data": 8
+  },
+  "nodes": {
+    "class": 281,
+    "config": 15,
+    "document": 42,
+    "file": 344,
+    "function": 1636,
+    "table": 23
+  },
+  "edges": {
+    "contains": 1932,
+    "exports": 1568,
+    "imports": 822
+  },
+  "layers": [
+    "Tests",
+    "Frontend App",
+    "Tauri Backend",
+    "Search Sidecar",
+    "Documentation",
+    "Configuration And Tooling",
+    "Miscellaneous Project Files"
+  ],
+  "tourSteps": 8,
+  "warnings": 73,
+  "outputPath": "/Users/goxy/projects/cognios/.understand-anything/knowledge-graph.json"
+}

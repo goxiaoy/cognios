@@ -312,6 +312,41 @@ describe("ChatLayout", () => {
     expect(await screen.findByRole("complementary", { name: /chat sessions/i })).toBeInTheDocument();
   });
 
+  it("sorts unsupported agentic models last and disables them with a reason", async () => {
+    const client = makeClient();
+    vi.mocked(client.getModels).mockResolvedValue({
+      models: {
+        state: "ready",
+        data: {
+          state: "ready",
+          providerId: "local-ollama",
+          models: [
+            {
+              id: "gemma3:4b",
+              name: "gemma3:4b",
+              supportsAgentic: false,
+              unavailableReason: "This Ollama model does not support tools.",
+            },
+            { id: "qwen3:4b", name: "qwen3:4b", supportsAgentic: true },
+          ],
+          cached: false,
+          warnings: [],
+        },
+      },
+    });
+
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    const picker = await screen.findByRole("button", { name: /model: qwen3:4b/i });
+    fireEvent.click(picker);
+    const options = screen.getAllByRole("option");
+
+    expect(options[0]).toHaveTextContent("qwen3:4b");
+    expect(options[1]).toHaveTextContent("gemma3:4b");
+    expect(options[1]).toHaveAttribute("aria-disabled", "true");
+    expect(options[1]).toHaveTextContent("This Ollama model does not support tools.");
+  });
+
   it("loads chat history on startup without selecting an old session", async () => {
     const client = makeClient();
     const session = {
@@ -479,6 +514,25 @@ describe("ChatLayout", () => {
       });
     });
     expect(screen.getByText("事故发生在 3 月 1 日。")).toBeInTheDocument();
+
+    act(() => {
+      eventMock.chatTurnListener!({
+        payload: {
+          turnEventId,
+          event: {
+            event: "tool",
+            toolEvents: [
+              {
+                toolName: "grep_workspace",
+                status: "running",
+                summary: "Searching workspace for '事故'.",
+              },
+            ],
+          },
+        },
+      });
+    });
+    expect(screen.getByText("Searching workspace for '事故'.")).toBeInTheDocument();
 
     act(() => {
       resolveTurn!({

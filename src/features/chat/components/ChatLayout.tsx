@@ -72,6 +72,14 @@ interface ChatCitation {
   path: string | null;
 }
 
+interface ChatToolEvent {
+  toolName: string;
+  status: string;
+  summary: string;
+  nodeId: string | null;
+  resultCount: number | null;
+}
+
 export function ChatLayout({
   client,
   searchClient,
@@ -154,6 +162,7 @@ export function ChatLayout({
           answer: current?.answer ?? "",
           citations: streamEvent.citations ?? current?.citations ?? [],
           warnings: streamEvent.warnings ?? current?.warnings ?? [],
+          toolEvents: streamEvent.toolEvents ?? current?.toolEvents ?? [],
           provider: current?.provider,
         }));
         return;
@@ -165,6 +174,20 @@ export function ChatLayout({
           answer: `${current?.answer ?? ""}${streamEvent.delta}`,
           citations: current?.citations ?? [],
           warnings: current?.warnings ?? [],
+          toolEvents: current?.toolEvents ?? [],
+          provider: current?.provider,
+        }));
+        return;
+      }
+      const streamedToolEvents = streamEvent.toolEvents ?? [];
+      if (streamEvent.event === "tool" && streamedToolEvents.length > 0) {
+        setTurn((current) => ({
+          state: current?.state ?? "ready",
+          clusters: current?.clusters ?? [],
+          answer: current?.answer ?? "",
+          citations: current?.citations ?? [],
+          warnings: current?.warnings ?? [],
+          toolEvents: [...(current?.toolEvents ?? []), ...streamedToolEvents],
           provider: current?.provider,
         }));
         return;
@@ -249,8 +272,19 @@ export function ChatLayout({
         setModelsStatus(chatModelsStatusMessage(data, result.models.error));
         return;
       }
-      setModels(data.models);
-      setSelectedModel((current) => current || data.models[0]?.id || "");
+      const sortedModels = [...data.models].sort((left, right) => {
+        if ((left.supportsAgentic === false) !== (right.supportsAgentic === false)) {
+          return left.supportsAgentic === false ? 1 : -1;
+        }
+        return left.name.localeCompare(right.name);
+      });
+      setModels(sortedModels);
+      setSelectedModel((current) => {
+        if (sortedModels.some((model) => model.id === current && model.supportsAgentic !== false)) {
+          return current;
+        }
+        return sortedModels.find((model) => model.supportsAgentic !== false)?.id ?? "";
+      });
       setModelsStatus(null);
     } catch {
       setModels([]);
@@ -583,6 +617,11 @@ export function ChatLayout({
 
   const transcript = active?.messages ?? [];
   const optimisticTranscript = active ? optimisticMessagesForSession(optimisticUserMessages, active) : [];
+  const selectableModels = models.filter((model) => model.supportsAgentic !== false);
+  const modelUnavailableReason =
+    !modelsLoading && models.length > 0 && selectableModels.length === 0
+      ? models[0]?.unavailableReason ?? "No configured model supports agentic chat tools."
+      : null;
   const currentChatIsEmpty = isCurrentChatEmpty(
     active,
     turn,
@@ -597,8 +636,8 @@ export function ChatLayout({
   const memoryAvailable = Boolean(active?.memory?.available);
   const renderableMemoryBody = memoryBody ? normalizeMemoryMarkdown(memoryBody) : "";
   const hasSessionHistory = sessions.length > 0;
-  const chatProviderReady = !modelsLoading && models.length > 0;
-  const showProviderSetup = !modelsLoading && Boolean(settings) && !chatProviderReady;
+  const chatProviderReady = !modelsLoading && selectableModels.length > 0;
+  const showProviderSetup = !modelsLoading && Boolean(settings) && models.length === 0;
   const composerDisabled = busy || !chatProviderReady || settingsLoading || Boolean(settingsError && !settings);
   const webSearchProviderId = settings?.features["web-search"]?.providerId ?? null;
   const webSearchEnabled = Boolean(
@@ -722,6 +761,7 @@ export function ChatLayout({
               <article key={message.id} className={`chat-message is-${message.role}`}>
                 {message.role === "system" ? <p className="chat-message-role">{message.role}</p> : null}
                 <MessageContextNodes nodes={attachedContext} />
+                {message.role === "assistant" ? <ChatToolActivity events={toolEventsFromMessage(message)} /> : null}
                 <ChatMessageBody
                   role={message.role}
                   body={message.body}
@@ -739,6 +779,7 @@ export function ChatLayout({
           ))}
           {showTransientAnswer ? (
             <article className="chat-message is-assistant">
+              <ChatToolActivity events={toolEventsFromUnknown(turn?.toolEvents)} />
               <ChatMessageBody
                 role="assistant"
                 body={turn?.answer ?? ""}
@@ -810,6 +851,8 @@ export function ChatLayout({
             placeholder={
               chatProviderReady
                 ? "Ask about a timeline, cost, cause, evidence gaps..."
+                : models.length > 0
+                  ? "Select a tool-capable model to start..."
                 : "Configure a chat provider to start..."
             }
             aria-label="Chat message"
@@ -822,9 +865,19 @@ export function ChatLayout({
                   label="Model"
                   value={selectedModel}
                   onChange={setSelectedModel}
-                  options={models.map((model) => ({ value: model.id, label: model.name }))}
+                  options={models.map((model) => ({
+                    value: model.id,
+                    label: model.name,
+                    disabled: model.supportsAgentic === false,
+                    disabledReason: model.unavailableReason,
+                  }))}
                   className="chat-model-picker"
                 />
+              ) : null}
+              {modelUnavailableReason ? (
+                <span className="chat-model-unavailable" role="status">
+                  {modelUnavailableReason}
+                </span>
               ) : null}
               {webSearchEnabled ? (
                 <span
@@ -1012,6 +1065,25 @@ function AssistantLoading() {
         <span />
         <span />
       </span>
+    </div>
+  );
+}
+
+function ChatToolActivity({ events }: { events: ChatToolEvent[] }) {
+  if (events.length === 0) return null;
+
+  return (
+    <div className="chat-tool-activity" aria-label="Workspace activity">
+      {events.map((event, index) => (
+        <span
+          className="chat-tool-activity-item"
+          data-status={event.status}
+          key={`${event.toolName}-${event.nodeId ?? event.resultCount ?? index}`}
+        >
+          <Search size={12} aria-hidden="true" />
+          <span>{event.summary}</span>
+        </span>
+      ))}
     </div>
   );
 }
@@ -1234,11 +1306,29 @@ function citationsFromMessage(message: ChatMessage): ChatCitation[] {
   }
 }
 
+function toolEventsFromMessage(message: ChatMessage): ChatToolEvent[] {
+  if (message.role !== "assistant") return [];
+
+  try {
+    const metadata = JSON.parse(message.metadataJson);
+    return isRecord(metadata) ? toolEventsFromUnknown(metadata.toolEvents) : [];
+  } catch {
+    return [];
+  }
+}
+
 function citationsFromUnknown(value: unknown): ChatCitation[] {
   if (!Array.isArray(value)) return [];
   return value
     .map(normalizeCitation)
     .filter((citation): citation is ChatCitation => Boolean(citation));
+}
+
+function toolEventsFromUnknown(value: unknown): ChatToolEvent[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(normalizeToolEvent)
+    .filter((event): event is ChatToolEvent => Boolean(event));
 }
 
 function normalizeCitation(value: unknown): ChatCitation | null {
@@ -1259,6 +1349,22 @@ function normalizeCitation(value: unknown): ChatCitation | null {
   };
 }
 
+function normalizeToolEvent(value: unknown): ChatToolEvent | null {
+  if (!isRecord(value)) return null;
+  const toolName = stringValue(value.toolName) ?? stringValue(value.tool_name);
+  const summary = stringValue(value.summary);
+  if (!toolName || !summary) return null;
+  const resultCount = numberValue(value.resultCount) ?? numberValue(value.result_count);
+
+  return {
+    toolName,
+    summary,
+    status: stringValue(value.status) ?? "ok",
+    nodeId: stringValue(value.nodeId) ?? stringValue(value.node_id),
+    resultCount,
+  };
+}
+
 function contextNodeForMessageHistory(node: ChatContextNode): ChatContextNode {
   return {
     nodeId: node.nodeId,
@@ -1275,6 +1381,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function normalizeMemoryMarkdown(body: string): string {

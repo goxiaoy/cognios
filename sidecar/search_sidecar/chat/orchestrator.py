@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
+from queue import Empty, Queue
+from threading import Thread
 
+from .agent_runtime import AgentRuntimeRequest, PydanticAgentRuntime
 from .clustering import cluster_sources
 from .provider import ChatProvider
 from .retrieval import ChatRetrieval
 from .sources import SourceCluster
+from .tools import CogniosChatToolsetFactory
 from .types import (
     ChatGeneration,
     ChatGenerationRequest,
@@ -55,6 +59,7 @@ class ChatTurnResponse:
     citations: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     provider: dict | None = None
+    tool_events: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         body = asdict(self)
@@ -70,6 +75,7 @@ class ChatTurnStreamEvent:
     clusters: list[SourceCluster] = field(default_factory=list)
     citations: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    tool_events: list[dict] = field(default_factory=list)
     error: str | None = None
 
     def to_dict(self) -> dict:
@@ -117,15 +123,27 @@ class _PreparedTurn:
     citations: list[dict]
 
 
+@dataclass(frozen=True)
+class _PreparedAgenticTurn:
+    context: list[str]
+    messages: list[ChatMessage]
+    warnings: list[str]
+    citations: list[dict]
+
+
 class ChatOrchestrator:
     def __init__(
         self,
         *,
         retrieval: ChatRetrieval,
         chat_provider: ChatProvider | None = None,
+        agent_runtime: PydanticAgentRuntime | None = None,
+        toolset_factory: CogniosChatToolsetFactory | None = None,
     ) -> None:
         self._retrieval = retrieval
         self._chat_provider = chat_provider
+        self._agent_runtime = agent_runtime
+        self._toolset_factory = toolset_factory
 
     def set_chat_provider(self, chat_provider: ChatProvider | None) -> None:
         _close_if_supported(self._chat_provider)
@@ -137,6 +155,8 @@ class ChatOrchestrator:
         self._retrieval.set_web_search_provider(web_search_provider)
 
     def run_turn(self, request: ChatTurnRequest) -> ChatTurnResponse:
+        if self._agent_runtime is not None and self._toolset_factory is not None:
+            return self._run_agentic_turn(request)
         prepared = self._prepare_turn(request)
         if request.accepted_cluster_ids and not prepared.accepted:
             return ChatTurnResponse(
@@ -210,6 +230,9 @@ class ChatOrchestrator:
         )
 
     def stream_turn(self, request: ChatTurnRequest) -> Iterator[ChatTurnStreamEvent]:
+        if self._agent_runtime is not None and self._toolset_factory is not None:
+            yield from self._stream_agentic_turn(request)
+            return
         prepared = self._prepare_turn(request)
         if request.accepted_cluster_ids and not prepared.accepted:
             yield ChatTurnStreamEvent(
@@ -313,6 +336,150 @@ class ChatOrchestrator:
             ),
         )
 
+    def _run_agentic_turn(self, request: ChatTurnRequest) -> ChatTurnResponse:
+        prepared = self._prepare_agentic_turn(request)
+        return self._run_agentic_turn_from_prepared(request, prepared)
+
+    def _stream_agentic_turn(
+        self, request: ChatTurnRequest
+    ) -> Iterator[ChatTurnStreamEvent]:
+        prepared = self._prepare_agentic_turn(request)
+        yield ChatTurnStreamEvent(
+            event="metadata",
+            clusters=[],
+            citations=prepared.citations,
+            warnings=prepared.warnings,
+        )
+        if self._chat_provider is None:
+            turn = ChatTurnResponse(
+                state="provider_unavailable",
+                clusters=[],
+                citations=prepared.citations,
+                warnings=[*prepared.warnings, "chat provider unavailable"],
+            )
+            yield ChatTurnStreamEvent(
+                event="final",
+                turn=turn,
+                error=turn.warnings[-1],
+            )
+            return
+
+        events: Queue[object] = Queue()
+
+        def publish_tool_event(event: dict) -> None:
+            events.put(ChatTurnStreamEvent(event="tool", tool_events=[event]))
+
+        assert self._toolset_factory is not None
+        toolset = self._toolset_factory.create(
+            citation_offset=len(prepared.citations),
+            event_sink=publish_tool_event,
+        )
+
+        def run_agent() -> None:
+            try:
+                events.put(
+                    self._run_agentic_turn_from_prepared(
+                        request,
+                        prepared,
+                        toolset=toolset,
+                    )
+                )
+            except Exception as err:
+                events.put(err)
+
+        worker = Thread(target=run_agent, name="chat-agentic-turn", daemon=True)
+        worker.start()
+        turn: ChatTurnResponse | None = None
+        while turn is None:
+            try:
+                item = events.get(timeout=0.05)
+            except Empty:
+                if not worker.is_alive():
+                    break
+                continue
+            if isinstance(item, ChatTurnStreamEvent):
+                yield item
+            elif isinstance(item, ChatTurnResponse):
+                turn = item
+            elif isinstance(item, Exception):
+                turn = ChatTurnResponse(
+                    state="provider_error",
+                    clusters=[],
+                    citations=prepared.citations,
+                    warnings=[*prepared.warnings, str(item)],
+                )
+
+        worker.join(timeout=0.1)
+        while True:
+            try:
+                item = events.get_nowait()
+            except Empty:
+                break
+            if isinstance(item, ChatTurnStreamEvent):
+                yield item
+            elif isinstance(item, ChatTurnResponse) and turn is None:
+                turn = item
+
+        if turn is None:
+            turn = ChatTurnResponse(
+                state="provider_error",
+                clusters=[],
+                citations=prepared.citations,
+                warnings=[*prepared.warnings, "chat agent ended without a final response"],
+            )
+        if turn.answer:
+            yield ChatTurnStreamEvent(event="delta", delta=turn.answer)
+        yield ChatTurnStreamEvent(
+            event="final",
+            turn=turn,
+            error=turn.warnings[-1] if turn.state != "ready" and turn.warnings else None,
+        )
+
+    def _run_agentic_turn_from_prepared(
+        self,
+        request: ChatTurnRequest,
+        prepared: _PreparedAgenticTurn,
+        *,
+        toolset=None,
+    ) -> ChatTurnResponse:
+        if self._chat_provider is None:
+            return ChatTurnResponse(
+                state="provider_unavailable",
+                clusters=[],
+                citations=prepared.citations,
+                warnings=[*prepared.warnings, "chat provider unavailable"],
+            )
+        assert self._agent_runtime is not None
+        assert self._toolset_factory is not None
+        try:
+            provider = self._agentic_provider(request.model)
+        except Exception as err:
+            return ChatTurnResponse(
+                state="provider_error",
+                clusters=[],
+                citations=prepared.citations,
+                warnings=[*prepared.warnings, str(err)],
+            )
+        if toolset is None:
+            toolset = self._toolset_factory.create(citation_offset=len(prepared.citations))
+        result = self._agent_runtime.run(
+            AgentRuntimeRequest(
+                messages=prepared.messages,
+                context=prepared.context,
+                provider=provider,
+                toolset=toolset,
+            )
+        )
+        return ChatTurnResponse(
+            state=result.state,
+            clusters=[],
+            answer=result.answer,
+            citations=[*prepared.citations, *result.citations],
+            warnings=[*prepared.warnings, *result.warnings],
+            provider=result.provider,
+            tool_events=result.tool_events,
+        )
+
     def _prepare_turn(self, request: ChatTurnRequest) -> _PreparedTurn:
         sources, warnings = self._retrieval.retrieve(
             request.query,
@@ -393,6 +560,53 @@ class ChatOrchestrator:
             citations=citations,
         )
 
+    def _prepare_agentic_turn(self, request: ChatTurnRequest) -> _PreparedAgenticTurn:
+        citation_counts = {"workspace": 0}
+        citations: list[dict] = []
+
+        def register_workspace_citation(
+            title: str,
+            citation: str,
+            path: str | None = None,
+        ) -> str:
+            citation_counts["workspace"] += 1
+            marker = f"W{citation_counts['workspace']}"
+            body = {
+                "sourceKind": "workspace",
+                "title": title,
+                "citation": citation,
+                "label": _citation_display_label(title, path),
+                "marker": marker,
+                "nodeId": citation,
+            }
+            if path:
+                body["path"] = path
+            citations.append(body)
+            return marker
+
+        manual_contexts = [
+            _manual_context(
+                node,
+                register_workspace_citation(node.title, node.node_id, node.path),
+            )
+            for node in request.context_nodes
+        ]
+        context = [
+            *(
+                [_memory_context(request.session_memory)]
+                if request.session_memory is not None
+                else []
+            ),
+            *manual_contexts,
+        ]
+        messages = request.messages or [ChatMessage(role="user", content=request.query)]
+        return _PreparedAgenticTurn(
+            context=context,
+            messages=messages,
+            warnings=[],
+            citations=citations,
+        )
+
     def _ready_response(
         self, prepared: _PreparedTurn, generation: ChatGeneration
     ) -> ChatTurnResponse:
@@ -408,6 +622,14 @@ class ChatOrchestrator:
                 "usage": generation.usage,
             },
         )
+
+    def _agentic_provider(self, model: str | None):
+        if self._chat_provider is None:
+            return None
+        agentic_provider = getattr(self._chat_provider, "agentic_provider", None)
+        if not callable(agentic_provider):
+            return None
+        return agentic_provider(model)
 
     def list_models(self) -> ChatModelList | None:
         if self._chat_provider is None:
@@ -440,6 +662,7 @@ def _memory_context(memory: ChatMemoryContext) -> str:
 
 def _manual_context(node: ChatContextNode, citation_label: str) -> str:
     lines = [f"User-attached node: {node.title}"]
+    lines.append(f"Node ID: {node.node_id}")
     lines.append(f"Citation: [{citation_label}]")
     if node.kind:
         lines.append(f"Kind: {node.kind}")

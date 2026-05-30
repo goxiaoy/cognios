@@ -28,6 +28,7 @@ def test_v1_presets_cover_known_providers():
         "local-ollama",
         "openai",
         "qwen-dashscope",
+        "deepseek",
         "brave-search",
         "tavily-search",
     }
@@ -85,7 +86,8 @@ def test_capability_matrix_matches_v1_decision():
     - local-qwen-asr → audio-transcript (Qwen3-ASR)
     - local-ollama → chat
     - openai → embedding + vision + ocr + advanced-ocr + chat
-    - qwen-dashscope → vision + ocr + advanced-ocr
+    - qwen-dashscope → vision + ocr + advanced-ocr + chat
+    - deepseek → chat
     - brave-search → web-search
     - tavily-search → web-search
     """
@@ -103,8 +105,9 @@ def test_capability_matrix_matches_v1_decision():
         {"embedding", "vision", "ocr", "advanced-ocr", "chat"}
     )
     assert PRESETS["qwen-dashscope"].capabilities == frozenset(
-        {"vision", "ocr", "advanced-ocr"}
+        {"vision", "ocr", "advanced-ocr", "chat"}
     )
+    assert PRESETS["deepseek"].capabilities == frozenset({"chat"})
     assert PRESETS["brave-search"].capabilities == frozenset({"web-search"})
     assert PRESETS["tavily-search"].capabilities == frozenset({"web-search"})
 
@@ -113,7 +116,7 @@ def test_chat_and_web_search_capabilities_are_explicit():
     chat_ids = {p.provider_id for p in presets_with_capability("chat")}
     web_ids = {p.provider_id for p in presets_with_capability("web-search")}
 
-    assert chat_ids == {"local-ollama", "openai"}
+    assert chat_ids == {"local-ollama", "openai", "qwen-dashscope", "deepseek"}
     assert web_ids == {"brave-search", "tavily-search"}
 
 
@@ -142,7 +145,7 @@ def test_presets_with_capability_filters_correctly():
 
     chat_providers = presets_with_capability("chat")
     chat_ids = {p.provider_id for p in chat_providers}
-    assert chat_ids == {"local-ollama", "openai"}
+    assert chat_ids == {"local-ollama", "openai", "qwen-dashscope", "deepseek"}
 
     audio_transcript_providers = presets_with_capability("audio-transcript")
     audio_transcript_ids = {p.provider_id for p in audio_transcript_providers}

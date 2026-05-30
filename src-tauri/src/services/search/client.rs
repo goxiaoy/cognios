@@ -535,6 +535,8 @@ pub struct ChatTurnStreamEventDto {
     #[serde(default)]
     pub warnings: Vec<String>,
     #[serde(default)]
+    pub tool_events: Vec<serde_json::Value>,
+    #[serde(default)]
     pub error: Option<String>,
 }
 
@@ -652,6 +654,8 @@ pub struct ChatTurnResponseDto {
     pub warnings: Vec<String>,
     #[serde(default)]
     pub provider: Option<serde_json::Value>,
+    #[serde(default)]
+    pub tool_events: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -659,6 +663,10 @@ pub struct ChatTurnResponseDto {
 pub struct ChatModelDto {
     pub id: String,
     pub name: String,
+    #[serde(default = "default_true")]
+    pub supports_agentic: bool,
+    #[serde(default)]
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1627,6 +1635,41 @@ data: {"event":"final","turn":{"state":"ready","clusters":[],"answer":"hello","c
         assert_eq!(
             collected[1].turn.as_ref().unwrap().answer.as_deref(),
             Some("hello")
+        );
+    }
+
+    #[test]
+    fn chat_models_round_trip_agentic_capability_metadata() {
+        let from_python = r#"{
+            "state": "ready",
+            "provider_id": "local-ollama",
+            "models": [
+                {"id": "qwen3:4b", "name": "qwen3:4b", "supports_agentic": true},
+                {
+                    "id": "gemma3:4b",
+                    "name": "gemma3:4b",
+                    "supports_agentic": false,
+                    "unavailable_reason": "This Ollama model does not support tools."
+                }
+            ],
+            "cached": false,
+            "warnings": []
+        }"#;
+        let parsed: ChatModelsResponseDto =
+            serde_json::from_str(from_python).expect("decode chat models");
+        assert!(parsed.models[0].supports_agentic);
+        assert!(!parsed.models[1].supports_agentic);
+        assert_eq!(
+            parsed.models[1].unavailable_reason.as_deref(),
+            Some("This Ollama model does not support tools.")
+        );
+
+        let to_ts = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(to_ts["models"][0]["supportsAgentic"], true);
+        assert_eq!(to_ts["models"][1]["supportsAgentic"], false);
+        assert_eq!(
+            to_ts["models"][1]["unavailableReason"],
+            "This Ollama model does not support tools."
         );
     }
 

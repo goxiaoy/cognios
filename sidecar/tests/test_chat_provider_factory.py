@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from search_sidecar.chat.factory import select_chat_provider
+from search_sidecar.chat.openai_compat import OpenAICompatChatProvider
 from search_sidecar.chat.ollama import OllamaChatProvider
 from search_sidecar.settings import FeatureConfig, ProviderConfig, SearchSettings, default_settings
 
@@ -37,3 +38,29 @@ def test_non_chat_provider_binding_returns_none():
     )
 
     assert select_chat_provider(settings) is None
+
+
+def test_saved_qwen_config_selects_litellm_openai_compatible_provider():
+    settings = SearchSettings(
+        providers={"qwen-dashscope": ProviderConfig(provider_id="qwen-dashscope")},
+        features={"chat": FeatureConfig(enabled=True, provider_id="qwen-dashscope")},
+    )
+
+    provider = select_chat_provider(settings)
+
+    assert isinstance(provider, OpenAICompatChatProvider)
+    assert provider.provider_id == "qwen-dashscope"
+    assert provider.model == "qwen-plus"
+
+
+def test_saved_deepseek_config_selects_litellm_openai_compatible_provider():
+    settings = SearchSettings(
+        providers={"deepseek": ProviderConfig(provider_id="deepseek")},
+        features={"chat": FeatureConfig(enabled=True, provider_id="deepseek")},
+    )
+
+    provider = select_chat_provider(settings)
+
+    assert isinstance(provider, OpenAICompatChatProvider)
+    assert provider.provider_id == "deepseek"
+    assert provider.model == "deepseek-v4-flash"

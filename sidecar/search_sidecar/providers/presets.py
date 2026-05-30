@@ -80,7 +80,8 @@ class ProviderPreset:
 #   local-qwen-asr                                               ✓
 #   local-ollama                                                       ✓
 #   openai              ✓                    ✓     ✓       ✓           ✓
-#   qwen-dashscope                           ✓     ✓       ✓
+#   qwen-dashscope                           ✓     ✓       ✓           ✓
+#   deepseek                                                         ✓
 #   brave-search                                                               ✓
 #   tavily-search                                                              ✓
 #
@@ -91,9 +92,9 @@ class ProviderPreset:
 # multi-repo manifest support AND a llama-server runtime.
 #
 # DeepSeek + Qwen embedding/reranking are explicitly out of v1 scope:
-# DeepSeek only offers chat (which is v2), Qwen embedding is 1024-dim
-# (incompatible with the locked 768-dim lancedb schema), Qwen
-# reranking uses a non-OpenAI-compatible endpoint shape.
+# DeepSeek only offers chat, Qwen embedding is 1024-dim (incompatible
+# with the locked 768-dim lancedb schema), and Qwen reranking uses a
+# non-OpenAI-compatible endpoint shape.
 PRESETS: dict[str, ProviderPreset] = {
     "local-gte": ProviderPreset(
         provider_id="local-gte",
@@ -196,13 +197,14 @@ PRESETS: dict[str, ProviderPreset] = {
         provider_id="qwen-dashscope",
         display_name="Qwen DashScope",
         provider_type="cloud",
-        capabilities=frozenset({"vision", "ocr", "advanced-ocr"}),
+        capabilities=frozenset({"vision", "ocr", "advanced-ocr", "chat"}),
         default_model_per_capability={
             "vision": "qwen-vl-plus",
             "ocr": "qwen-vl-plus",
             # qwen-vl-plus handles structured invoice/receipt prompts
             # competitively with 4o-mini on Chinese-language docs.
             "advanced-ocr": "qwen-vl-plus",
+            "chat": "qwen-plus",
         },
         auth_kind="api-key",
         # OpenAI-compatible mode endpoint; Qwen embedding/reranking
@@ -210,6 +212,19 @@ PRESETS: dict[str, ProviderPreset] = {
         # supports them (incompatible dim / endpoint shape — see
         # plan rationale).
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        validation_endpoint="/models",
+        api_key_prefix="sk-",
+    ),
+    "deepseek": ProviderPreset(
+        provider_id="deepseek",
+        display_name="DeepSeek",
+        provider_type="cloud",
+        capabilities=frozenset({"chat"}),
+        default_model_per_capability={
+            "chat": "deepseek-v4-flash",
+        },
+        auth_kind="api-key",
+        base_url="https://api.deepseek.com",
         validation_endpoint="/models",
         api_key_prefix="sk-",
     ),
