@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from search_sidecar.chat.openai_compat import OpenAICompatChatProvider
@@ -89,3 +90,81 @@ def test_openai_compat_chat_streams_litellm_chunks():
     assert [chunk.content_delta for chunk in chunks[:-1]] == ["事", "故"]
     assert chunks[-1].done is True
     assert chunks[-1].usage == {"total_tokens": 4}
+
+
+def test_openai_compat_chat_lists_remote_models_without_cache():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/models"
+        assert request.headers["authorization"] == "Bearer sk-test"
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {"id": "deepseek-chat", "object": "model"},
+                    {"id": "deepseek-reasoner", "object": "model"},
+                ],
+            },
+        )
+
+    provider = OpenAICompatChatProvider(
+        provider_id="deepseek",
+        base_url="https://api.deepseek.test",
+        model="deepseek-v4-flash",
+        api_key_provider=lambda: "sk-test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    first = provider.list_models()
+    second = provider.list_models()
+
+    assert [model.id for model in first.models] == [
+        "deepseek-chat",
+        "deepseek-reasoner",
+    ]
+    assert [model.id for model in second.models] == [
+        "deepseek-chat",
+        "deepseek-reasoner",
+    ]
+    assert first.cached is False
+    assert second.cached is False
+    assert len(requests) == 2
+
+
+def test_openai_compat_chat_list_models_falls_back_to_configured_model_on_error():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="try later")
+
+    provider = OpenAICompatChatProvider(
+        provider_id="deepseek",
+        base_url="https://api.deepseek.test",
+        model="deepseek-v4-flash",
+        api_key_provider=lambda: "sk-test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    result = provider.list_models()
+
+    assert result.models[0].id == "deepseek-v4-flash"
+    assert result.cached is False
+
+
+def test_openai_compat_chat_list_models_falls_back_on_malformed_payload():
+    provider = OpenAICompatChatProvider(
+        provider_id="deepseek",
+        base_url="https://api.deepseek.test",
+        model="deepseek-v4-flash",
+        api_key_provider=lambda: "sk-test",
+        http_client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(200, json={"models": []})
+            )
+        ),
+    )
+
+    result = provider.list_models()
+
+    assert [model.id for model in result.models] == ["deepseek-v4-flash"]
