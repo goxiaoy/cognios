@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from ..index.embedder import Embedder
 from ..storage import LanceDBStore
@@ -118,6 +118,7 @@ class SearchOrchestrator:
         over_fetch: int = DEFAULT_OVER_FETCH,
         top_nodes: int = DEFAULT_TOP_NODES,
         rerank_window: int = DEFAULT_RERANK_WINDOW,
+        active_node_ids: Callable[[], set[str]] | None = None,
     ) -> None:
         self._store = store
         self._embedder = embedder
@@ -125,6 +126,7 @@ class SearchOrchestrator:
         self._over_fetch = over_fetch
         self._top_nodes = top_nodes
         self._rerank_window = rerank_window
+        self._active_node_ids = active_node_ids
 
     def search(self, request: SearchRequest) -> SearchResponse:
         parsed = parse_query(request.query or "")
@@ -150,6 +152,7 @@ class SearchOrchestrator:
 
         # Aggregate to one row per node, then sort + slice the page.
         aggregated = self._aggregate_per_node(rows, parsed)
+        aggregated = self._filter_active_nodes(aggregated)
         ordered = self._sort_results(aggregated, request.sort)
         # Cross-encoder rerank: only meaningful when the user asked
         # for relevance order (sort=modified means "respect the
@@ -169,6 +172,12 @@ class SearchOrchestrator:
             state="ready",
             next_cursor=next_cursor,
         )
+
+    def _filter_active_nodes(self, results: list[SearchResult]) -> list[SearchResult]:
+        if self._active_node_ids is None or not results:
+            return results
+        active = self._active_node_ids()
+        return [result for result in results if result.node_id in active]
 
     def _fetch_chunks(
         self,

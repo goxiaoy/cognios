@@ -173,7 +173,10 @@ def serve(storage_dir: Path) -> int:
     if reranker is not None:
         LOG.info("cross-encoder reranker loaded: %s", type(reranker).__name__)
     search_orchestrator = SearchOrchestrator(
-        store=lancedb_store, embedder=embedder, reranker=reranker
+        store=lancedb_store,
+        embedder=embedder,
+        reranker=reranker,
+        active_node_ids=indexing_queue.list_node_ids,
     )
     chat_orchestrator = ChatOrchestrator(
         retrieval=ChatRetrieval(

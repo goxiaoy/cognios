@@ -14,7 +14,7 @@ from search_sidecar.retrieval import (
     SearchOrchestrator,
     SearchRequest,
 )
-from search_sidecar.storage import open_store
+from search_sidecar.storage import EMBEDDING_DIMENSION, NodeChunk, open_store
 
 UUID_A = "11111111-1111-1111-1111-111111111111"
 UUID_B = "22222222-2222-2222-2222-222222222222"
@@ -124,6 +124,44 @@ def test_search_aggregates_multiple_chunks_into_one_node(setup, tmp_path: Path):
     node_ids = [r.node_id for r in resp.results]
     # That node id appears at most once in the result list
     assert node_ids.count("55555555-5555-5555-5555-555555555555") == 1
+
+
+def test_search_filters_stale_index_rows_by_active_node_ids(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    stale_id = "77777777-7777-7777-7777-777777777777"
+    active_id = "88888888-8888-8888-8888-888888888888"
+    text = "20260301肖裕意外\n/Users/goxy/Documents/20260301肖裕意外\nmount"
+    store.upsert(
+        [
+            NodeChunk(
+                id=f"{stale_id}:metadata:0",
+                node_id=stale_id,
+                kind="mount",
+                name="20260301肖裕意外",
+                text=text,
+                vector=[0.0] * EMBEDDING_DIMENSION,
+                role="metadata",
+            ),
+            NodeChunk(
+                id=f"{active_id}:metadata:0",
+                node_id=active_id,
+                kind="mount",
+                name="20260301肖裕意外",
+                text=text,
+                vector=[0.0] * EMBEDDING_DIMENSION,
+                role="metadata",
+            ),
+        ]
+    )
+    orch = SearchOrchestrator(
+        store=store,
+        embedder=StubEmbedder(),
+        active_node_ids=lambda: {active_id},
+    )
+
+    resp = orch.search(SearchRequest(query="mount kind:mount"))
+
+    assert [result.node_id for result in resp.results] == [active_id]
 
 
 def test_search_respects_limit_argument(setup):
