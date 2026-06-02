@@ -341,6 +341,51 @@ describe("HomeDashboard", () => {
     ).toBeInTheDocument();
   });
 
+  it("refreshes secondary prompts when settings change outside Home", async () => {
+    const disabled = makeSettings({
+      features: {
+        chat: { enabled: true, providerId: "local-ollama" },
+        "advanced-ocr": { enabled: false, providerId: null },
+      },
+    });
+    const enabled = makeSettings({
+      features: {
+        chat: { enabled: true, providerId: "local-ollama" },
+        "advanced-ocr": {
+          enabled: true,
+          providerId: "local-paddleocr-advanced",
+        },
+      },
+    });
+    const client = {
+      ...makeClient(disabled),
+      settings: vi
+        .fn()
+        .mockResolvedValueOnce({ state: "ready", data: disabled })
+        .mockResolvedValue({ state: "ready", data: enabled }),
+    };
+
+    render(
+      <HomeDashboard
+        client={client}
+        workspaceNodes={[node({ id: "scan-1", kind: "file", name: "scan.pdf" })]}
+      />
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: /Improve OCR for documents/i })
+    ).toBeInTheDocument();
+
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() => {
+      expect(client.settings).toHaveBeenCalledTimes(2);
+      expect(
+        screen.queryByRole("heading", { name: /Improve OCR for documents/i })
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("places the Chat provider prompt above the status cards", async () => {
     const client = makeClient(
       makeSettings({

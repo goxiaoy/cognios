@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useState,
   type Dispatch,
@@ -119,6 +120,27 @@ export function HomeDashboard({
   const [selectedChatProviderId, setSelectedChatProviderId] = useState(
     DEFAULT_CHAT_PROVIDER_ID
   );
+  const workspaceIsEmpty = workspaceNodes
+    ? isWorkspaceEmpty(workspaceNodes)
+    : false;
+
+  const refreshSettings = useCallback(async () => {
+    if (!workspaceNodes || workspaceIsEmpty) {
+      setSettings(null);
+      return;
+    }
+
+    try {
+      const env = await client.settings();
+      if (env.state === "ready" && env.data) {
+        setSettings(env.data);
+      } else {
+        setSettings(null);
+      }
+    } catch {
+      setSettings(null);
+    }
+  }, [client, workspaceIsEmpty, workspaceNodes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,34 +184,30 @@ export function HomeDashboard({
     };
   }, [client, recentIndexDays]);
 
-  const workspaceIsEmpty = workspaceNodes
-    ? isWorkspaceEmpty(workspaceNodes)
-    : false;
-
   useEffect(() => {
-    if (!workspaceNodes || workspaceIsEmpty) {
-      setSettings(null);
-      return;
-    }
-
     let cancelled = false;
-    void client
-      .settings()
-      .then((env) => {
-        if (!cancelled && env.state === "ready" && env.data) {
-          setSettings(env.data);
-        } else if (!cancelled) {
-          setSettings(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setSettings(null);
-      });
+    void refreshSettings().catch(() => {
+      if (!cancelled) setSettings(null);
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [client, workspaceIsEmpty, workspaceNodes]);
+  }, [refreshSettings]);
+
+  useEffect(() => {
+    function refreshWhenVisible() {
+      if (document.visibilityState === "hidden") return;
+      void refreshSettings();
+    }
+
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [refreshSettings]);
 
   useEffect(() => {
     const providerId = settings?.features.chat?.providerId;
