@@ -11,10 +11,10 @@ write paths don't need to change. The cloud runtime contract is:
   ``text-embedding-3-small`` this returns properly-normalized 768-dim
   vectors directly, matching the locked lancedb schema dimension.
 - Response shape (OpenAI-compatible): ``{"data": [{"embedding": [...]}, ...]}``.
-- API key is read lazily per ``embed()`` call from the OS keychain via
-  the injected ``api_key_provider`` callable. Lazy resolution means
-  a key rotation between sidecar boot and first embed picks up the
-  new key without restart.
+- API key is read lazily per ``embed()`` call from the injected
+  ``api_key_provider`` callable, which resolves ``~/.cogios/.env``.
+  Lazy resolution means a key rotation between sidecar boot and first
+  embed picks up the new key without restart.
 - Sync ``httpx.Client``; the indexing runner already runs on a worker
   thread, and lancedb downstream is sync, so async would buy nothing.
 - Hard validation on response: vector count matches input batch size,

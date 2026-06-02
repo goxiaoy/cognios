@@ -228,7 +228,7 @@ export interface StartModelDownloadInput {
 
 /** A user-configured cloud or local provider entry stored in
  * settings.json. References to API keys are by reference only —
- * the real secret lives in the OS keychain. */
+ * the real secret lives in ~/.cogios/.env. */
 export interface ProviderConfig {
   providerId: string;
   enabled: boolean;

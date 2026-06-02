@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Callable
 
 from ..providers import (
     PRESETS,
-    KeychainUnavailableError,
+    SecretStoreUnavailableError,
     get_provider_secret,
 )
 from ..settings import SearchSettings
@@ -302,12 +302,12 @@ def _build_cloud_client(
 
 
 def _resolve_api_key(provider_id: str) -> str:
-    """Lazy keychain read — same shape as the embedder factory."""
+    """Lazy env-file read, same shape as the embedder factory."""
     try:
         secret = get_provider_secret(provider_id)
-    except KeychainUnavailableError as err:
+    except SecretStoreUnavailableError as err:
         raise RuntimeError(
-            f"OS keychain unreachable for provider {provider_id!r}: {err}."
+            f"provider secret env file unavailable for {provider_id!r}: {err}."
         ) from err
     if not secret:
         raise RuntimeError(

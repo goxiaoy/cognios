@@ -31,11 +31,10 @@ unknown fields in the on-disk file are silently dropped (see
 ``model_config`` extras setting); future sidecars that add fields
 inherit a clean shape on first write.
 
-API key references use the format
-``keychain://cognios-search/provider:<provider_id>``. The reference
-is informational; consumers (cloud Embedder, the Rust commands)
-resolve via the constant service name + account name, not by
-parsing the URL.
+API key references use the format ``env-file://cogios/.env#<provider_id>``.
+The reference is informational; consumers resolve provider secrets
+from ``~/.cogios/.env`` using the ``COGNIOS_PROVIDER_<ID>_KEY`` naming
+convention, not by parsing the URL.
 """
 
 from __future__ import annotations
@@ -376,7 +375,8 @@ def boot_signature(settings: SearchSettings) -> str:
     - ``cloud_consent_acked`` — pure UI gate state.
     - ``first_run_skipped`` — pure UI banner state.
     - ``api_key_ref`` — the cloud Embedder reads keys lazily from
-      the keychain, so a key rotation is picked up on next embed.
+      the provider secret env file, so a key rotation is picked up
+      on next embed.
     - Provider ``enabled`` flag — currently advisory only; the
       feature binding is the load-bearing field.
 

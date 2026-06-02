@@ -2,8 +2,8 @@
 
 The frontend (and the Rust supervisor when it needs the canonical
 state) talks to these routes; both processes ultimately resolve API
-keys from the OS keychain via the shared ``cognios-search`` service
-name. Bearer auth is inherited from the global middleware.
+keys from ``~/.cogios/.env``. Bearer auth is inherited from the
+global middleware.
 
 ``needs_restart`` is a computed flag indicating whether the on-disk
 settings differ from what the running sidecar booted with in any
@@ -119,9 +119,8 @@ def put_settings(body: SearchSettings, request: Request) -> dict:
     settings = load_settings(path)  # re-load to confirm round-trip
     # Invalidate cached provider secrets on every PUT — the user may
     # have rotated a key on the Rust side (set_provider_secret IPC)
-    # between PUTs, and the per-process cache in
-    # ``providers.keychain`` would otherwise serve the stale value
-    # until the next sidecar restart.
+    # between PUTs, and the per-process provider-secret cache would
+    # otherwise serve the stale value until the next sidecar restart.
     invalidate_provider_secret_cache()
     _refresh_runtime_settings(request, settings)
     needs_restart = _compute_needs_restart(request, settings)

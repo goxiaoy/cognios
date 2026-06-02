@@ -1502,7 +1502,7 @@ mod tests {
                 "openai": {
                     "provider_id": "openai",
                     "enabled": true,
-                    "api_key_ref": "keychain://cognios-search/provider:openai",
+                    "api_key_ref": "env-file://cogios/.env#openai",
                     "base_url": null,
                     "model_per_capability": {"embedding": "text-embedding-3-small"}
                 }
@@ -1519,7 +1519,7 @@ mod tests {
         assert_eq!(parsed.version, 1);
         assert_eq!(
             parsed.providers["openai"].api_key_ref.as_deref(),
-            Some("keychain://cognios-search/provider:openai")
+            Some("env-file://cogios/.env#openai")
         );
         assert_eq!(
             parsed.features["semantic-search"].provider_id.as_deref(),
@@ -1533,7 +1533,7 @@ mod tests {
         assert_eq!(to_ts["providers"]["openai"]["providerId"], "openai");
         assert_eq!(
             to_ts["providers"]["openai"]["apiKeyRef"],
-            "keychain://cognios-search/provider:openai"
+            "env-file://cogios/.env#openai"
         );
         assert_eq!(to_ts["features"]["semantic-search"]["providerId"], "openai");
         assert_eq!(to_ts["needsRestart"], true);

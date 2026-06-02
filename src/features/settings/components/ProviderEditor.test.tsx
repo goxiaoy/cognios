@@ -127,7 +127,7 @@ describe("ProviderEditor", () => {
     expect(button).toHaveClass("is-success");
   });
 
-  it("removes configurable local provider settings without touching keychain", async () => {
+  it("removes configurable local provider settings without touching secrets", async () => {
     const deleteProviderSecret = vi.fn().mockResolvedValue(undefined);
     const updateSettings = vi.fn().mockResolvedValue({
       state: "ready",
@@ -265,7 +265,7 @@ describe("ProviderEditor", () => {
     expect(updateSettings).toHaveBeenCalled();
     const arg = updateSettings.mock.calls[0][0];
     expect(arg.providers.openai.apiKeyRef).toBe(
-      "keychain://cognios-search/provider:openai"
+      "env-file://cogios/.env#openai"
     );
     expect(onClose).toHaveBeenCalled();
   });
@@ -305,7 +305,7 @@ describe("ProviderEditor", () => {
         config={{
           providerId: "openai",
           enabled: true,
-          apiKeyRef: "keychain://cognios-search/provider:openai",
+          apiKeyRef: "env-file://cogios/.env#openai",
           baseUrl: null,
           modelPerCapability: {},
         }}
@@ -332,7 +332,7 @@ describe("ProviderEditor", () => {
         openai: {
           providerId: "openai",
           enabled: true,
-          apiKeyRef: "keychain://cognios-search/provider:openai",
+          apiKeyRef: "env-file://cogios/.env#openai",
           baseUrl: null,
           modelPerCapability: {},
         },

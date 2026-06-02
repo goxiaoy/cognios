@@ -6,7 +6,7 @@ Three layers of choice:
    the ``semantic-search`` feature is bound to a known provider,
    the factory routes to that provider. Cloud providers go through
    :class:`OpenAICompatEmbedder` with the API key resolved lazily
-   from the OS keychain. Local providers continue to use
+   from ``~/.cogios/.env``. Local providers continue to use
    :class:`GteEmbedder` (today's only local option).
 2. **Real-vs-stub for local providers.** When the local route is
    chosen, the existing checks apply: ``embedding`` extra installed,
@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 from ..index.embedder import Embedder, StubEmbedder
 from ..providers import (
     PRESETS,
-    KeychainUnavailableError,
+    SecretStoreUnavailableError,
     get_provider_secret,
 )
 from .gte import GteEmbedder, GteEmbedderConfig
@@ -69,7 +69,7 @@ def select_embedder(
     Order:
     1. If ``settings`` is provided, look at the ``semantic-search``
        feature binding. Cloud provider → :class:`OpenAICompatEmbedder`
-       (lazy key from keychain). Unknown provider id → log + fall
+       (lazy key from env file). Unknown provider id → log + fall
        through to local routing.
     2. Local route: real :class:`GteEmbedder` when the extra is
        installed, ``model_manager.is_ready(role)`` is True, and the
@@ -77,7 +77,7 @@ def select_embedder(
     3. :class:`StubEmbedder` for everything else.
 
     Failures during construction (missing files, model init crash,
-    keychain unavailable) are logged at WARN and fall through to the
+    secret store unavailable) are logged at WARN and fall through to the
     stub. The orchestrator prefers degraded-FTS results to no results.
     """
     cloud = _try_select_cloud_embedder(settings)
@@ -152,7 +152,7 @@ def _try_select_cloud_embedder(
 
 
 def _resolve_api_key(provider_id: str) -> str:
-    """Read the API key from the OS keychain at embed-time.
+    """Read the API key from ``~/.cogios/.env`` at embed-time.
 
     Lazy resolution is intentional: a key rotation between sidecar
     boot and the next embed call is picked up without restart, and
@@ -161,11 +161,9 @@ def _resolve_api_key(provider_id: str) -> str:
     """
     try:
         secret = get_provider_secret(provider_id)
-    except KeychainUnavailableError as err:
+    except SecretStoreUnavailableError as err:
         raise RuntimeError(
-            f"OS keychain unreachable for provider {provider_id!r}: {err}. "
-            "On Linux ensure a Secret Service daemon (gnome-keyring / "
-            "KeePassXC / kwallet) is running, or install `keyrings.alt`."
+            f"provider secret env file unavailable for {provider_id!r}: {err}."
         ) from err
     if not secret:
         raise RuntimeError(

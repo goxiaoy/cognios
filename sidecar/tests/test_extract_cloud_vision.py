@@ -171,11 +171,13 @@ def test_api_key_provider_failure_raises_clean_error(tmp_path):
     client = OpenAICompatVisionClient(
         base_url="https://api.example.com/v1",
         model="m",
-        api_key_provider=lambda: (_ for _ in ()).throw(RuntimeError("keychain dead")),
+        api_key_provider=lambda: (_ for _ in ()).throw(
+            RuntimeError("secret store dead")
+        ),
         provider_label="testcloud",
         client=httpx.Client(transport=transport),
     )
-    with pytest.raises(RuntimeError, match="keychain dead"):
+    with pytest.raises(RuntimeError, match="secret store dead"):
         client.extract_ocr(img)
 
 

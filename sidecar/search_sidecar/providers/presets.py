@@ -3,9 +3,10 @@
 Each preset declares:
 
 - ``provider_id`` — stable identifier used in settings.json bindings,
-  keychain account names (``provider:<id>``), and Tauri IPC commands.
+  provider secret env variable names, and Tauri IPC commands.
 - ``provider_type`` — ``"local"`` (downloadable, lifecycle managed by
-  :class:`ModelManager`) or ``"cloud"`` (HTTP API, key in keychain).
+  :class:`ModelManager`) or ``"cloud"`` (HTTP API, key in
+  ``~/.cogios/.env``).
 - ``capabilities`` — the typed slots this provider can fill.
 - ``default_model_per_capability`` — the model to use for each
   capability the provider serves, unless the user overrides it. For

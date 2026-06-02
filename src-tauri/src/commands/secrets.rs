@@ -1,11 +1,10 @@
 //! Tauri commands wrapping `services::secure_storage`.
 //!
-//! These are the only IPC entry points that touch the OS keychain.
-//! API keys for cloud providers (OpenAI, Qwen DashScope, Ollama-
-//! gateway, ...) live under account names of the form
-//! ``provider:<id>`` in the ``cognios-search`` keychain group. The
-//! Python sidecar reads from the same slot via the ``keyring``
-//! library — see ``sidecar/search_sidecar/providers/keychain.py``.
+//! These are the only IPC entry points that write provider API keys.
+//! Cloud-provider keys (OpenAI, Qwen DashScope, Ollama-gateway, ...)
+//! are persisted in `~/.cogios/.env` as variables such as
+//! `COGNIOS_PROVIDER_OPENAI_KEY`. The Python sidecar reads the same
+//! file via `sidecar/search_sidecar/providers/keychain.py`.
 
 use serde::Deserialize;
 
@@ -25,7 +24,7 @@ pub struct ProviderSecretLookupInput {
 }
 
 /// Validate a provider id at the IPC boundary so a malformed input
-/// can't synthesize a weird keychain account name. Allowed shape
+/// can't synthesize a weird secret account name. Allowed shape
 /// matches the PRESETS table on the sidecar side: lowercase letters,
 /// digits, and hyphens, starting with a letter.
 fn validate_provider_id(provider_id: &str) -> Result<(), String> {
@@ -112,9 +111,9 @@ mod tests {
 
     #[test]
     fn provider_account_format_matches_sidecar_expectation() {
-        // Must match ``provider:<id>`` so the sidecar's
-        // keyring.get_password("cognios-search", f"provider:{id}")
-        // hits the same slot.
+        // Must match ``provider:<id>`` so secure_storage maps it to
+        // the same COGNIOS_PROVIDER_<ID>_KEY variable the sidecar
+        // reads from ~/.cogios/.env.
         assert_eq!(provider_account("openai"), "provider:openai");
         assert_eq!(
             provider_account("qwen-dashscope"),

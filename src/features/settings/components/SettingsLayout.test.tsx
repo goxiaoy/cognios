@@ -169,7 +169,7 @@ describe("SettingsLayout", () => {
     ready.data.providers.openai = {
       providerId: "openai",
       enabled: true,
-      apiKeyRef: "keychain://cognios-search/provider:openai",
+      apiKeyRef: "env-file://cogios/.env#openai",
       baseUrl: "https://api.openai.com/v1",
       modelPerCapability: {},
     };

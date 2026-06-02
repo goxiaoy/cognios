@@ -1,42 +1,12 @@
-"""Thin wrapper around ``keyring`` for cross-process secret access.
+"""Provider secret access backed by ``~/.cogios/.env``.
 
-Both the Rust supervisor and the Python sidecar read from the same
-OS keychain entry under the service name ``cognios-search`` (matching
-``src-tauri/src/services/secure_storage.rs``'s ``SERVICE_NAME``
-constant). Account names are ``provider:<provider_id>``.
+The Rust side writes provider API keys to dotenv-style variables such
+as ``COGNIOS_PROVIDER_OPENAI_KEY``. The sidecar reads the same file at
+runtime and keeps a process-lifetime cache so repeated provider probes
+do not re-read the file on every request.
 
-The wrapper:
-
-- Centralizes the service-name + account-prefix convention so a typo
-  in one place doesn't silently break cross-process sharing.
-- Lazy-imports ``keyring`` so the rest of the sidecar can be imported
-  without the dep being installed.
-- Caches successful reads in-process to keep the macOS Security
-  Agent prompt count down — every ``keyring.get_password`` call
-  through ``keyring`` opens a fresh keychain entry, and on a
-  freshly-rebuilt binary the OS hasn't committed the user's
-  "Always Allow" ACL yet, so back-to-back reads can re-prompt
-  even within a single session. First read populates the cache;
-  subsequent reads in the same sidecar process never hit the
-  keychain.
-- Honours the ``COGNIOS_PROVIDER_<ID>_KEY`` env vars (with hyphens
-  in the provider id replaced by underscores, uppercased) as a
-  dev-mode bypass that skips the keychain entirely. Setting
-  ``COGNIOS_PROVIDER_OPENAI_KEY=sk-...`` in a dev shell makes the
-  prompt cascade go away regardless of how many times you rebuild.
-- Surfaces a single :class:`KeychainUnavailableError` for any
-  backend-missing case so callers can decide how to degrade.
-
-Read-only here — writes happen on the Rust side via ``set_secret``
-in ``src-tauri/src/services/secure_storage.rs``. The Python sidecar
-never *creates* keychain entries.
-
-Cache invalidation: ``invalidate_provider_secret_cache()`` is called
-by ``PUT /settings`` so a fresh write on the Rust side (followed by
-a settings change) shows up on the next read. The standalone
-``delete_provider_secret`` IPC path is rarer and self-heals on the
-next settings PUT or sidecar restart — we don't currently push an
-invalidation IPC for it.
+The module name is retained for import compatibility with the rest of
+the codebase, but it only reads the env file now.
 """
 
 from __future__ import annotations
@@ -44,62 +14,86 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from pathlib import Path
 
-SERVICE_NAME = "cognios-search"
+SECRET_ENV_FILE_OVERRIDE = "COGNIOS_SECRETS_ENV_FILE"
+DEFAULT_SECRET_ENV_FILE = Path.home() / ".cogios" / ".env"
 
 LOG = logging.getLogger("search_sidecar.providers.keychain")
 
-# Process-lifetime cache. Keyed on provider_id; value is the resolved
-# secret or ``None`` when the keychain reported no entry (cached so
-# we don't keep prompting for "is this provider configured?" looks).
 _CACHE: dict[str, str | None] = {}
 _CACHE_LOCK = threading.Lock()
 
 
-class KeychainUnavailableError(RuntimeError):
-    """Raised when the OS keychain backend is not reachable.
-
-    Common causes: ``keyring`` package not installed (dev image w/o
-    the dep), Linux without a running Secret Service daemon, locked
-    or permission-denied keychain. Callers should surface a clear
-    "configure your provider" / "platform keychain unavailable"
-    message rather than crash.
-    """
+class SecretStoreUnavailableError(RuntimeError):
+    """Raised when the provider secret env file cannot be read."""
 
 
-def _account_for(provider_id: str) -> str:
-    """Stable account-name format: ``provider:<provider_id>``."""
-    if not provider_id:
-        raise ValueError("provider_id must not be empty")
-    return f"provider:{provider_id}"
+# Backwards-compatible alias for callers that still import the older name.
+KeychainUnavailableError = SecretStoreUnavailableError
 
 
-def _import_keyring():
-    """Lazy import so the module is importable without the dep."""
-    try:
-        import keyring  # type: ignore[import-untyped]
-        from keyring.errors import KeyringError  # type: ignore[import-untyped]
-    except ImportError as err:
-        raise KeychainUnavailableError(
-            "the `keyring` Python package is not installed; the sidecar "
-            "cannot read provider secrets from the OS keychain"
-        ) from err
-    return keyring, KeyringError
+def _secret_env_file_path() -> Path:
+    override = os.environ.get(SECRET_ENV_FILE_OVERRIDE)
+    if override:
+        return Path(override).expanduser()
+    return DEFAULT_SECRET_ENV_FILE
 
 
 def _env_var_name(provider_id: str) -> str:
-    """Derive the env-var name for a provider's dev-mode override.
+    """Derive the env-var name for a provider's persisted API key.
 
-    ``openai`` → ``COGNIOS_PROVIDER_OPENAI_KEY``
-    ``qwen-dashscope`` → ``COGNIOS_PROVIDER_QWEN_DASHSCOPE_KEY``
+    ``openai`` -> ``COGNIOS_PROVIDER_OPENAI_KEY``
+    ``qwen-dashscope`` -> ``COGNIOS_PROVIDER_QWEN_DASHSCOPE_KEY``
     """
+    if not provider_id:
+        raise ValueError("provider_id must not be empty")
     return f"COGNIOS_PROVIDER_{provider_id.upper().replace('-', '_')}_KEY"
 
 
+def _parse_quoted_value(value: str) -> str:
+    if len(value) < 2 or not value.startswith('"') or not value.endswith('"'):
+        return value
+    out: list[str] = []
+    escaped = False
+    for char in value[1:-1]:
+        if escaped:
+            out.append({"n": "\n", "r": "\r", "t": "\t"}.get(char, char))
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError as err:
+        LOG.warning("provider secret env file unavailable at %s: %s", path, err)
+        raise SecretStoreUnavailableError(str(err)) from err
+
+    values: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        if "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        values[key] = _parse_quoted_value(raw_value.strip()).strip()
+    return values
+
+
 def _env_override(provider_id: str) -> str | None:
-    """Dev-mode bypass: read from an env var instead of the OS
-    keychain. Returns ``None`` when the var is absent or empty so
-    the keychain fallback runs."""
     raw = os.environ.get(_env_var_name(provider_id))
     if raw is None:
         return None
@@ -108,17 +102,12 @@ def _env_override(provider_id: str) -> str | None:
 
 
 def get_provider_secret(provider_id: str) -> str | None:
-    """Return the stored secret for ``provider_id`` or ``None`` if no
-    entry exists.
+    """Return the stored secret for ``provider_id`` or ``None``.
 
     Resolution order:
-      1. ``COGNIOS_PROVIDER_<ID>_KEY`` env var (dev bypass).
-      2. Process-lifetime cache (populated by the first keychain hit).
-      3. The OS keychain — sets the cache as a side effect.
-
-    Raises :class:`KeychainUnavailableError` when the keychain backend
-    itself is unreachable (distinct from "the entry exists but is
-    empty" which returns ``None``).
+      1. Process environment variable ``COGNIOS_PROVIDER_<ID>_KEY``.
+      2. Process-lifetime cache.
+      3. ``~/.cogios/.env``.
     """
     override = _env_override(provider_id)
     if override is not None:
@@ -128,36 +117,16 @@ def get_provider_secret(provider_id: str) -> str | None:
         if provider_id in _CACHE:
             return _CACHE[provider_id]
 
-    keyring, KeyringError = _import_keyring()
-    account = _account_for(provider_id)
-    try:
-        value = keyring.get_password(SERVICE_NAME, account)
-    except KeyringError as err:
-        LOG.warning(
-            "keychain unavailable when reading %s/%s: %s",
-            SERVICE_NAME,
-            account,
-            err,
-        )
-        raise KeychainUnavailableError(str(err)) from err
-    # keyring stores strings as-is; trim trailing whitespace defensively
-    # so a key pasted with a newline still works.
-    resolved: str | None = (value.strip() or None) if value else None
+    key = _env_var_name(provider_id)
+    value = _parse_env_file(_secret_env_file_path()).get(key)
+    resolved = (value.strip() or None) if value else None
     with _CACHE_LOCK:
         _CACHE[provider_id] = resolved
     return resolved
 
 
 def invalidate_provider_secret_cache(provider_id: str | None = None) -> None:
-    """Drop cached secrets so the next read goes back to the keychain.
-
-    Called by the settings PUT route after a settings change — the
-    user may have rotated a key on the Rust side via ``set_provider_
-    secret`` between PUTs and we don't want to serve stale state.
-
-    Pass a specific ``provider_id`` to invalidate one entry, or
-    ``None`` (the default) to clear the whole cache.
-    """
+    """Drop cached secrets so the next read goes back to the env file."""
     with _CACHE_LOCK:
         if provider_id is None:
             _CACHE.clear()
@@ -166,36 +135,41 @@ def invalidate_provider_secret_cache(provider_id: str | None = None) -> None:
 
 
 def has_provider_secret(provider_id: str) -> bool:
-    """Convenience wrapper — useful for the Settings UI's "configured?"
-    indicator. Returns False on KeychainUnavailableError so a missing
-    backend looks like "no secret" rather than crashing the caller;
-    real diagnostics happen via :func:`get_provider_secret`.
-    """
+    """Convenience wrapper for Settings UI's "configured?" indicator."""
     try:
         return get_provider_secret(provider_id) is not None
-    except KeychainUnavailableError:
+    except SecretStoreUnavailableError:
         return False
 
 
 def delete_provider_secret(provider_id: str) -> None:
-    """Remove the stored secret. Idempotent: deleting a non-existent
-    entry is a no-op rather than an error.
+    """Remove the stored secret from ``~/.cogios/.env``.
 
-    Always invalidates the in-process cache for ``provider_id`` so
-    a subsequent ``get_provider_secret`` doesn't hand back the
-    just-deleted value.
+    Idempotent: deleting a non-existent entry is a no-op. This Python
+    path is mostly used by tests; normal writes/deletes happen through
+    the Rust IPC commands.
     """
-    keyring, KeyringError = _import_keyring()
-    account = _account_for(provider_id)
+    key = _env_var_name(provider_id)
+    path = _secret_env_file_path()
     try:
-        keyring.delete_password(SERVICE_NAME, account)
-    except KeyringError as err:
-        # `PasswordDeleteError` is the usual subclass for "no such
-        # entry"; we treat it as success since the user's intent
-        # ("entry should not exist") is satisfied.
-        msg = str(err).lower()
-        if "no such password" in msg or "not found" in msg:
-            invalidate_provider_secret_cache(provider_id)
-            return
-        raise KeychainUnavailableError(str(err)) from err
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        invalidate_provider_secret_cache(provider_id)
+        return
+    except OSError as err:
+        raise SecretStoreUnavailableError(str(err)) from err
+
+    kept: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        assignment = stripped[len("export ") :].lstrip() if stripped.startswith("export ") else stripped
+        entry_key = assignment.split("=", 1)[0].strip() if "=" in assignment else None
+        if entry_key == key:
+            continue
+        kept.append(line)
+
+    if kept:
+        path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    else:
+        path.write_text("", encoding="utf-8")
     invalidate_provider_secret_cache(provider_id)

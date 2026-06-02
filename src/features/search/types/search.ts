@@ -71,12 +71,12 @@ export interface SearchClient {
   /** Read settings directly from disk via the Rust fallback path —
    * used when the sidecar is unreachable. */
   readSettingsFallback(): Promise<SearchSettings>;
-  /** Write a provider's API key to the OS keychain. */
+  /** Write a provider's API key to ~/.cogios/.env. */
   setProviderSecret(input: SetProviderSecretInput): Promise<void>;
-  /** Probe whether the keychain has a secret for the provider —
+  /** Probe whether ~/.cogios/.env has a secret for the provider —
    * never returns the secret itself. */
   hasProviderSecret(input: ProviderSecretLookupInput): Promise<boolean>;
-  /** Remove a provider's secret from the keychain. Idempotent. */
+  /** Remove a provider's secret from ~/.cogios/.env. Idempotent. */
   deleteProviderSecret(input: ProviderSecretLookupInput): Promise<void>;
   /** Probe a chat provider endpoint without persisting settings. */
   testChatProvider(input: TestChatProviderInput): Promise<TestChatProviderResult>;

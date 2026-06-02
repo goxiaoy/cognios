@@ -87,13 +87,13 @@ def test_save_then_load_round_trips(tmp_path: Path):
     s.cloud_consent_acked = ["openai"]
     s.providers["openai"] = ProviderConfig(
         provider_id="openai",
-        api_key_ref="keychain://cognios-search/provider:openai",
+        api_key_ref="env-file://cogios/.env#openai",
     )
     save_settings(path, s)
     loaded = load_settings(path)
     assert loaded == s
     assert loaded.providers["openai"].api_key_ref == (
-        "keychain://cognios-search/provider:openai"
+        "env-file://cogios/.env#openai"
     )
 
 

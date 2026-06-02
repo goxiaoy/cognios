@@ -131,7 +131,7 @@ export function ProviderEditorModal({
               <span className="provider-modal-privacy-icon" aria-hidden="true" />
               <span>
                 <strong>Stays on this machine.</strong> Credentials are stored
-                in the OS keychain. Outbound calls go directly from your device
+                in ~/.cogios/.env. Outbound calls go directly from your device
                 to the provider.
               </span>
             </p>

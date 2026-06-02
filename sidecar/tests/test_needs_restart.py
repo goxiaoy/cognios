@@ -85,11 +85,11 @@ def test_boot_signature_unchanged_by_api_key_ref_change():
     restart needed."""
     s1 = default_settings()
     s1.providers["openai"] = ProviderConfig(
-        provider_id="openai", api_key_ref="keychain://cognios-search/provider:openai"
+        provider_id="openai", api_key_ref="env-file://cogios/.env#openai"
     )
     s2 = default_settings()
     s2.providers["openai"] = ProviderConfig(
-        provider_id="openai", api_key_ref="keychain://cognios-search/provider:rotated"
+        provider_id="openai", api_key_ref="env-file://cogios/.env#rotated"
     )
     assert boot_signature(s1) == boot_signature(s2)
 
@@ -170,7 +170,7 @@ def test_put_settings_swap_provider_sets_needs_restart_and_pauses_runner(stack):
     payload["providers"]["openai"] = {
         "provider_id": "openai",
         "enabled": True,
-        "api_key_ref": "keychain://cognios-search/provider:openai",
+        "api_key_ref": "env-file://cogios/.env#openai",
         "base_url": None,
         "model_per_capability": {},
     }

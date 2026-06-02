@@ -74,7 +74,7 @@ export function useAutoModelDownload(client: SearchClient): void {
           return;
         }
         // Filter out roles whose model is already downloaded so we
-        // don't trigger a needless keychain read in the supervisor.
+        // don't trigger needless supervisor work.
         // If models_status isn't ready yet, retry on the next poll
         // tick rather than firing blind.
         const statusEnv = await client.modelsStatus();

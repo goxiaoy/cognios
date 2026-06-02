@@ -98,12 +98,12 @@ export function ProvidersSection({
   const [filter, setFilter] = useState<FilterId>("all");
 
   // Probe key presence for cloud providers so the row's "configured"
-  // indicator reflects the OS keychain truth, not just whether
+  // indicator reflects the provider secret store truth, not just whether
   // settings.json has the provider entry.
   //
   // Once on mount only. The previous version re-probed on every
   // ``settings.providers`` reference change and on every ``openId``
-  // toggle, which fired ~4 keychain reads each time the user just
+  // toggle, which fired ~4 secret probes each time the user just
   // *opened* Settings — and after a binary rebuild every read shows
   // a macOS Security Agent prompt because the ACL trust resets. Now
   // we track per-provider presence locally and update optimistically

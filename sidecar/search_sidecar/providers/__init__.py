@@ -7,15 +7,16 @@ each can serve, and what default model to use per capability. The
 user-configured runtime state (which providers have keys, which
 features are bound to which providers) lives in :mod:`..settings`.
 
-Reads from the OS keychain via :mod:`.keychain`, which wraps
-``keyring`` so the rest of the sidecar doesn't need to know about
-the platform-specific backends.
+Reads provider API keys from ``~/.cogios/.env`` via
+:mod:`.keychain` so the rest of the sidecar doesn't need to know the
+storage details.
 """
 
 from __future__ import annotations
 
 from .keychain import (
     KeychainUnavailableError,
+    SecretStoreUnavailableError,
     delete_provider_secret,
     get_provider_secret,
     has_provider_secret,
@@ -34,6 +35,7 @@ __all__ = [
     "AuthKind",
     "Capability",
     "KeychainUnavailableError",
+    "SecretStoreUnavailableError",
     "PRESETS",
     "ProviderPreset",
     "ProviderType",

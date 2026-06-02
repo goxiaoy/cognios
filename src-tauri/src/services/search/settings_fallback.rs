@@ -93,7 +93,7 @@ mod tests {
                     "openai": {
                         "provider_id": "openai",
                         "enabled": true,
-                        "api_key_ref": "keychain://cognios-search/provider:openai",
+                        "api_key_ref": "env-file://cogios/.env#openai",
                         "base_url": null,
                         "model_per_capability": {"embedding": "text-embedding-3-small"}
                     }
@@ -110,7 +110,7 @@ mod tests {
         assert_eq!(openai.provider_id, "openai");
         assert_eq!(
             openai.api_key_ref.as_deref(),
-            Some("keychain://cognios-search/provider:openai")
+            Some("env-file://cogios/.env#openai")
         );
         assert_eq!(
             openai

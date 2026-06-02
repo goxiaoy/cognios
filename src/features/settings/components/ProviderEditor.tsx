@@ -45,8 +45,7 @@ export function ProviderEditor({
   onClose: () => void;
   allowRemove?: boolean;
   /** Optimistic notification to the parent section so it can update
-   * its key-presence map without re-probing the keychain (which
-   * would prompt the user on macOS after a binary rebuild). */
+   * its key-presence map without re-reading provider secrets. */
   onKeyPresenceChange?: (providerId: string, present: boolean) => void;
 }) {
   const [state, setState] = useState<EditorState>({ kind: "idle" });
@@ -80,7 +79,7 @@ export function ProviderEditor({
 
   function handleSave() {
     // Cloud-egress consent gate: if this is a cloud provider the
-    // user hasn't acked yet, prompt before any keychain or settings
+    // user hasn't acked yet, prompt before any secret or settings
     // mutation. Already-acked providers (or local providers) skip
     // the dialog and persist immediately.
     if (
@@ -105,7 +104,7 @@ export function ProviderEditor({
         [preset.providerId]: {
           providerId: preset.providerId,
           enabled: true,
-          apiKeyRef: `keychain://cognios-search/provider:${preset.providerId}`,
+          apiKeyRef: `env-file://cogios/.env#${preset.providerId}`,
           baseUrl: config?.baseUrl ?? null,
           modelPerCapability: config?.modelPerCapability ?? {},
         },

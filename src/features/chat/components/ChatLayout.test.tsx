@@ -435,7 +435,7 @@ describe("ChatLayout", () => {
     settings.providers["brave-search"] = {
       providerId: "brave-search",
       enabled: true,
-      apiKeyRef: "keychain://cognios-search/provider:brave-search",
+      apiKeyRef: "env-file://cogios/.env#brave-search",
       baseUrl: "https://api.search.brave.com/res/v1",
       modelPerCapability: { "web-search": "brave-web" },
     };

@@ -17,13 +17,6 @@ dependencies = [
   # 0.115 already pulls v2 transitively, but we don't want a future
   # FastAPI floor change to silently drop us back to v1.
   "pydantic>=2.0,<3.0",
-  # OS keychain bridge for cloud provider API keys. The Rust supervisor
-  # uses the `keyring` crate to write under service name
-  # ``cognios-search``; this reads from the same slot. macOS Keychain
-  # works out of the box; Linux requires a Secret Service daemon
-  # (gnome-keyring / KWallet / KeePassXC) — the cloud embedder degrades
-  # to a clear error if the backend is unavailable.
-  "keyring>=24.0,<26.0",
   # Local OCR (PaddleOCR ONNX). image-ocr is mandatory in v1 and
   # binds to ``local-paddleocr`` by default, so the dep travels with
   # the main package — the model files (~80MB) ship inside the

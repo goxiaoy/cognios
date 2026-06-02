@@ -201,13 +201,13 @@ def test_embed_raises_when_embedding_field_missing():
 
 def test_embed_raises_when_api_key_provider_fails():
     def boom() -> str:
-        raise RuntimeError("keychain unreachable")
+        raise RuntimeError("secret store unreachable")
 
     embedder = _make_embedder(
         lambda req: _ok_embeddings([[0.0] * EMBEDDING_DIMENSION]),
         api_key_provider=boom,
     )
-    with pytest.raises(RuntimeError, match="keychain unreachable"):
+    with pytest.raises(RuntimeError, match="secret store unreachable"):
         embedder.embed(["x"])
 
 
