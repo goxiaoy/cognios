@@ -57,7 +57,7 @@ class OllamaChatProvider:
             response = self._completion(
                 model=litellm_model("ollama", model),
                 messages=messages,
-                api_base=self._base_url,
+                api_base=_ollama_openai_base_url(self._base_url),
                 timeout=_LITELLM_TIMEOUT_SECONDS,
             )
         except Exception as err:
@@ -77,7 +77,7 @@ class OllamaChatProvider:
             response = self._completion(
                 model=litellm_model("ollama", model),
                 messages=messages_for_request(request),
-                api_base=self._base_url,
+                api_base=_ollama_openai_base_url(self._base_url),
                 timeout=_LITELLM_TIMEOUT_SECONDS,
                 stream=True,
             )

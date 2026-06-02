@@ -1,4 +1,8 @@
-"""Shared LiteLLM chat-completion helpers."""
+"""Shared OpenAI-compatible chat-completion helpers.
+
+The function names are retained from the earlier LiteLLM adapter so
+provider call sites do not need a broad rename.
+"""
 
 from __future__ import annotations
 
@@ -11,9 +15,23 @@ CompletionCallable = Callable[..., Any]
 
 
 def litellm_completion(**kwargs: Any) -> Any:
-    from litellm import completion
+    from openai import OpenAI
 
-    return completion(**kwargs)
+    model = kwargs.pop("model")
+    messages = kwargs.pop("messages")
+    api_base = kwargs.pop("api_base")
+    api_key = kwargs.pop("api_key", None) or "ollama"
+    timeout = kwargs.pop("timeout", None)
+    client = kwargs.pop("openai_client", None) or OpenAI(
+        api_key=api_key,
+        base_url=api_base,
+        timeout=timeout,
+    )
+    return client.chat.completions.create(
+        model=_openai_compatible_model_id(model),
+        messages=messages,
+        **kwargs,
+    )
 
 
 def litellm_model(provider: str, model: str) -> str:
@@ -21,6 +39,15 @@ def litellm_model(provider: str, model: str) -> str:
     if model.startswith(prefix):
         return model
     return f"{prefix}{model}"
+
+
+def _openai_compatible_model_id(model: str) -> str:
+    if "/" not in model:
+        return model
+    provider, model_id = model.split("/", 1)
+    if provider in {"openai", "ollama"}:
+        return model_id
+    return model
 
 
 def message_content(response: Any, *, provider_id: str) -> str:

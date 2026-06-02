@@ -16,7 +16,7 @@ def _client(handler):
 def test_ollama_chat_sends_history_to_local_chat_endpoint():
     def completion_fn(**kwargs):
         assert kwargs["model"] == "ollama/qwen2.5:7b"
-        assert kwargs["api_base"] == "http://ollama.test"
+        assert kwargs["api_base"] == "http://ollama.test/v1"
         messages = kwargs["messages"]
         assert messages[0]["role"] == "system"
         assert "Inline citation requirements" in messages[0]["content"]
