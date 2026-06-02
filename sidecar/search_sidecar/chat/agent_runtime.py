@@ -11,7 +11,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from .tools import CogniosChatToolset
 from .types import ChatMessage
 
-DEFAULT_MAX_TOOL_CALLS = 12
+DEFAULT_MAX_TOOL_CALLS = 150
 
 
 @dataclass(frozen=True)

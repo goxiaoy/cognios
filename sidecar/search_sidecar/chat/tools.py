@@ -397,6 +397,30 @@ class CogniosChatToolset:
             results.append(result)
             if len(results) >= max_results:
                 break
+        if not results and nodes:
+            for node in nodes:
+                result = self._grep_node_result(
+                    node_id=node.node_id,
+                    title=node.title,
+                    kind=node.kind,
+                    path=None,
+                    max_chars=max_chars_per_result,
+                )
+                if not result.get("chunk_count"):
+                    continue
+                results.append(result)
+                if len(results) >= max_results:
+                    break
+        if not results and not nodes:
+            result = self._grep_node_result(
+                node_id=scope_node_id,
+                title=self._source_title(scope_node_id),
+                kind=None,
+                path=self._source_path(scope_node_id),
+                max_chars=max_chars_per_result,
+            )
+            if result.get("chunk_count"):
+                results.append(result)
         status = "ok" if results else "empty"
         summary = (
             f"Grep scope {scope_node_id}; returned {len(results)} node(s)."
@@ -436,7 +460,7 @@ class CogniosChatToolset:
         citation = self._citation_for(node_id=node_id, title=title, path=path)
         return {
             "node_id": node_id,
-            "kind": kind,
+            "kind": kind or content.kind,
             "title": title,
             "path": path,
             "citation": citation.marker,
@@ -445,6 +469,16 @@ class CogniosChatToolset:
             "truncated": len(content.joined) > max_chars,
             "chunk_count": len(content.chunks),
         }
+
+    def _source_title(self, node_id: str) -> str:
+        source = self._known_sources.get(node_id, {})
+        title = source.get("title")
+        return title if isinstance(title, str) and title else node_id
+
+    def _source_path(self, node_id: str) -> str | None:
+        source = self._known_sources.get(node_id, {})
+        path = source.get("path")
+        return path if isinstance(path, str) and path else None
 
     def citation_dicts(self) -> list[dict]:
         return [citation.to_dict() for citation in self.citations.values()]

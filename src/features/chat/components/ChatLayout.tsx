@@ -339,11 +339,16 @@ export function ChatLayout({
     void refreshModels();
   }
 
+  function activateWorkspaceNode(nodeId: string | null) {
+    if (!nodeId) return;
+    explorerStore?.selectArtifact(nodeId, false);
+    explorerStore?.activateArtifact(nodeId);
+    onActivateSource?.();
+  }
+
   function handleCitationClick(citation: ChatCitation | null) {
     if (!citation?.nodeId || citation.sourceKind !== "workspace") return;
-    explorerStore?.selectArtifact(citation.nodeId, false);
-    explorerStore?.activateArtifact(citation.nodeId);
-    onActivateSource?.();
+    activateWorkspaceNode(citation.nodeId);
   }
 
   async function refreshSessions(preferredId?: string) {
@@ -631,6 +636,7 @@ export function ChatLayout({
     turn?.answer &&
       !transcript.some((message) => message.role === "assistant" && message.body === turn.answer),
   );
+  const transientToolEvents = toolEventsFromUnknown(turn?.toolEvents);
   const showAssistantLoading = Boolean(busy && optimisticTranscript.length > 0 && !turn?.answer && !error);
   const title = active?.session.title ?? "New chat";
   const memoryAvailable = Boolean(active?.memory?.available);
@@ -655,7 +661,15 @@ export function ChatLayout({
   useEffect(() => {
     if (!visible) return;
     transcriptEndRef.current?.scrollIntoView?.({ block: "end", inline: "nearest" });
-  }, [visible, active?.session.id, transcript.length, optimisticTranscript.length, showAssistantLoading, turn?.answer]);
+  }, [
+    visible,
+    active?.session.id,
+    transcript.length,
+    optimisticTranscript.length,
+    showAssistantLoading,
+    transientToolEvents.length,
+    turn?.answer,
+  ]);
 
   return (
     <section
@@ -760,7 +774,10 @@ export function ChatLayout({
             return (
               <article key={message.id} className={`chat-message is-${message.role}`}>
                 {message.role === "system" ? <p className="chat-message-role">{message.role}</p> : null}
-                <MessageContextNodes nodes={attachedContext} />
+                <MessageContextNodes
+                  nodes={attachedContext}
+                  onActivateNode={activateWorkspaceNode}
+                />
                 {message.role === "assistant" ? <ChatToolActivity events={toolEventsFromMessage(message)} /> : null}
                 <ChatMessageBody
                   role={message.role}
@@ -773,13 +790,16 @@ export function ChatLayout({
           })}
           {optimisticTranscript.map((message) => (
             <article key={message.id} className="chat-message is-user">
-              <MessageContextNodes nodes={message.contextNodes} />
+              <MessageContextNodes
+                nodes={message.contextNodes}
+                onActivateNode={activateWorkspaceNode}
+              />
               <ChatMessageBody role="user" body={message.body} />
             </article>
           ))}
           {showTransientAnswer ? (
             <article className="chat-message is-assistant">
-              <ChatToolActivity events={toolEventsFromUnknown(turn?.toolEvents)} />
+              <ChatToolActivity events={transientToolEvents} />
               <ChatMessageBody
                 role="assistant"
                 body={turn?.answer ?? ""}
@@ -790,6 +810,7 @@ export function ChatLayout({
           ) : null}
           {showAssistantLoading ? (
             <article className="chat-message is-assistant is-loading">
+              <ChatToolActivity events={transientToolEvents} />
               <AssistantLoading />
             </article>
           ) : null}
@@ -826,7 +847,11 @@ export function ChatLayout({
               {contextNodes.length > 0 ? (
                 <div className="chat-context-chips" aria-label="Context nodes">
                   {contextNodes.map((node) => (
-                    <span className="chat-context-chip" key={node.nodeId}>
+                    <span
+                      className="chat-context-chip"
+                      key={node.nodeId}
+                      title={node.path ?? node.title}
+                    >
                       <ContextNodeIcon node={node} />
                       <span>{node.title}</span>
                       <button
@@ -1243,21 +1268,47 @@ function citationSourceLabel(citation: ChatCitation | null): string | null {
   return citation?.label ?? citation?.title ?? null;
 }
 
-function MessageContextNodes({ nodes }: { nodes: ChatContextNode[] }) {
+function MessageContextNodes({
+  nodes,
+  onActivateNode,
+}: {
+  nodes: ChatContextNode[];
+  onActivateNode?: (nodeId: string) => void;
+}) {
   if (nodes.length === 0) return null;
 
   return (
     <div className="chat-message-context" aria-label="Attached context">
-      {nodes.map((node) => (
-        <span
-          className="chat-context-chip chat-message-context-chip"
-          key={`${node.nodeId}:${node.path ?? node.title}`}
-          title={node.path ?? node.title}
-        >
-          <ContextNodeIcon node={node} />
-          <span>{node.title}</span>
-        </span>
-      ))}
+      {nodes.map((node) => {
+        const title = node.path ?? node.title;
+        const children = (
+          <>
+            <ContextNodeIcon node={node} />
+            <span>{node.title}</span>
+          </>
+        );
+
+        return onActivateNode ? (
+          <button
+            type="button"
+            className="chat-context-chip chat-message-context-chip"
+            key={`${node.nodeId}:${title}`}
+            title={title}
+            aria-label={`Open context ${node.title}`}
+            onClick={() => onActivateNode(node.nodeId)}
+          >
+            {children}
+          </button>
+        ) : (
+          <span
+            className="chat-context-chip chat-message-context-chip"
+            key={`${node.nodeId}:${title}`}
+            title={title}
+          >
+            {children}
+          </span>
+        );
+      })}
     </div>
   );
 }

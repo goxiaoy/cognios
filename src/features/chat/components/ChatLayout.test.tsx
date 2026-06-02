@@ -553,6 +553,50 @@ describe("ChatLayout", () => {
     });
   });
 
+  it("shows tool activity before the assistant streams text", async () => {
+    const client = makeClient();
+    vi.mocked(client.startTurn).mockImplementationOnce(
+      async () =>
+        new Promise(() => {
+          // Keep the turn pending so the UI must render streamed tool events during loading.
+        })
+    );
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    const composer = await readyComposer();
+    fireEvent.change(composer, {
+      target: { value: "查一下事故" },
+    });
+    fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(client.startTurn).toHaveBeenCalled();
+      expect(eventMock.chatTurnListener).not.toBeNull();
+    });
+    const turnEventId = vi.mocked(client.startTurn).mock.calls[0][0].turnEventId!;
+
+    act(() => {
+      eventMock.chatTurnListener!({
+        payload: {
+          turnEventId,
+          event: {
+            event: "tool",
+            toolEvents: [
+              {
+                toolName: "grep_workspace",
+                status: "running",
+                summary: "Searching workspace for '事故'.",
+              },
+            ],
+          },
+        },
+      });
+    });
+
+    expect(screen.getByText("Searching workspace for '事故'.")).toBeInTheDocument();
+    expect(screen.getByText("Thinking")).toBeInTheDocument();
+  });
+
   it("renders assistant replies as markdown", async () => {
     const client = makeClient();
     const session = {
@@ -699,6 +743,82 @@ describe("ChatLayout", () => {
     expect(onActivateSource).toHaveBeenCalledOnce();
     expect(screen.queryByRole("link", { name: /Citation W9/ })).not.toBeInTheDocument();
     expect(screen.getByText("[W9]")).toHaveProperty("tagName", "CODE");
+  });
+
+  it("opens an attached chat context file in Explorer", async () => {
+    const client = makeClient();
+    const session = {
+      id: "s1",
+      title: "事故复盘",
+      boundNoteId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    vi.mocked(client.listSessions).mockResolvedValue([session]);
+    vi.mocked(client.getSession).mockResolvedValue({
+      session,
+      messages: [
+        {
+          id: "m1",
+          sessionId: "s1",
+          role: "user",
+          body: "讲了啥",
+          ordinal: 0,
+          metadataJson: JSON.stringify({
+            contextNodes: [
+              {
+                nodeId: "file-1",
+                title: "事故报告.md",
+                kind: "file",
+                path: "事故/事故报告.md",
+              },
+            ],
+          }),
+          createdAt: "now",
+        },
+      ],
+      clusters: [],
+    });
+    const snapshot: ExplorerSnapshot = {
+      roots: [
+        {
+          id: "file-1",
+          parentId: null,
+          name: "事故报告.md",
+          kind: "file",
+          state: "indexed",
+          createdAt: "now",
+          modifiedAt: "now",
+          sizeBytes: 0,
+          children: [],
+        },
+      ],
+    };
+    const onActivateSource = vi.fn();
+
+    render(
+      <ExplorerStoreProvider client={makeExplorerClient()}>
+        <ExplorerSnapshotProbe snapshot={snapshot} />
+        <ChatLayout
+          client={client}
+          searchClient={makeSearchClient()}
+          onActivateSource={onActivateSource}
+        />
+      </ExplorerStoreProvider>
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "事故复盘" }));
+
+    const contextButton = await screen.findByRole("button", {
+      name: "Open context 事故报告.md",
+    });
+    expect(contextButton).toHaveClass("chat-message-context-chip");
+    expect(contextButton).toHaveAttribute("title", "事故/事故报告.md");
+
+    fireEvent.click(contextButton);
+
+    expect(screen.getByLabelText("Selected source")).toHaveTextContent("file-1");
+    expect(onActivateSource).toHaveBeenCalledOnce();
   });
 
   it("opens read-only Session Memory and exports a Note snapshot", async () => {
@@ -965,6 +1085,60 @@ describe("ChatLayout", () => {
         ],
       });
     });
+  });
+
+  it("keeps long context titles available when the chip is truncated", async () => {
+    const client = makeClient();
+    const searchClient = makeSearchClient();
+    const longTitle =
+      "GitHub - adbar/trafilatura: Python & Command-Line tool to gather text from HTML";
+    const longPath =
+      "sources/research/2026/reference/github-adbar-trafilatura-python-command-line-tool-to-gather-text-from-html.md";
+    vi.mocked(searchClient.search).mockResolvedValue({
+      state: "ready",
+      data: {
+        results: [
+          {
+            nodeId: "long-file",
+            kind: "file",
+            name: longTitle,
+            score: 0.92,
+            snippet: "Long file title",
+            matchedIn: "name",
+            path: longPath,
+          },
+        ],
+        degraded: false,
+        nextCursor: null,
+      },
+    });
+    vi.mocked(searchClient.nodeContent).mockResolvedValue({
+      state: "ready",
+      data: {
+        nodeId: "long-file",
+        kind: "file",
+        chunks: [],
+        joined: "Long file content",
+        assets: {},
+      },
+    });
+
+    render(
+      <ExplorerStoreProvider client={makeExplorerClient()}>
+        <ChatLayout client={client} searchClient={searchClient} />
+      </ExplorerStoreProvider>
+    );
+
+    await readyComposer();
+    fireEvent.click(screen.getByRole("button", { name: "Add context" }));
+    fireEvent.change(screen.getByPlaceholderText(/Search notes/i), {
+      target: { value: "trafilatura" },
+    });
+    fireEvent.click(await screen.findByRole("option", { name: /trafilatura/ }));
+
+    const chip = (await screen.findByText(longTitle)).closest(".chat-context-chip");
+    expect(chip).toHaveAttribute("title", longPath);
+    expect(screen.getByRole("button", { name: `Remove context ${longTitle}` })).toBeInTheDocument();
   });
 
   it("uses the mount icon for a mount added as context", async () => {

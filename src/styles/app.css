@@ -6748,6 +6748,18 @@ button.chat-runtime-pill:not(:disabled):hover {
   max-width: min(100%, 28rem);
 }
 
+button.chat-message-context-chip {
+  cursor: pointer;
+  text-align: left;
+}
+
+button.chat-message-context-chip:not(:disabled):hover,
+button.chat-message-context-chip:focus-visible {
+  border-color: var(--line-2);
+  background: var(--paper);
+  box-shadow: none;
+}
+
 .chat-message-loading {
   display: inline-flex;
   align-items: center;
@@ -6969,6 +6981,7 @@ button.chat-runtime-pill:not(:disabled):hover {
   grid-row: 4;
   display: grid;
   gap: 0.5rem;
+  min-width: 0;
   margin: 0 1rem 1rem;
   padding: 0.65rem;
   border: 1px solid var(--line);
@@ -6979,18 +6992,23 @@ button.chat-runtime-pill:not(:disabled):hover {
 .chat-context-area {
   display: grid;
   gap: 0.45rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat-context-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat-context-chip {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  min-width: 0;
   max-width: 100%;
   min-height: 1.75rem;
   padding: 0.25rem 0.35rem 0.25rem 0.5rem;
@@ -7001,8 +7019,14 @@ button.chat-runtime-pill:not(:disabled):hover {
   font: 500 0.76rem var(--font-mono);
 }
 
-.chat-context-chip span {
+.chat-context-chip > svg {
+  flex: 0 0 auto;
+}
+
+.chat-context-chip > span {
+  min-width: 0;
   overflow: hidden;
+  flex: 1 1 auto;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -7010,6 +7034,7 @@ button.chat-runtime-pill:not(:disabled):hover {
 .chat-context-chip button,
 .chat-context-toggle {
   display: inline-grid;
+  flex: 0 0 auto;
   place-items: center;
   width: 1.55rem;
   height: 1.55rem;

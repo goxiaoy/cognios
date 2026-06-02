@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from search_sidecar.app import build_app
 from search_sidecar.chat.agent_runtime import (
+    DEFAULT_MAX_TOOL_CALLS,
     AgenticProvider,
     AgentRuntimeRequest,
     AgentRuntimeResult,
@@ -62,6 +63,20 @@ class _ContentReader:
             ScopeNode(node_id="n1", kind="note", title="一月开销.md"),
             ScopeNode(node_id="n2", kind="note", title="二月开销.md"),
         ][:limit]
+
+
+class _UrlScopeReader:
+    def read(self, node_id: str) -> NodeContentResult:
+        body = "Trafilatura extracts readable main text from HTML pages."
+        return NodeContentResult(
+            node_id=node_id,
+            kind="url",
+            chunks=[{"id": f"{node_id}:0", "role": "body", "text": body}],
+            joined=body,
+        )
+
+    def list_mount_nodes(self, mount_id: str, *, limit: int = 100) -> list[ScopeNode]:
+        return []
 
 
 class _NoRetrieval(ChatRetrieval):
@@ -205,6 +220,13 @@ def test_agent_runtime_does_not_search_for_direct_model_response():
     assert result.citations == []
 
 
+def test_agent_runtime_default_tool_call_limit_is_150():
+    request = AgentRuntimeRequest(messages=[ChatMessage(role="user", content="hi")])
+
+    assert DEFAULT_MAX_TOOL_CALLS == 150
+    assert request.max_tool_calls == 150
+
+
 def test_agent_runtime_classifies_tool_unsupported_provider_errors():
     err = RuntimeError(
         "status_code: 400, model_name: gemma3:4b, body: {'message': "
@@ -314,5 +336,61 @@ def test_cognios_grep_workspace_reads_scope_content():
             "summary": "Grep scope mount-expenses; returned 2 node(s).",
             "nodeId": "mount-expenses",
             "resultCount": 2,
+        }
+    ]
+
+
+def test_cognios_grep_workspace_falls_back_to_reading_mount_scope():
+    toolset = CogniosChatToolset(
+        search_orchestrator=None,
+        content_reader=_ContentReader(),  # type: ignore[arg-type]
+    )
+
+    result = toolset.grep_workspace(
+        query="讲了啥",
+        scope_node_id="mount-expenses",
+        max_results=10,
+        max_chars_per_result=1200,
+    )
+
+    assert result["returned_count"] == 2
+    assert [node["title"] for node in result["results"]] == ["一月开销.md", "二月开销.md"]
+    assert result["results"][0]["citation"] == "W1"
+    assert toolset.event_dicts()[-1] == {
+        "kind": "tool_result",
+        "toolName": "grep_workspace",
+        "status": "ok",
+        "summary": "Grep scope mount-expenses; returned 2 node(s).",
+        "nodeId": "mount-expenses",
+        "resultCount": 2,
+    }
+
+
+def test_cognios_grep_workspace_reads_url_scope_itself_without_query_match():
+    toolset = CogniosChatToolset(
+        search_orchestrator=None,
+        content_reader=_UrlScopeReader(),  # type: ignore[arg-type]
+    )
+
+    result = toolset.grep_workspace(
+        query="讲了啥",
+        scope_node_id="51cfb569-0a15-4613-bc96-58349ea00360",
+        max_results=10,
+        max_chars_per_result=1200,
+    )
+
+    assert result["returned_count"] == 1
+    assert result["results"][0]["node_id"] == "51cfb569-0a15-4613-bc96-58349ea00360"
+    assert result["results"][0]["kind"] == "url"
+    assert result["results"][0]["text"] == "Trafilatura extracts readable main text from HTML pages."
+    assert result["results"][0]["citation"] == "W1"
+    assert toolset.event_dicts() == [
+        {
+            "kind": "tool_result",
+            "toolName": "grep_workspace",
+            "status": "ok",
+            "summary": "Grep scope 51cfb569-0a15-4613-bc96-58349ea00360; returned 1 node(s).",
+            "nodeId": "51cfb569-0a15-4613-bc96-58349ea00360",
+            "resultCount": 1,
         }
     ]
