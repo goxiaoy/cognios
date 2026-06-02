@@ -9,13 +9,13 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 import { MarkdownView } from "./MarkdownView";
 
 type ViewMode = "preview" | "source";
-type PreviewContentKind = "image" | "pdf";
+type PreviewContentKind = "image" | "pdf" | "url";
 
 /**
  * Center-pane preview for extracted document content — renders the
- * **indexed** OCR / text-layer output as markdown. Images may also
- * include a caption summary; PDFs use the same body chunks for
- * text-layer and advanced-OCR markdown.
+ * **indexed** OCR / text-layer / URL article output as markdown.
+ * Images may also include a caption summary; PDFs use the same body
+ * chunks for text-layer and advanced-OCR markdown.
  *
  * Content shape:
  *
@@ -194,7 +194,12 @@ function buildSections(
   const sections: PreviewSection[] = [];
   if (body) {
     sections.push({
-      label: contentKind === "pdf" ? "Extracted Text" : "OCR",
+      label:
+        contentKind === "url"
+          ? "Page"
+          : contentKind === "pdf"
+            ? "Extracted Text"
+            : "OCR",
       body,
     });
   }
@@ -241,6 +246,17 @@ function ImagePreviewEmptyState({
           This PDF hasn't produced extracted text yet. Text-layer
           indexing runs first, then PaddleOCR enhancement can render
           structured markdown here once it finishes.
+        </p>
+      </div>
+    );
+  }
+  if (contentKind === "url") {
+    return (
+      <div className="image-preview-empty muted-copy">
+        <p>
+          This URL hasn't produced a readable page preview yet. The cached HTML
+          is parsed into Markdown during indexing; results appear here once
+          indexing finishes.
         </p>
       </div>
     );

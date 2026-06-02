@@ -37,6 +37,7 @@ dependencies = [
   "qwen-asr>=0.0.6,<0.1.0",
   "pydantic-ai-slim[openai]>=1.0,<2.0",
   "litellm>=1.80,<2.0",
+  "trafilatura>=2.0,<3.0",
 ]
 
 # The semantic-search ONNX path and the layout-aware advanced-OCR

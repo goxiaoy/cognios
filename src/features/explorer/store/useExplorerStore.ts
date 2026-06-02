@@ -135,6 +135,12 @@ export function useExplorerStore(client: ExplorerClient) {
         setActiveNoteId(node.id);
         return;
       }
+      if (node.kind === "url") {
+        // Historical name: this slot now hosts indexed markdown
+        // previews for image/PDF/URL nodes.
+        setActiveImagePreviewId(node.id);
+        return;
+      }
       if (node.kind === "file") {
         if (isTextLikeFile(node)) {
           // Markdown and plain-text files share the same preview
@@ -155,7 +161,7 @@ export function useExplorerStore(client: ExplorerClient) {
         // the layout shows the "Cannot preview" placeholder via its
         // own derivation.
       }
-      // url and mount were already handled or have no surface.
+      // mount was already handled and has no surface.
     },
     [nodeIndex, toggleNode]
   );

@@ -10,6 +10,7 @@ import pytest
 from search_sidecar.index.embedder import StubEmbedder
 from search_sidecar.index.processors.url_cache import (
     URLCacheProcessor,
+    extract_markdown,
     extract_readable_text,
 )
 from search_sidecar.index.queue import IndexingJob, JobState
@@ -39,7 +40,36 @@ def _make_job(
     )
 
 
-# ----- extract_readable_text ----------------------------------------------
+# ----- extraction ----------------------------------------------------------
+
+
+def test_extract_markdown_keeps_structure_and_links():
+    html = b"""
+    <html>
+      <body>
+        <article>
+          <h1>Example Title</h1>
+          <p>First paragraph for indexing with enough real words to extract.</p>
+          <p>Read the <a href="https://example.test/docs">docs</a> for details.</p>
+          <ul>
+            <li>First point with useful detail.</li>
+            <li>Second point.</li>
+          </ul>
+        </article>
+        <script>tracker()</script>
+      </body>
+    </html>
+    """
+    markdown = extract_markdown(html)
+    assert "# Example Title" in markdown
+    assert "[docs](https://example.test/docs)" in markdown
+    assert "- First point with useful detail." in markdown
+    assert "tracker" not in markdown
+
+
+def test_extract_markdown_falls_back_to_readable_text_for_sparse_fragments():
+    html = b"<html><div>Just a div.</div></html>"
+    assert extract_markdown(html) == "Just a div."
 
 
 def test_extract_drops_script_and_style():
@@ -145,7 +175,7 @@ def test_can_handle_rejects_pdf_extension(tmp_path: Path):
     assert not proc.can_handle(_make_job(cache))
 
 
-def test_process_writes_chunks_from_html_body(tmp_path: Path):
+def test_process_writes_markdown_chunks_from_html_body(tmp_path: Path):
     store = open_store(tmp_path / "index.lance")
     proc = URLCacheProcessor(store, StubEmbedder())
     cache = tmp_path / "page.html"
@@ -154,9 +184,12 @@ def test_process_writes_chunks_from_html_body(tmp_path: Path):
         <html>
           <head><title>Doc</title><style>body{}</style></head>
           <body>
-            <h1>Title</h1>
-            <p>First paragraph for indexing.</p>
-            <p>Second paragraph here.</p>
+            <article>
+              <h1>Title</h1>
+              <p>First paragraph for indexing with enough real words to extract.</p>
+              <p>Read the <a href="https://example.test/docs">docs</a> for details.</p>
+              <ul><li>Structured point with useful detail.</li></ul>
+            </article>
             <script>tracker();</script>
           </body>
         </html>
@@ -168,7 +201,9 @@ def test_process_writes_chunks_from_html_body(tmp_path: Path):
     # Persisted text must not contain stripped content
     rows = store.scan("11111111-1111-1111-1111-111111111111")
     joined = " ".join(r["text"] for r in rows)
-    assert "First paragraph" in joined
+    assert "# Title" in joined
+    assert "[docs](https://example.test/docs)" in joined
+    assert "- Structured point with useful detail." in joined
     assert "tracker" not in joined
     assert "body{}" not in joined
     assert {role_or_default(r) for r in rows} == {"body"}
@@ -189,8 +224,11 @@ def test_process_replaces_previous_chunks_on_re_index(tmp_path: Path):
         b"<html><body><p>New first.</p><p>And second.</p></body></html>"
     )
     proc.process(job)
-    # Old chunk replaced by two new ones
-    assert store.count() == 2
+    rows = store.scan(job.node_id)
+    joined = " ".join(r["text"] for r in rows)
+    assert "Original page." not in joined
+    assert "New first." in joined
+    assert "And second." in joined
 
 
 def test_process_handles_empty_body(tmp_path: Path):

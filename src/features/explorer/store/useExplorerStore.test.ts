@@ -254,7 +254,7 @@ describe("useExplorerStore", () => {
     expect(result.current.activeImagePreviewId).toBeNull();
   });
 
-  it("activateArtifact on a URL does not set any surface (layout opens browser)", async () => {
+  it("activateArtifact on a URL sets activeImagePreviewId", async () => {
     const client = makeClient(baseSnapshot);
     const { result } = renderHook(() => useExplorerStore(client));
     await act(async () => {
@@ -266,7 +266,8 @@ describe("useExplorerStore", () => {
     });
     expect(result.current.activeNoteId).toBeNull();
     expect(result.current.activePreviewId).toBeNull();
-    expect(result.current.activeImagePreviewId).toBeNull();
+    expect(result.current.activeImagePreviewId).toBe("url-1");
+    expect(result.current.activeImagePreview?.name).toBe("https://example.com");
   });
 
   it("replaceSelection sets the entire selection in one dispatch", async () => {

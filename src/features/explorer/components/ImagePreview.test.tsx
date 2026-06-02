@@ -112,6 +112,33 @@ describe("ImagePreview", () => {
     expect(screen.queryByText(/^OCR$/)).not.toBeInTheDocument();
   });
 
+  it("renders URL markdown as a page section", async () => {
+    const client = clientWithChunks([
+      {
+        id: "url-1:0",
+        role: "body",
+        text: "# Example Page\n\nRead the [docs](https://example.test/docs).",
+      },
+    ]);
+    const { container } = render(
+      <ImagePreview
+        contentKind="url"
+        searchClient={client}
+        nodeId="url-1"
+        name="https://example.test"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/^Page$/)).toBeInTheDocument();
+      expect(
+        container.querySelector("a[href='https://example.test/docs']")
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/^OCR$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Extracted Text$/)).not.toBeInTheDocument();
+  });
+
   it("omits Caption when no summary chunks exist", async () => {
     const client = clientWithChunks([
       { id: "img-1:0", role: "body", text: "OCR-only image text" },
@@ -320,6 +347,23 @@ describe("ImagePreview", () => {
     await waitFor(() => {
       expect(
         screen.getByText(/this PDF hasn't produced extracted text yet/i)
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("renders the URL empty state when no markdown is available", async () => {
+    const client = clientWithChunks([]);
+    render(
+      <ImagePreview
+        contentKind="url"
+        searchClient={client}
+        nodeId="url-1"
+        name="https://example.test"
+      />
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByText(/this URL hasn't produced a readable page preview yet/i)
       ).toBeInTheDocument();
     });
   });

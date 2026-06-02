@@ -834,7 +834,11 @@ export function ExplorerLayout({
                 {showImage ? (
                   <ImagePreview
                     contentKind={
-                      isPdfNode(store.activeImagePreview!) ? "pdf" : "image"
+                      store.activeImagePreview!.kind === "url"
+                        ? "url"
+                        : isPdfNode(store.activeImagePreview!)
+                          ? "pdf"
+                          : "image"
                     }
                     searchClient={searchClient}
                     name={store.activeImagePreview!.name}

@@ -1,9 +1,9 @@
 """URL-cache processor.
 
 Reads the raw HTML file Rust caches under ``~/.cogios/url-cache/``,
-extracts readable body text via :mod:`selectolax`, splits the result
-into chunks via the shared :mod:`..chunking` helper, embeds each chunk,
-and upserts into the lancedb store.
+extracts readable article Markdown via :mod:`trafilatura`, splits the
+result into chunks via the shared :mod:`..chunking` helper, embeds each
+chunk, and upserts into the lancedb store.
 
 Why we do the strip on the Python side rather than reading
 ``url_jobs.preview_text`` from cognios.db: the preview is hard-truncated
@@ -11,8 +11,8 @@ at 320 chars by the existing Rust pipeline (see
 ``src-tauri/src/services/url_indexing/cache.rs``), which is the right
 shape for the Explorer inspector but far too short for full-text
 indexing. The cache file is the authoritative source of the raw
-content; selectolax + a small tag deny-list gets us a clean readable
-body in the same call.
+content; Trafilatura gets us a markdown-shaped article body, with
+selectolax as the fail-soft fallback for malformed or low-signal pages.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from selectolax.parser import HTMLParser
+from trafilatura import extract as trafilatura_extract
 
 from ...storage import LanceDBStore, NodeChunk
 from ..chunking import chunk_text
@@ -75,8 +76,8 @@ class URLCacheProcessor:
             raise FileNotFoundError(f"url cache file missing: {path}")
 
         raw = path.read_bytes()
-        readable = extract_readable_text(raw)
-        chunks = chunk_text(readable)
+        markdown = extract_markdown(raw)
+        chunks = chunk_text(markdown)
 
         if not chunks:
             self._store.replace_node_chunks(job.node_id, [])
@@ -108,6 +109,32 @@ class URLCacheProcessor:
         return self._store.replace_node_chunks(job.node_id, rows)
 
 
+def extract_markdown(html: bytes | str) -> str:
+    """Extract readable Markdown from cached URL ``html``.
+
+    Trafilatura handles the main article extraction and converts
+    headings, lists, links, and tables into Markdown. It returns
+    ``None`` for sparse pages, so we keep the old selectolax path as a
+    fallback to avoid dropping indexable text from simple fragments.
+    """
+    text = _decode_html(html)
+    if not text.strip():
+        return ""
+
+    markdown = trafilatura_extract(
+        text,
+        output_format="markdown",
+        include_links=True,
+        include_tables=True,
+        include_formatting=True,
+        deduplicate=True,
+        favor_recall=True,
+    )
+    if markdown and markdown.strip():
+        return _BLANK_LINE_RUN.sub("\n\n", markdown).strip()
+    return extract_readable_text(text)
+
+
 def extract_readable_text(html: bytes | str) -> str:
     """Strip ``html`` to readable plain text.
 
@@ -115,15 +142,7 @@ def extract_readable_text(html: bytes | str) -> str:
     something usable for content like ``<html><body><p>broken``. The
     function never raises on bad markup.
     """
-    if not html:
-        return ""
-    if isinstance(html, bytes):
-        # selectolax handles bytes directly, but decoding early lets us
-        # bail early on empty-after-decode inputs.
-        try:
-            html = html.decode("utf-8", errors="replace")
-        except UnicodeDecodeError:
-            html = html.decode("latin-1", errors="replace")
+    html = _decode_html(html)
     if not html.strip():
         return ""
 
@@ -148,3 +167,16 @@ def extract_readable_text(html: bytes | str) -> str:
     # emits between empty inline boundaries.
     cleaned = _BLANK_LINE_RUN.sub("\n\n", text).strip()
     return cleaned
+
+
+def _decode_html(html: bytes | str) -> str:
+    if not html:
+        return ""
+    if isinstance(html, str):
+        return html
+    # Decode early so both Trafilatura and selectolax see the same
+    # text input and sparse/empty inputs can bail out cheaply.
+    try:
+        return html.decode("utf-8", errors="replace")
+    except UnicodeDecodeError:
+        return html.decode("latin-1", errors="replace")
