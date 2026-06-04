@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -22,7 +20,7 @@ def _auth_headers() -> dict[str, str]:
 def _make_manager(tmp_path: Path) -> ModelManager:
     spec = ModelSpec(
         role="audio-transcript",
-        repo="Qwen/Qwen3-ASR-0.6B",
+        repo="Daumee/Qwen3-ASR-0.6B-ONNX-CPU",
         commit="abc123",
         files=(FileSpec("config.json", "0" * 64),),
     )
@@ -36,6 +34,24 @@ def _activate(manager: ModelManager) -> None:
     if current.exists() or current.is_symlink():
         current.unlink()
     os.symlink("abc123", current)
+
+
+def _write_fake_onnx_runtime(manager: ModelManager, *, text: str = "meeting started") -> None:
+    checkpoint = manager.commit_dir("audio-transcript", "abc123")
+    onnx_dir = checkpoint / "onnx_models"
+    onnx_dir.mkdir(parents=True, exist_ok=True)
+    (checkpoint / "onnx_inference.py").write_text(
+        "from pathlib import Path\n"
+        "class OnnxAsrPipeline:\n"
+        "    loaded = False\n"
+        "    def __init__(self, onnx_dir, quantize='int8'):\n"
+        "        self.onnx_dir = onnx_dir\n"
+        "        Path(onnx_dir).parent.joinpath('loaded.txt').write_text('1')\n"
+        "    def transcribe(self, audio_path, language=None, **_kwargs):\n"
+        "        Path(self.onnx_dir).parent.joinpath('audio.txt').write_text(str(audio_path))\n"
+        f"        return {{'text': {text!r}, 'language': language or 'English'}}\n",
+        encoding="utf-8",
+    )
 
 
 def test_transcribe_route_returns_pending_when_model_is_not_ready(tmp_path: Path):
@@ -57,27 +73,11 @@ def test_transcribe_route_returns_pending_when_model_is_not_ready(tmp_path: Path
     assert body["error"] == "Qwen ASR model is not ready"
 
 
-def test_warm_transcriber_route_loads_asr_model(tmp_path: Path, monkeypatch):
+def test_warm_transcriber_route_loads_asr_model(tmp_path: Path):
     manager = _make_manager(tmp_path)
     _activate(manager)
+    _write_fake_onnx_runtime(manager)
     transcriber._MODEL_CACHE.clear()
-
-    class FakeQwen3ASRModel:
-        loaded = False
-
-        @classmethod
-        def from_pretrained(cls, _checkpoint: str, **_kwargs):
-            cls.loaded = True
-            return cls()
-
-        def transcribe(self, *_args, **_kwargs):
-            raise AssertionError("warmup should not transcribe audio")
-
-    monkeypatch.setitem(
-        sys.modules,
-        "qwen_asr",
-        SimpleNamespace(Qwen3ASRModel=FakeQwen3ASRModel),
-    )
     app = build_app(token=TOKEN, model_manager=manager)
 
     with TestClient(app) as client:
@@ -91,32 +91,18 @@ def test_warm_transcriber_route_loads_asr_model(tmp_path: Path, monkeypatch):
     body = resp.json()
     assert body["status"] == "ready"
     assert body["error"] is None
-    assert FakeQwen3ASRModel.loaded is True
+    checkpoint = (manager.role_dir("audio-transcript") / "current").resolve()
+    assert (checkpoint / "loaded.txt").read_text() == "1"
+    assert not (checkpoint / "audio.txt").exists()
 
 
-def test_transcribe_route_returns_completed_transcript(
-    tmp_path: Path, monkeypatch
-):
+def test_transcribe_route_returns_completed_transcript(tmp_path: Path):
     manager = _make_manager(tmp_path)
     _activate(manager)
+    _write_fake_onnx_runtime(manager)
     audio_path = tmp_path / "source.webm"
     audio_path.write_bytes(b"audio")
     transcriber._MODEL_CACHE.clear()
-
-    class FakeQwen3ASRModel:
-        @classmethod
-        def from_pretrained(cls, _checkpoint: str, **_kwargs):
-            return cls()
-
-        def transcribe(self, *, audio: str, language: str | None = None):
-            assert audio == str(audio_path)
-            return [{"text": "meeting started", "language": "English"}]
-
-    monkeypatch.setitem(
-        sys.modules,
-        "qwen_asr",
-        SimpleNamespace(Qwen3ASRModel=FakeQwen3ASRModel),
-    )
     app = build_app(token=TOKEN, model_manager=manager)
 
     with TestClient(app) as client:
@@ -132,3 +118,5 @@ def test_transcribe_route_returns_completed_transcript(
     assert body["transcript"] == "Speaker 1: meeting started"
     assert body["language"] == "English"
     assert body["speaker_labels"] == {"speaker_1": "Speaker 1"}
+    checkpoint = (manager.role_dir("audio-transcript") / "current").resolve()
+    assert (checkpoint / "audio.txt").read_text() == str(audio_path)

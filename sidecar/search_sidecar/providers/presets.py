@@ -155,7 +155,7 @@ PRESETS: dict[str, ProviderPreset] = {
         provider_type="local",
         capabilities=frozenset({"audio-transcript"}),
         default_model_per_capability={
-            "audio-transcript": "Qwen3-ASR-0.6B",
+            "audio-transcript": "Qwen3-ASR-0.6B-ONNX-CPU",
         },
         auth_kind="none",
     ),

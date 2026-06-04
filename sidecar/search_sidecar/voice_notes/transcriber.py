@@ -1,14 +1,16 @@
-"""Qwen ASR-backed voice-note transcription.
+"""Qwen ASR ONNX-backed voice-note transcription.
 
 The sidecar owns model storage, so this module loads Qwen3-ASR from the
-ModelManager's activated local checkpoint instead of letting qwen-asr
-download a second copy into a package-specific cache.
+ModelManager's activated local ONNX checkpoint instead of letting a Python
+package download a second copy into a package-specific cache.
 """
 
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import re
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -137,8 +139,8 @@ def transcribe_voice_note_audio(
 ) -> VoiceNoteTranscription:
     """Transcribe one saved voice-note source file.
 
-    Qwen3-ASR handles language identification internally when ``language`` is
-    ``None``. If the ASR runtime returns speaker hints, they are preserved.
+    Qwen3-ASR ONNX handles language identification internally when
+    ``language`` is ``None``. If the ASR runtime returns speaker hints, they are preserved.
     Otherwise realtime chunks are assigned note-local speaker labels from a
     lightweight audio embedding so short utterances keep stable labels without
     blocking on a dedicated diarization model.
@@ -149,8 +151,7 @@ def transcribe_voice_note_audio(
         raise ValueError("voice note audio file is empty")
 
     checkpoint = _activated_checkpoint(manager, ASR_ROLE)
-    qwen_asr = _import_qwen_asr()
-    model = _load_qwen_asr_model(qwen_asr, checkpoint)
+    model = _load_onnx_asr_pipeline(checkpoint)
     with _TRANSCRIBE_LOCK:
         raw_result = _run_transcription(model, audio_path, language=language)
     text, detected_language, speaker_id = _extract_transcription_parts(raw_result)
@@ -175,8 +176,7 @@ def transcribe_voice_note_audio(
 def warm_voice_note_transcriber(manager: ModelManager) -> None:
     """Load the ASR runtime and activated checkpoint before first audio arrives."""
     checkpoint = _activated_checkpoint(manager, ASR_ROLE)
-    qwen_asr = _import_qwen_asr()
-    _load_qwen_asr_model(qwen_asr, checkpoint)
+    _load_onnx_asr_pipeline(checkpoint)
 
 
 def _activated_checkpoint(manager: ModelManager, role: str) -> Path:
@@ -192,64 +192,57 @@ def _activated_checkpoint(manager: ModelManager, role: str) -> Path:
         raise TranscriptionPending("Qwen ASR model checkpoint is not activated") from err
 
 
-def _import_qwen_asr() -> Any:
-    try:
-        return importlib.import_module("qwen_asr")
-    except ModuleNotFoundError as err:
-        if err.name != "qwen_asr":
-            raise TranscriptionUnavailable(
-                f"qwen-asr dependency is missing: {err.name}"
-            ) from err
-        raise TranscriptionUnavailable(
-            "qwen-asr Python package is not installed in the sidecar runtime"
-        ) from err
-
-
-def _load_qwen_asr_model(qwen_asr: Any, checkpoint: Path) -> Any:
+def _load_onnx_asr_pipeline(checkpoint: Path) -> Any:
     cache_key = str(checkpoint)
     with _MODEL_CACHE_LOCK:
         cached = _MODEL_CACHE.get(cache_key)
         if cached is not None:
             return cached
 
-        model_cls = getattr(qwen_asr, "Qwen3ASRModel", None)
-        if model_cls is None:
+        module = _load_onnx_inference_module(checkpoint)
+        pipeline_cls = getattr(module, "OnnxAsrPipeline", None)
+        if pipeline_cls is None:
             raise TranscriptionUnavailable(
-                "qwen_asr.Qwen3ASRModel is unavailable in the installed package"
+                "onnx_inference.py does not expose OnnxAsrPipeline"
             )
-
-        model = _from_pretrained(model_cls, checkpoint)
+        onnx_dir = checkpoint / "onnx_models"
+        if not onnx_dir.exists():
+            raise TranscriptionUnavailable(
+                "Qwen ASR ONNX model files are missing from the activated checkpoint"
+            )
+        try:
+            model = pipeline_cls(onnx_dir=str(onnx_dir), quantize="int8")
+        except TypeError:
+            model = pipeline_cls(str(onnx_dir))
         _MODEL_CACHE[cache_key] = model
         return model
 
 
-def _from_pretrained(model_cls: Any, checkpoint: Path) -> Any:
-    load_kwargs = _load_kwargs()
-    if hasattr(model_cls, "from_pretrained"):
-        try:
-            return model_cls.from_pretrained(str(checkpoint), **load_kwargs)
-        except TypeError:
-            if load_kwargs:
-                return model_cls.from_pretrained(str(checkpoint))
-            raise
-    return model_cls(str(checkpoint))
-
-
-def _load_kwargs() -> dict[str, Any]:
-    kwargs: dict[str, Any] = {
-        "max_new_tokens": 1024,
-    }
+def _load_onnx_inference_module(checkpoint: Path) -> Any:
+    script = checkpoint / "onnx_inference.py"
+    if not script.exists():
+        raise TranscriptionUnavailable(
+            "Qwen ASR ONNX runtime script is missing from the activated checkpoint"
+        )
+    module_name = f"_cognios_qwen_asr_onnx_{abs(hash(str(checkpoint)))}"
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+    spec = importlib.util.spec_from_file_location(module_name, script)
+    if spec is None or spec.loader is None:
+        raise TranscriptionUnavailable(
+            "Qwen ASR ONNX runtime script could not be loaded"
+        )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
     try:
-        torch = importlib.import_module("torch")
-    except ModuleNotFoundError:
-        return kwargs
-
-    cuda = getattr(torch, "cuda", None)
-    if cuda is not None and callable(getattr(cuda, "is_available", None)):
-        if cuda.is_available():
-            kwargs["dtype"] = torch.bfloat16
-            kwargs["device_map"] = "cuda:0"
-    return kwargs
+        spec.loader.exec_module(module)
+    except ModuleNotFoundError as err:
+        sys.modules.pop(module_name, None)
+        raise TranscriptionUnavailable(
+            f"Qwen ASR ONNX runtime dependency is missing: {err.name}"
+        ) from err
+    return module
 
 
 def _run_transcription(
@@ -261,7 +254,10 @@ def _run_transcription(
     try:
         return model.transcribe(audio=str(audio_path), language=language)
     except TypeError:
-        return model.transcribe(str(audio_path))
+        try:
+            return model.transcribe(str(audio_path), language=language)
+        except TypeError:
+            return model.transcribe(str(audio_path))
 
 
 def _extract_transcription_parts(raw_result: Any) -> tuple[str, str | None, str | None]:
