@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .npm-cache/
+.claude/settings.local.json
 src-tauri/target/
 src-tauri/binaries/search-sidecar-*
 src-tauri/resources/search-sidecar/
