@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import re
+import shutil
 import sys
 import threading
 from dataclasses import dataclass, field
@@ -200,6 +201,7 @@ def _load_onnx_asr_pipeline(checkpoint: Path) -> Any:
             return cached
 
         module = _load_onnx_inference_module(checkpoint)
+        _patch_onnx_runtime_audio_helpers(module)
         pipeline_cls = getattr(module, "OnnxAsrPipeline", None)
         if pipeline_cls is None:
             raise TranscriptionUnavailable(
@@ -210,12 +212,36 @@ def _load_onnx_asr_pipeline(checkpoint: Path) -> Any:
             raise TranscriptionUnavailable(
                 "Qwen ASR ONNX model files are missing from the activated checkpoint"
             )
+        _ensure_onnx_runtime_layout(checkpoint, onnx_dir)
         try:
             model = pipeline_cls(onnx_dir=str(onnx_dir), quantize="int8")
         except TypeError:
             model = pipeline_cls(str(onnx_dir))
         _MODEL_CACHE[cache_key] = model
         return model
+
+
+def _ensure_onnx_runtime_layout(checkpoint: Path, onnx_dir: Path) -> None:
+    """Make downloaded root-level files visible where the ONNX script expects them."""
+    source = checkpoint / "tokenizer.json"
+    target = onnx_dir / "tokenizer.json"
+    if target.exists():
+        return
+    if not source.exists():
+        raise TranscriptionUnavailable(
+            "Qwen ASR tokenizer.json is missing from the activated checkpoint"
+        )
+    try:
+        target.symlink_to(Path("..") / source.name)
+    except FileExistsError:
+        return
+    except OSError:
+        try:
+            shutil.copy2(source, target)
+        except OSError as err:
+            raise TranscriptionUnavailable(
+                "Qwen ASR tokenizer.json could not be linked into onnx_models"
+            ) from err
 
 
 def _load_onnx_inference_module(checkpoint: Path) -> Any:
@@ -243,6 +269,165 @@ def _load_onnx_inference_module(checkpoint: Path) -> Any:
             f"Qwen ASR ONNX runtime dependency is missing: {err.name}"
         ) from err
     return module
+
+
+def _patch_onnx_runtime_audio_helpers(module: Any) -> None:
+    module.load_audio = _onnx_load_audio
+    module.compute_mel_spectrogram = _onnx_compute_mel_spectrogram
+    module.get_mel_filters = _onnx_get_mel_filters
+    module.find_silence_split_points = _onnx_find_silence_split_points
+
+
+def _onnx_load_audio(path: str) -> Any:
+    numpy = importlib.import_module("numpy")
+    soundfile = importlib.import_module("soundfile")
+    waveform, sample_rate = soundfile.read(path, dtype="float32", always_2d=False)
+    waveform = numpy.asarray(waveform, dtype=numpy.float32)
+    if waveform.ndim == 2:
+        waveform = waveform.mean(axis=1)
+    if sample_rate != 16000 and waveform.size:
+        duration = waveform.size / float(sample_rate)
+        target_size = max(1, int(round(duration * 16000)))
+        source_x = numpy.linspace(0.0, duration, num=waveform.size, endpoint=False)
+        target_x = numpy.linspace(0.0, duration, num=target_size, endpoint=False)
+        waveform = numpy.interp(target_x, source_x, waveform).astype(numpy.float32)
+    return waveform.astype(numpy.float32, copy=False)
+
+
+def _onnx_compute_mel_spectrogram(wav: Any, mel_filters: Any) -> Any:
+    numpy = importlib.import_module("numpy")
+    n_fft = 400
+    hop_length = 160
+    waveform = numpy.asarray(wav, dtype=numpy.float32)
+    if waveform.size == 0:
+        waveform = numpy.zeros(1, dtype=numpy.float32)
+    pad_mode = "reflect" if waveform.size > 1 else "constant"
+    padded = numpy.pad(waveform, (n_fft // 2, n_fft // 2), mode=pad_mode)
+    frame_count = max(1, 1 + (padded.size - n_fft) // hop_length)
+    strides = (padded.strides[0] * hop_length, padded.strides[0])
+    frames = numpy.lib.stride_tricks.as_strided(
+        padded,
+        shape=(frame_count, n_fft),
+        strides=strides,
+        writeable=False,
+    )
+    window = _periodic_hann(numpy, n_fft)
+    spectrum = numpy.fft.rfft(frames * window[None, :], n=n_fft, axis=1)
+    magnitudes = numpy.abs(spectrum).T ** 2
+    mel_spec = mel_filters @ magnitudes
+    log_spec = numpy.log10(numpy.maximum(mel_spec, 1e-10))
+    log_spec = numpy.maximum(log_spec, log_spec.max() - 8.0)
+    return ((log_spec + 4.0) / 4.0).astype(numpy.float32)
+
+
+def _onnx_get_mel_filters() -> Any:
+    numpy = importlib.import_module("numpy")
+    sample_rate = 16000
+    n_fft = 400
+    n_mels = 128
+    min_mel = _hz_to_mel(numpy, 0.0)
+    max_mel = _hz_to_mel(numpy, sample_rate / 2)
+    mel_points = numpy.linspace(min_mel, max_mel, n_mels + 2)
+    hz_points = _mel_to_hz(numpy, mel_points)
+    fft_freqs = numpy.linspace(0.0, sample_rate / 2, n_fft // 2 + 1)
+    fdiff = numpy.diff(hz_points)
+    ramps = hz_points[:, None] - fft_freqs[None, :]
+    weights = numpy.maximum(
+        0.0,
+        numpy.minimum(
+            -ramps[:-2] / fdiff[:-1, None],
+            ramps[2:] / fdiff[1:, None],
+        ),
+    )
+    weights *= (2.0 / (hz_points[2 : n_mels + 2] - hz_points[:n_mels]))[:, None]
+    return weights.astype(numpy.float32)
+
+
+def _onnx_find_silence_split_points(wav: Any, target_sec: int = 30) -> list[int]:
+    numpy = importlib.import_module("numpy")
+    sample_rate = 16000
+    min_sec = target_sec // 2
+    max_sec = int(target_sec * 1.5)
+    waveform = numpy.asarray(wav, dtype=numpy.float32)
+    total_samples = waveform.size
+    if total_samples <= max_sec * sample_rate:
+        return []
+
+    hop_samples = int(0.1 * sample_rate)
+    frame_length = hop_samples * 2
+    frame_count = max(1, 1 + max(0, total_samples - frame_length) // hop_samples)
+    rms_values = []
+    for index in range(frame_count):
+        start = index * hop_samples
+        frame = waveform[start : start + frame_length]
+        if frame.size == 0:
+            rms_values.append(0.0)
+        else:
+            rms_values.append(float(numpy.sqrt(numpy.mean(frame * frame))))
+    rms = numpy.asarray(rms_values, dtype=numpy.float32)
+    ref = float(rms.max()) if rms.size else 0.0
+    if ref <= 0:
+        return []
+    rms_db = 20.0 * numpy.log10(numpy.maximum(rms, 1e-10) / ref)
+    is_silent = rms_db < -40
+
+    split_points: list[int] = []
+    cursor = 0
+    while cursor + max_sec * sample_rate < total_samples:
+        search_start_sec = max(0, cursor / sample_rate + min_sec)
+        search_end_sec = cursor / sample_rate + max_sec
+        target_abs_sec = cursor / sample_rate + target_sec
+        frame_start = int(search_start_sec / 0.1)
+        frame_end = min(int(search_end_sec / 0.1), len(is_silent))
+        frame_target = int(target_abs_sec / 0.1)
+        silent_frames = numpy.where(is_silent[frame_start:frame_end])[0] + frame_start
+        if len(silent_frames) > 0:
+            best_idx = int(numpy.argmin(numpy.abs(silent_frames - frame_target)))
+            split_sample = int(silent_frames[best_idx] * hop_samples)
+        else:
+            split_sample = int(target_abs_sec * sample_rate)
+        split_sample = min(split_sample, total_samples)
+        split_points.append(split_sample)
+        cursor = split_sample
+    return split_points
+
+
+def _periodic_hann(numpy: Any, size: int) -> Any:
+    return (0.5 - 0.5 * numpy.cos(2.0 * numpy.pi * numpy.arange(size) / size)).astype(
+        numpy.float32
+    )
+
+
+def _hz_to_mel(numpy: Any, frequencies: Any) -> Any:
+    scalar = numpy.isscalar(frequencies)
+    frequencies = numpy.atleast_1d(numpy.asarray(frequencies, dtype=numpy.float64))
+    f_sp = 200.0 / 3
+    mels = frequencies / f_sp
+    min_log_hz = 1000.0
+    min_log_mel = min_log_hz / f_sp
+    logstep = numpy.log(6.4) / 27
+    log_region = frequencies >= min_log_hz
+    mels = mels.astype(numpy.float64, copy=True)
+    mels[log_region] = (
+        min_log_mel + numpy.log(frequencies[log_region] / min_log_hz) / logstep
+    )
+    return float(mels[0]) if scalar else mels
+
+
+def _mel_to_hz(numpy: Any, mels: Any) -> Any:
+    scalar = numpy.isscalar(mels)
+    mels = numpy.atleast_1d(numpy.asarray(mels, dtype=numpy.float64))
+    f_sp = 200.0 / 3
+    freqs = mels * f_sp
+    min_log_hz = 1000.0
+    min_log_mel = min_log_hz / f_sp
+    logstep = numpy.log(6.4) / 27
+    log_region = mels >= min_log_mel
+    freqs = freqs.astype(numpy.float64, copy=True)
+    freqs[log_region] = min_log_hz * numpy.exp(
+        logstep * (mels[log_region] - min_log_mel)
+    )
+    return float(freqs[0]) if scalar else freqs
 
 
 def _run_transcription(
@@ -401,26 +586,75 @@ def _speaker_label(speaker_id: str) -> str:
 
 def _audio_embedding(audio_path: Path) -> Any | None:
     try:
-        librosa = importlib.import_module("librosa")
         numpy = importlib.import_module("numpy")
-    except ModuleNotFoundError:
-        return None
-
-    try:
-        waveform, sample_rate = librosa.load(str(audio_path), sr=16000, mono=True)
+        waveform = _onnx_load_audio(str(audio_path))
         if waveform.size == 0:
             return None
-        waveform, _ = librosa.effects.trim(waveform, top_db=30)
+        waveform = _trim_silence(numpy, waveform, top_db=30)
+        sample_rate = 16000
         if waveform.size < sample_rate * 0.25:
             return None
-        mfcc = librosa.feature.mfcc(y=waveform, sr=sample_rate, n_mfcc=13)
-        vector = numpy.concatenate([mfcc.mean(axis=1), mfcc.std(axis=1)])
+        vector = _speaker_feature_vector(numpy, waveform)
         norm = numpy.linalg.norm(vector)
         if not numpy.isfinite(norm) or norm <= 0:
             return None
         return vector / norm
     except Exception:
         return None
+
+
+def _trim_silence(numpy: Any, waveform: Any, *, top_db: float) -> Any:
+    peak = float(numpy.max(numpy.abs(waveform))) if waveform.size else 0.0
+    if peak <= 0:
+        return waveform
+    threshold = peak * (10.0 ** (-top_db / 20.0))
+    non_silent = numpy.where(numpy.abs(waveform) >= threshold)[0]
+    if non_silent.size == 0:
+        return waveform
+    return waveform[int(non_silent[0]) : int(non_silent[-1]) + 1]
+
+
+def _speaker_feature_vector(numpy: Any, waveform: Any) -> Any:
+    waveform = numpy.asarray(waveform, dtype=numpy.float32)
+    frame_length = 400
+    hop_length = 160
+    if waveform.size < frame_length:
+        waveform = numpy.pad(waveform, (0, frame_length - waveform.size))
+    frame_count = max(1, 1 + (waveform.size - frame_length) // hop_length)
+    strides = (waveform.strides[0] * hop_length, waveform.strides[0])
+    frames = numpy.lib.stride_tricks.as_strided(
+        waveform,
+        shape=(frame_count, frame_length),
+        strides=strides,
+        writeable=False,
+    )
+    window = _periodic_hann(numpy, frame_length)
+    spectrum = numpy.abs(numpy.fft.rfft(frames * window[None, :], axis=1))
+    band_edges = numpy.linspace(0, spectrum.shape[1], 14, dtype=int)
+    band_energy = []
+    for start, end in zip(band_edges[:-1], band_edges[1:]):
+        end = max(start + 1, end)
+        band_energy.append(numpy.log1p(spectrum[:, start:end].mean(axis=1)))
+    bands = numpy.asarray(band_energy, dtype=numpy.float32)
+    rms = numpy.sqrt(numpy.mean(frames * frames, axis=1))
+    zero_crossing = numpy.mean(frames[:, 1:] * frames[:, :-1] < 0, axis=1)
+    return numpy.concatenate(
+        [
+            bands.mean(axis=1),
+            bands.std(axis=1),
+            numpy.asarray(
+                [
+                    waveform.mean(),
+                    waveform.std(),
+                    rms.mean(),
+                    rms.std(),
+                    zero_crossing.mean(),
+                    zero_crossing.std(),
+                ],
+                dtype=numpy.float32,
+            ),
+        ]
+    ).astype(numpy.float32)
 
 
 def _cosine_similarity(left: Any, right: Any) -> float:

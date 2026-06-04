@@ -40,12 +40,14 @@ def _write_fake_onnx_runtime(manager: ModelManager, *, text: str = "meeting star
     checkpoint = manager.commit_dir("audio-transcript", "abc123")
     onnx_dir = checkpoint / "onnx_models"
     onnx_dir.mkdir(parents=True, exist_ok=True)
+    (checkpoint / "tokenizer.json").write_text("{}", encoding="utf-8")
     (checkpoint / "onnx_inference.py").write_text(
         "from pathlib import Path\n"
         "class OnnxAsrPipeline:\n"
         "    loaded = False\n"
         "    def __init__(self, onnx_dir, quantize='int8'):\n"
         "        self.onnx_dir = onnx_dir\n"
+        "        assert Path(onnx_dir).joinpath('tokenizer.json').exists()\n"
         "        Path(onnx_dir).parent.joinpath('loaded.txt').write_text('1')\n"
         "    def transcribe(self, audio_path, language=None, **_kwargs):\n"
         "        Path(self.onnx_dir).parent.joinpath('audio.txt').write_text(str(audio_path))\n"
@@ -120,3 +122,4 @@ def test_transcribe_route_returns_completed_transcript(tmp_path: Path):
     assert body["speaker_labels"] == {"speaker_1": "Speaker 1"}
     checkpoint = (manager.role_dir("audio-transcript") / "current").resolve()
     assert (checkpoint / "audio.txt").read_text() == str(audio_path)
+    assert (checkpoint / "onnx_models" / "tokenizer.json").exists()

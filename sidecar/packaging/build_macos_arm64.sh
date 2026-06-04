@@ -59,6 +59,7 @@ UV_PROJECT_ENVIRONMENT="$PACKAGING_VENV" uv run --exact --no-default-groups --wi
   --exclude-module numpy._core.tests \
   --exclude-module pytest \
   --exclude-module pandas \
+  --exclude-module scipy \
   --exclude-module sklearn \
   --exclude-module torch \
   --exclude-module torchvision \
@@ -78,7 +79,6 @@ UV_PROJECT_ENVIRONMENT="$PACKAGING_VENV" uv run --exact --no-default-groups --wi
   --hidden-import uvicorn.protocols.websockets.auto \
   --hidden-import uvicorn.lifespan.on \
   --hidden-import tokenizers \
-  --hidden-import librosa \
   --hidden-import soundfile \
   "$ENTRY"
 

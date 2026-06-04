@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import numpy
 import pytest
 
 from search_sidecar.models.manager import ModelManager
@@ -44,6 +45,7 @@ def _write_fake_onnx_runtime(
     checkpoint = manager.commit_dir("audio-transcript", "abc123")
     onnx_dir = checkpoint / "onnx_models"
     onnx_dir.mkdir(parents=True, exist_ok=True)
+    (checkpoint / "tokenizer.json").write_text("{}", encoding="utf-8")
     result = {"text": body, "language": language}
     if speaker_id is not None:
         result["speaker_id"] = speaker_id
@@ -54,6 +56,7 @@ def _write_fake_onnx_runtime(
         "class OnnxAsrPipeline:\n"
         "    def __init__(self, onnx_dir, quantize='int8'):\n"
         "        self.onnx_dir = onnx_dir\n"
+        "        assert Path(onnx_dir).joinpath('tokenizer.json').exists()\n"
         "        Path(onnx_dir).parent.joinpath('loaded.txt').write_text(str(onnx_dir))\n"
         "    def transcribe(self, audio_path, language=None, **_kwargs):\n"
         "        Path(self.onnx_dir).parent.joinpath('audio.txt').write_text(str(audio_path))\n"
@@ -101,6 +104,7 @@ def test_transcription_uses_activated_local_onnx_checkpoint(tmp_path: Path):
     assert result.speaker_labels == {"speaker_1": "Speaker 1"}
     assert (checkpoint / "loaded.txt").read_text() == str(checkpoint / "onnx_models")
     assert (checkpoint / "audio.txt").read_text() == str(audio_path)
+    assert (checkpoint / "onnx_models" / "tokenizer.json").exists()
 
 
 def test_transcription_preserves_asr_speaker_hint(tmp_path: Path):
@@ -156,3 +160,15 @@ def test_warm_transcriber_loads_model_without_transcribing(tmp_path: Path):
 
     assert (checkpoint / "loaded.txt").read_text() == str(checkpoint / "onnx_models")
     assert not (checkpoint / "audio.txt").exists()
+
+
+def test_onnx_audio_helpers_do_not_require_librosa():
+    filters = transcriber._onnx_get_mel_filters()
+    waveform = numpy.zeros(1600, dtype=numpy.float32)
+
+    mel = transcriber._onnx_compute_mel_spectrogram(waveform, filters)
+    splits = transcriber._onnx_find_silence_split_points(waveform)
+
+    assert filters.shape == (128, 201)
+    assert mel.shape[0] == 128
+    assert splits == []
