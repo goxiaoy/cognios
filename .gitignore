@@ -2,6 +2,8 @@ node_modules/
 dist/
 .npm-cache/
 src-tauri/target/
+src-tauri/binaries/search-sidecar-*
+src-tauri/resources/search-sidecar/
 *.db
 *.db-shm
 *.db-wal

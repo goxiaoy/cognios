@@ -189,6 +189,13 @@ def default_settings() -> SearchSettings:
                 provider_id="local-paddleocr",
                 enabled=True,
             ),
+            # Optional by feature flag, but still a built-in local provider.
+            # Persisting the provider row lets sticky feature bindings remain
+            # usable after upgrades or partial settings writes.
+            "local-paddleocr-advanced": ProviderConfig(
+                provider_id="local-paddleocr-advanced",
+                enabled=True,
+            ),
             "local-qwen-asr": ProviderConfig(
                 provider_id="local-qwen-asr",
                 enabled=True,
@@ -304,12 +311,13 @@ def migrate_mandatory_features(
         if not existing.enabled or existing.provider_id is None:
             settings.features[fid] = default_feature.model_copy()
             changed = True
+    bound_provider_ids = {
+        feature.provider_id
+        for feature in settings.features.values()
+        if feature.provider_id is not None
+    }
     for pid, pcfg in defaults.providers.items():
-        if pid not in settings.providers and any(
-            settings.features[fid].provider_id == pid
-            for fid in _MANDATORY_FEATURE_IDS
-            if fid in settings.features
-        ):
+        if pid not in settings.providers and pid in bound_provider_ids:
             settings.providers[pid] = pcfg.model_copy()
             changed = True
     return settings, changed

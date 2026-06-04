@@ -8,11 +8,12 @@ participate in :class:`ModelManager`'s download lifecycle — being a
 declared dependency of the main package is enough to make local OCR
 work out of the box.
 
-The class is constructed once per sidecar boot (RapidOCR does its own
-model loading on init); subsequent ``__call__`` invocations are a
-plain inference. Thread safety: rapidocr's ``RapidOCR`` instance is
-re-entrant for sync calls because the underlying onnxruntime sessions
-serialize at the C level.
+The class is constructed once per sidecar boot, but the RapidOCR engine
+is loaded on first use so sidecar startup can publish its runtime file
+without waiting on onnxruntime model initialisation. Subsequent
+``__call__`` invocations are plain inference. Thread safety:
+rapidocr's ``RapidOCR`` instance is re-entrant for sync calls because
+the underlying onnxruntime sessions serialize at the C level.
 
 Failures (file not found, decode error, model crash) propagate as
 ``RuntimeError`` so the caller's ``_safe_extract`` wrapper logs and
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -58,24 +60,21 @@ class RapidOcrExtractor:
                 "rapidocr-onnxruntime is not importable in this environment "
                 "(it is a declared dep of the main package; check the venv)."
             )
-        # Lazy import — defers rapidocr's module-load cost out of
-        # process startup into the first OCR job (so test runs that
-        # never construct an extractor don't pay it).
-        from rapidocr_onnxruntime import RapidOCR  # type: ignore[import-not-found]
-
-        self._engine: Any = RapidOCR()
+        self._engine: Any | None = None
+        self._engine_lock = threading.Lock()
         self._min_confidence = min_confidence
 
     def __call__(self, path: Path) -> str:
         """Run OCR on ``path``; return joined text (may be empty)."""
         if not path.is_file():
             raise RuntimeError(f"local-ocr: missing image {path}")
+        engine = self._get_engine()
         # rapidocr accepts a path (str) and returns
         # ``(results, elapsed)`` where ``results`` is a list of
         # ``[box, text, confidence]`` triples or ``None`` for an
         # image with no detected text.
         try:
-            result, _ = self._engine(str(path))
+            result, _ = engine(str(path))
         except Exception as err:
             raise RuntimeError(
                 f"local-ocr: rapidocr raised on {path.name}: {err}"
@@ -97,3 +96,19 @@ class RapidOcrExtractor:
             if isinstance(text, str) and text.strip():
                 lines.append(text.strip())
         return "\n".join(lines)
+
+    def _get_engine(self) -> Any:
+        engine = self._engine
+        if engine is not None:
+            return engine
+        with self._engine_lock:
+            if self._engine is None:
+                try:
+                    from rapidocr_onnxruntime import RapidOCR  # type: ignore[import-not-found]
+
+                    self._engine = RapidOCR()
+                except Exception as err:
+                    raise RuntimeError(
+                        f"local-ocr: rapidocr initialisation failed: {err}"
+                    ) from err
+            return self._engine

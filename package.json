@@ -11,6 +11,8 @@
     "test:watch": "vitest",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "sidecar:build:macos": "sidecar/packaging/build_macos_arm64.sh",
+    "tauri:build:macos": "sidecar/packaging/build_macos_installer.sh",
     "pin-models": "cd sidecar && uv run python -m search_sidecar.scripts.pin_manifest --all",
     "pin-models:role": "cd sidecar && uv run python -m search_sidecar.scripts.pin_manifest"
   },

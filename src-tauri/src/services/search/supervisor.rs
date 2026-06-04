@@ -9,7 +9,7 @@
 //!    Tauri's sidecar API. Pumps the CommandEvent stream in a background
 //!    tokio task; logs stdout/stderr at debug level; transitions state to
 //!    `Failed` on `Terminated`.
-//! 2. A second background task polls the runtime file (1 s ticks, 30 s
+//! 2. A second background task polls the runtime file (1 s ticks, 90 s
 //!    deadline). On success, transitions state to `Running { runtime }`.
 //! 3. `stop_gracefully()` sends SIGTERM to the sidecar and waits for
 //!    the Python lifecycle cleanup path before falling back to SIGKILL.
@@ -33,7 +33,7 @@ use tauri_plugin_shell::ShellExt;
 use super::runtime_file::{read_runtime_file, RuntimeFile, RuntimeFileError};
 
 const RUNTIME_POLL_INTERVAL: Duration = Duration::from_secs(1);
-const RUNTIME_READY_TIMEOUT: Duration = Duration::from_secs(30);
+const RUNTIME_READY_TIMEOUT: Duration = Duration::from_secs(90);
 const SIDECAR_BINARY_NAME: &str = "search-sidecar";
 
 // Native OCR shutdown is cooperative: Python handles SIGTERM on the

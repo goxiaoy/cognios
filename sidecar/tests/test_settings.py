@@ -55,6 +55,8 @@ def test_default_settings_seeds_local_gte_and_semantic_search():
     # and cloud incurs per-image API cost. Off + unbound by default.
     assert s.features["advanced-ocr"].enabled is False
     assert s.features["advanced-ocr"].provider_id is None
+    assert "local-paddleocr-advanced" in s.providers
+    assert s.providers["local-paddleocr-advanced"].enabled is True
     # Voice Notes is enabled by default and bound to the local Qwen
     # ASR provider so the shared first-run model downloader can start
     # preparing transcription without a separate bootstrap path.
@@ -280,6 +282,30 @@ def test_migrate_preserves_explicit_non_default_binding():
     migrated, changed = migrate_mandatory_features(settings)
     assert changed is True  # provider entry for local-gte-reranker added
     assert migrated.features["semantic-search"].provider_id == "openai"
+
+
+def test_migrate_backfills_bound_optional_local_provider():
+    """A previously enabled optional local feature may have a sticky
+    binding but no provider row. Boot migration should restore the
+    built-in provider config so UI usability checks don't treat the
+    feature as still needing setup."""
+    settings = default_settings()
+    settings.features["advanced-ocr"] = FeatureConfig(
+        enabled=True,
+        provider_id="local-paddleocr-advanced",
+    )
+    del settings.providers["local-paddleocr-advanced"]
+
+    migrated, changed = migrate_mandatory_features(settings)
+
+    assert changed is True
+    assert migrated.features["advanced-ocr"].enabled is True
+    assert (
+        migrated.features["advanced-ocr"].provider_id
+        == "local-paddleocr-advanced"
+    )
+    assert "local-paddleocr-advanced" in migrated.providers
+    assert migrated.providers["local-paddleocr-advanced"].enabled is True
 
 
 def test_migrate_no_changes_for_already_migrated_settings():

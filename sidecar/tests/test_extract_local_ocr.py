@@ -66,6 +66,28 @@ def test_extractor_returns_joined_text_above_confidence_threshold(
     assert out == "Hello\nworld"
 
 
+def test_extractor_constructs_engine_on_first_call(monkeypatch, tmp_path):
+    img = _png(tmp_path)
+    constructed = {"count": 0}
+
+    class FakeEngine:
+        def __call__(self, _path):
+            return ([[None, "late", 0.95]], 0.01)
+
+    def make_engine():
+        constructed["count"] += 1
+        return FakeEngine()
+
+    _install_fake_rapidocr(monkeypatch, make_engine)
+    extractor = RapidOcrExtractor()
+
+    assert constructed["count"] == 0
+    assert extractor(img) == "late"
+    assert constructed["count"] == 1
+    assert extractor(img) == "late"
+    assert constructed["count"] == 1
+
+
 def test_extractor_drops_low_confidence_lines(monkeypatch, tmp_path):
     img = _png(tmp_path)
 

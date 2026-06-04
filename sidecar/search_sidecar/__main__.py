@@ -32,8 +32,6 @@ warnings.filterwarnings(
     module="paddle.utils.cpp_extension.*",
 )
 
-from .lifecycle import serve  # noqa: E402 — must follow filterwarnings
-
 LOG = logging.getLogger("search_sidecar")
 
 
@@ -83,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
     _configure_logging()
 
     if args.cmd == "serve":
+        from .lifecycle import serve
+
         storage_dir = _validate_storage_dir(args.storage_dir)
         return serve(storage_dir)
     parser.error(f"unknown command: {args.cmd}")
