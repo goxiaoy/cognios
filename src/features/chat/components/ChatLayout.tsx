@@ -133,11 +133,12 @@ export function ChatLayout({
   const pendingComposerFocusRef = useRef(false);
 
   useEffect(() => {
-    if (!visible || initializedRef.current) return;
-    initializedRef.current = true;
-    void refreshSessions();
-    void refreshModels();
-    void refreshProviderSettings();
+    if (!visible) return;
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      void refreshSessions();
+    }
+    void refreshProviderRuntimeState();
   }, [visible]);
 
   useEffect(() => {
@@ -323,6 +324,11 @@ export function ChatLayout({
     } finally {
       setSettingsLoading(false);
     }
+  }
+
+  async function refreshProviderRuntimeState() {
+    await refreshProviderSettings();
+    await refreshModels();
   }
 
   function applyProviderSettings(next: SearchSettings) {

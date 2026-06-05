@@ -580,7 +580,7 @@ fn mark_transcription_unavailable_updates_metadata_and_transcript_file() {
         &conn,
         &created.voice_note.note_id,
         "unavailable",
-        "qwen-asr Python package is not installed\ninstall it in the sidecar",
+        "Qwen ASR ONNX runtime script is missing\nredownload the voice-note model",
         &notes_dir,
         &recording_emitter,
     )
@@ -591,10 +591,10 @@ fn mark_transcription_unavailable_updates_metadata_and_transcript_file() {
     let transcript = get_voice_note_transcript(&conn, &created.voice_note.note_id, &notes_dir)
         .expect("transcript");
     assert!(transcript.contains(
-        "Transcription unavailable: qwen-asr Python package is not installed install it in the sidecar"
+        "Transcription unavailable: Qwen ASR ONNX runtime script is missing redownload the voice-note model"
     ));
     let body = get_note_content(&created.voice_note.note_id, &notes_dir).expect("body");
-    assert!(!body.contains("qwen-asr Python package is not installed"));
+    assert!(!body.contains("Qwen ASR ONNX runtime script is missing"));
     assert!(
         events
             .borrow()

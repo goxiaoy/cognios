@@ -416,7 +416,9 @@ describe("App", () => {
       name: "2026-05-11 10.00.00",
     })).toBeInTheDocument();
     expect(screen.getByText("Audio is saved locally on this device.")).toBeInTheDocument();
-    expect(await screen.findByText("[00:00.000] Speaker 1: live transcript")).toBeInTheDocument();
+    expect(await screen.findByText("live transcript")).toBeInTheDocument();
+    expect(screen.getByText("00:00.000")).toBeInTheDocument();
+    expect(screen.getByText("Speaker 1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Pause recording/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Stop recording/i })).toBeInTheDocument();
   });
@@ -640,7 +642,7 @@ describe("App", () => {
 
     // Single-click selects but does NOT open the browser
     expect(openExternal).not.toHaveBeenCalled();
-    expect(screen.getByText(/select an item to preview/i)).toBeInTheDocument();
+    expect(screen.queryByText(/select an item to preview/i)).not.toBeInTheDocument();
 
     // Right-click → "Open link" opens the browser
     fireEvent.contextMenu(urlText);

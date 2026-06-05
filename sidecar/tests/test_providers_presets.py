@@ -83,7 +83,7 @@ def test_capability_matrix_matches_v1_decision():
     - local-gte-reranker → reranking
     - local-paddleocr → ocr
     - local-paddleocr-advanced → advanced-ocr (PP-StructureV3 bundle)
-    - local-qwen-asr → audio-transcript (Qwen3-ASR)
+    - local-qwen-asr → audio-transcript (Qwen3-ASR ONNX CPU)
     - local-ollama → chat
     - openai → embedding + vision + ocr + advanced-ocr + chat
     - qwen-dashscope → vision + ocr + advanced-ocr + chat

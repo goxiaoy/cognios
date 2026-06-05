@@ -1,14 +1,18 @@
-"""Qwen ASR-backed voice-note transcription.
+"""Qwen ASR ONNX-backed voice-note transcription.
 
 The sidecar owns model storage, so this module loads Qwen3-ASR from the
-ModelManager's activated local checkpoint instead of letting qwen-asr
-download a second copy into a package-specific cache.
+ModelManager's activated local ONNX checkpoint instead of letting a Python
+package download a second copy into a package-specific cache.
 """
 
 from __future__ import annotations
 
 import importlib
+import importlib.util
+import os
 import re
+import shutil
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +21,12 @@ from typing import Any
 from ..models.manager import ModelManager
 
 ASR_ROLE = "audio-transcript"
+DEFAULT_ONNX_MAX_NEW_TOKENS = 1024
+DEFAULT_ONNX_CHUNK_SECONDS = 30
+ONNX_MAX_NEW_TOKENS_ENV = "COGNIOS_QWEN_ASR_MAX_NEW_TOKENS"
+ONNX_CHUNK_SECONDS_ENV = "COGNIOS_QWEN_ASR_CHUNK_SEC"
+ONNX_LANGUAGE_ENV = "COGNIOS_QWEN_ASR_LANGUAGE"
+ONNX_QUANTIZE_ENV = "COGNIOS_QWEN_ASR_QUANTIZE"
 
 _MODEL_CACHE: dict[str, Any] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
@@ -137,8 +147,8 @@ def transcribe_voice_note_audio(
 ) -> VoiceNoteTranscription:
     """Transcribe one saved voice-note source file.
 
-    Qwen3-ASR handles language identification internally when ``language`` is
-    ``None``. If the ASR runtime returns speaker hints, they are preserved.
+    Qwen3-ASR ONNX handles language identification internally when
+    ``language`` is ``None``. If the ASR runtime returns speaker hints, they are preserved.
     Otherwise realtime chunks are assigned note-local speaker labels from a
     lightweight audio embedding so short utterances keep stable labels without
     blocking on a dedicated diarization model.
@@ -149,8 +159,7 @@ def transcribe_voice_note_audio(
         raise ValueError("voice note audio file is empty")
 
     checkpoint = _activated_checkpoint(manager, ASR_ROLE)
-    qwen_asr = _import_qwen_asr()
-    model = _load_qwen_asr_model(qwen_asr, checkpoint)
+    model = _load_onnx_asr_pipeline(checkpoint)
     with _TRANSCRIBE_LOCK:
         raw_result = _run_transcription(model, audio_path, language=language)
     text, detected_language, speaker_id = _extract_transcription_parts(raw_result)
@@ -175,8 +184,7 @@ def transcribe_voice_note_audio(
 def warm_voice_note_transcriber(manager: ModelManager) -> None:
     """Load the ASR runtime and activated checkpoint before first audio arrives."""
     checkpoint = _activated_checkpoint(manager, ASR_ROLE)
-    qwen_asr = _import_qwen_asr()
-    _load_qwen_asr_model(qwen_asr, checkpoint)
+    _load_onnx_asr_pipeline(checkpoint)
 
 
 def _activated_checkpoint(manager: ModelManager, role: str) -> Path:
@@ -192,64 +200,103 @@ def _activated_checkpoint(manager: ModelManager, role: str) -> Path:
         raise TranscriptionPending("Qwen ASR model checkpoint is not activated") from err
 
 
-def _import_qwen_asr() -> Any:
-    try:
-        return importlib.import_module("qwen_asr")
-    except ModuleNotFoundError as err:
-        if err.name != "qwen_asr":
-            raise TranscriptionUnavailable(
-                f"qwen-asr dependency is missing: {err.name}"
-            ) from err
-        raise TranscriptionUnavailable(
-            "qwen-asr Python package is not installed in the sidecar runtime"
-        ) from err
-
-
-def _load_qwen_asr_model(qwen_asr: Any, checkpoint: Path) -> Any:
+def _load_onnx_asr_pipeline(checkpoint: Path) -> Any:
     cache_key = str(checkpoint)
     with _MODEL_CACHE_LOCK:
         cached = _MODEL_CACHE.get(cache_key)
         if cached is not None:
             return cached
 
-        model_cls = getattr(qwen_asr, "Qwen3ASRModel", None)
-        if model_cls is None:
+        module = _load_onnx_inference_module(checkpoint)
+        pipeline_cls = getattr(module, "OnnxAsrPipeline", None)
+        if pipeline_cls is None:
             raise TranscriptionUnavailable(
-                "qwen_asr.Qwen3ASRModel is unavailable in the installed package"
+                "onnx_inference.py does not expose OnnxAsrPipeline"
             )
-
-        model = _from_pretrained(model_cls, checkpoint)
+        onnx_dir = checkpoint / "onnx_models"
+        if not onnx_dir.exists():
+            raise TranscriptionUnavailable(
+                "Qwen ASR ONNX model files are missing from the activated checkpoint"
+            )
+        _ensure_onnx_runtime_layout(checkpoint, onnx_dir)
+        try:
+            model = pipeline_cls(onnx_dir=str(onnx_dir), quantize=_onnx_quantize())
+        except TypeError:
+            model = pipeline_cls(str(onnx_dir))
         _MODEL_CACHE[cache_key] = model
         return model
 
 
-def _from_pretrained(model_cls: Any, checkpoint: Path) -> Any:
-    load_kwargs = _load_kwargs()
-    if hasattr(model_cls, "from_pretrained"):
-        try:
-            return model_cls.from_pretrained(str(checkpoint), **load_kwargs)
-        except TypeError:
-            if load_kwargs:
-                return model_cls.from_pretrained(str(checkpoint))
-            raise
-    return model_cls(str(checkpoint))
-
-
-def _load_kwargs() -> dict[str, Any]:
-    kwargs: dict[str, Any] = {
-        "max_new_tokens": 1024,
-    }
+def _ensure_onnx_runtime_layout(checkpoint: Path, onnx_dir: Path) -> None:
+    """Make downloaded root-level files visible where the ONNX script expects them."""
+    source = checkpoint / "tokenizer.json"
+    target = onnx_dir / "tokenizer.json"
+    if target.exists():
+        return
+    if not source.exists():
+        raise TranscriptionUnavailable(
+            "Qwen ASR tokenizer.json is missing from the activated checkpoint"
+        )
     try:
-        torch = importlib.import_module("torch")
-    except ModuleNotFoundError:
-        return kwargs
+        target.symlink_to(Path("..") / source.name)
+    except FileExistsError:
+        return
+    except OSError:
+        try:
+            shutil.copy2(source, target)
+        except OSError as err:
+            raise TranscriptionUnavailable(
+                "Qwen ASR tokenizer.json could not be linked into onnx_models"
+            ) from err
 
-    cuda = getattr(torch, "cuda", None)
-    if cuda is not None and callable(getattr(cuda, "is_available", None)):
-        if cuda.is_available():
-            kwargs["dtype"] = torch.bfloat16
-            kwargs["device_map"] = "cuda:0"
-    return kwargs
+
+def _load_onnx_inference_module(checkpoint: Path) -> Any:
+    script = checkpoint / "onnx_inference.py"
+    if not script.exists():
+        raise TranscriptionUnavailable(
+            "Qwen ASR ONNX runtime script is missing from the activated checkpoint"
+        )
+    module_name = f"_cognios_qwen_asr_onnx_{abs(hash(str(checkpoint)))}"
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+    spec = importlib.util.spec_from_file_location(module_name, script)
+    if spec is None or spec.loader is None:
+        raise TranscriptionUnavailable(
+            "Qwen ASR ONNX runtime script could not be loaded"
+        )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except ModuleNotFoundError as err:
+        sys.modules.pop(module_name, None)
+        raise TranscriptionUnavailable(
+            f"Qwen ASR ONNX runtime dependency is missing: {err.name}"
+        ) from err
+    return module
+
+
+def _load_audio_16k(path: str) -> Any:
+    numpy = importlib.import_module("numpy")
+    soundfile = importlib.import_module("soundfile")
+    waveform, sample_rate = soundfile.read(path, dtype="float32", always_2d=False)
+    waveform = numpy.asarray(waveform, dtype=numpy.float32)
+    if waveform.ndim == 2:
+        waveform = waveform.mean(axis=1)
+    if sample_rate != 16000 and waveform.size:
+        duration = waveform.size / float(sample_rate)
+        target_size = max(1, int(round(duration * 16000)))
+        source_x = numpy.linspace(0.0, duration, num=waveform.size, endpoint=False)
+        target_x = numpy.linspace(0.0, duration, num=target_size, endpoint=False)
+        waveform = numpy.interp(target_x, source_x, waveform).astype(numpy.float32)
+    return waveform.astype(numpy.float32, copy=False)
+
+
+def _periodic_hann(numpy: Any, size: int) -> Any:
+    return (0.5 - 0.5 * numpy.cos(2.0 * numpy.pi * numpy.arange(size) / size)).astype(
+        numpy.float32
+    )
 
 
 def _run_transcription(
@@ -258,10 +305,47 @@ def _run_transcription(
     *,
     language: str | None,
 ) -> Any:
+    resolved_language = language or _onnx_language()
+    kwargs = {
+        "language": resolved_language,
+        "max_new_tokens": _onnx_max_new_tokens(),
+        "chunk_sec": _onnx_chunk_seconds(),
+    }
     try:
-        return model.transcribe(audio=str(audio_path), language=language)
+        return model.transcribe(audio=str(audio_path), **kwargs)
     except TypeError:
-        return model.transcribe(str(audio_path))
+        try:
+            return model.transcribe(str(audio_path), **kwargs)
+        except TypeError:
+            return model.transcribe(str(audio_path))
+
+
+def _onnx_language() -> str | None:
+    value = os.getenv(ONNX_LANGUAGE_ENV, "").strip()
+    return value or None
+
+
+def _onnx_max_new_tokens() -> int:
+    return _positive_int_env(ONNX_MAX_NEW_TOKENS_ENV, DEFAULT_ONNX_MAX_NEW_TOKENS)
+
+
+def _onnx_chunk_seconds() -> int:
+    return _positive_int_env(ONNX_CHUNK_SECONDS_ENV, DEFAULT_ONNX_CHUNK_SECONDS)
+
+
+def _onnx_quantize() -> str:
+    value = os.getenv(ONNX_QUANTIZE_ENV, "int8").strip().lower()
+    if value in {"none", "fp32"}:
+        return "none"
+    return "int8"
+
+
+def _positive_int_env(name: str, fallback: int) -> int:
+    try:
+        value = int(os.getenv(name, "").strip())
+    except ValueError:
+        return fallback
+    return value if value > 0 else fallback
 
 
 def _extract_transcription_parts(raw_result: Any) -> tuple[str, str | None, str | None]:
@@ -405,26 +489,75 @@ def _speaker_label(speaker_id: str) -> str:
 
 def _audio_embedding(audio_path: Path) -> Any | None:
     try:
-        librosa = importlib.import_module("librosa")
         numpy = importlib.import_module("numpy")
-    except ModuleNotFoundError:
-        return None
-
-    try:
-        waveform, sample_rate = librosa.load(str(audio_path), sr=16000, mono=True)
+        waveform = _load_audio_16k(str(audio_path))
         if waveform.size == 0:
             return None
-        waveform, _ = librosa.effects.trim(waveform, top_db=30)
+        waveform = _trim_silence(numpy, waveform, top_db=30)
+        sample_rate = 16000
         if waveform.size < sample_rate * 0.25:
             return None
-        mfcc = librosa.feature.mfcc(y=waveform, sr=sample_rate, n_mfcc=13)
-        vector = numpy.concatenate([mfcc.mean(axis=1), mfcc.std(axis=1)])
+        vector = _speaker_feature_vector(numpy, waveform)
         norm = numpy.linalg.norm(vector)
         if not numpy.isfinite(norm) or norm <= 0:
             return None
         return vector / norm
     except Exception:
         return None
+
+
+def _trim_silence(numpy: Any, waveform: Any, *, top_db: float) -> Any:
+    peak = float(numpy.max(numpy.abs(waveform))) if waveform.size else 0.0
+    if peak <= 0:
+        return waveform
+    threshold = peak * (10.0 ** (-top_db / 20.0))
+    non_silent = numpy.where(numpy.abs(waveform) >= threshold)[0]
+    if non_silent.size == 0:
+        return waveform
+    return waveform[int(non_silent[0]) : int(non_silent[-1]) + 1]
+
+
+def _speaker_feature_vector(numpy: Any, waveform: Any) -> Any:
+    waveform = numpy.asarray(waveform, dtype=numpy.float32)
+    frame_length = 400
+    hop_length = 160
+    if waveform.size < frame_length:
+        waveform = numpy.pad(waveform, (0, frame_length - waveform.size))
+    frame_count = max(1, 1 + (waveform.size - frame_length) // hop_length)
+    strides = (waveform.strides[0] * hop_length, waveform.strides[0])
+    frames = numpy.lib.stride_tricks.as_strided(
+        waveform,
+        shape=(frame_count, frame_length),
+        strides=strides,
+        writeable=False,
+    )
+    window = _periodic_hann(numpy, frame_length)
+    spectrum = numpy.abs(numpy.fft.rfft(frames * window[None, :], axis=1))
+    band_edges = numpy.linspace(0, spectrum.shape[1], 14, dtype=int)
+    band_energy = []
+    for start, end in zip(band_edges[:-1], band_edges[1:]):
+        end = max(start + 1, end)
+        band_energy.append(numpy.log1p(spectrum[:, start:end].mean(axis=1)))
+    bands = numpy.asarray(band_energy, dtype=numpy.float32)
+    rms = numpy.sqrt(numpy.mean(frames * frames, axis=1))
+    zero_crossing = numpy.mean(frames[:, 1:] * frames[:, :-1] < 0, axis=1)
+    return numpy.concatenate(
+        [
+            bands.mean(axis=1),
+            bands.std(axis=1),
+            numpy.asarray(
+                [
+                    waveform.mean(),
+                    waveform.std(),
+                    rms.mean(),
+                    rms.std(),
+                    zero_crossing.mean(),
+                    zero_crossing.std(),
+                ],
+                dtype=numpy.float32,
+            ),
+        ]
+    ).astype(numpy.float32)
 
 
 def _cosine_similarity(left: Any, right: Any) -> float:

@@ -23,6 +23,7 @@ fi
 
 DIST_DIR="$SIDECAR_DIR/dist"
 BUILD_DIR="$SIDECAR_DIR/build"
+PACKAGING_VENV="$BUILD_DIR/pyinstaller-venv"
 OUTPUT_DIR="$REPO_ROOT/src-tauri/binaries"
 OUTPUT="$OUTPUT_DIR/search-sidecar-$HOST_TRIPLE"
 RESOURCE_DIR="$REPO_ROOT/src-tauri/resources/search-sidecar"
@@ -34,7 +35,7 @@ rm -rf "$DIST_DIR/search-sidecar" "$BUILD_DIR/search-sidecar" "$OUTPUT" "$RESOUR
 
 cd "$SIDECAR_DIR"
 
-uv run --no-default-groups --with pyinstaller==6.11.1 pyinstaller \
+UV_PROJECT_ENVIRONMENT="$PACKAGING_VENV" uv run --exact --no-default-groups --with pyinstaller==6.11.1 pyinstaller \
   --onedir \
   --name search-sidecar \
   --distpath "$DIST_DIR" \
@@ -58,16 +59,11 @@ uv run --no-default-groups --with pyinstaller==6.11.1 pyinstaller \
   --exclude-module numpy._core.tests \
   --exclude-module pytest \
   --exclude-module pandas \
-  --exclude-module scipy \
-  --exclude-module sklearn \
-  --exclude-module numba \
   --exclude-module torch \
   --exclude-module torchvision \
   --exclude-module torchaudio \
   --exclude-module transformers \
   --exclude-module qwen_asr \
-  --exclude-module librosa \
-  --exclude-module soundfile \
   --exclude-module av \
   --exclude-module openpyxl \
   --exclude-module matplotlib \
@@ -80,6 +76,11 @@ uv run --no-default-groups --with pyinstaller==6.11.1 pyinstaller \
   --hidden-import uvicorn.protocols.http.auto \
   --hidden-import uvicorn.protocols.websockets.auto \
   --hidden-import uvicorn.lifespan.on \
+  --hidden-import tokenizers \
+  --hidden-import soundfile \
+  --hidden-import librosa \
+  --hidden-import librosa.filters \
+  --hidden-import librosa.feature \
   "$ENTRY"
 
 cp -R "$DIST_DIR/search-sidecar" "$RESOURCE_DIR"

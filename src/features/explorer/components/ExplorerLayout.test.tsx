@@ -261,7 +261,8 @@ describe("ExplorerLayout", () => {
     expect(await screen.findByLabelText("Source audio playback")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Play source audio/i })).toBeInTheDocument();
     expect(screen.getByLabelText("Note title")).toHaveValue("2026-05-14 00.30.00");
-    expect(await screen.findByText("Speaker 1: opening line")).toBeInTheDocument();
+    expect(await screen.findByText("opening line")).toBeInTheDocument();
+    expect(screen.getAllByText("Speaker 1")).toHaveLength(2);
     expect(screen.getByText("00:00 - 00:02")).toBeInTheDocument();
     expect(screen.getByText("00:05 - 00:07")).toBeInTheDocument();
     expect(document.querySelector(".voice-recording-audio-native")).toHaveAttribute(
@@ -281,7 +282,7 @@ describe("ExplorerLayout", () => {
     fireEvent.timeUpdate(audio);
 
     await waitFor(() => {
-      expect(screen.getByText("Speaker 1: synced playback line").closest(".voice-note-transcript-sync-line")).toHaveAttribute(
+      expect(screen.getByText("synced playback line").closest(".voice-note-transcript-sync-line")).toHaveAttribute(
         "aria-current",
         "true"
       );

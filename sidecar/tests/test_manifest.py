@@ -31,6 +31,18 @@ def test_each_role_lists_at_least_one_file():
         assert all(f.name for f in spec.files), f"{role!r} has empty file names"
 
 
+def test_audio_transcript_uses_downloaded_onnx_runtime_bundle():
+    spec = DEFAULTS["audio-transcript"]
+    file_names = {file.name for file in spec.files}
+
+    assert spec.repo == "Daumee/Qwen3-ASR-0.6B-ONNX-CPU"
+    assert "onnx_inference.py" in file_names
+    assert "tokenizer.json" in file_names
+    assert "onnx_models/decoder_init.int8.onnx" in file_names
+    assert "onnx_models/embed_tokens.bin" in file_names
+    assert all(file.sha256 != PLACEHOLDER_SHA256 for file in spec.files)
+
+
 def test_is_pinned_detects_placeholder_state():
     """``is_pinned`` returns False when either the commit or any file
     SHA is still the placeholder string. Used by release-build CI to

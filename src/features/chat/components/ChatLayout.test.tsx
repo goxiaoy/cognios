@@ -1430,6 +1430,67 @@ describe("ChatLayout", () => {
     });
   });
 
+  it("refreshes chat provider state when returning to the chat view", async () => {
+    const client = makeClient();
+    vi.mocked(client.getModels)
+      .mockResolvedValueOnce({
+        models: {
+          state: "ready",
+          data: {
+            state: "provider_unavailable",
+            providerId: null,
+            models: [],
+            cached: false,
+            warnings: ["chat provider unavailable"],
+          },
+        },
+      })
+      .mockResolvedValue({
+        models: {
+          state: "ready",
+          data: {
+            state: "ready",
+            providerId: "deepseek",
+            models: [{ id: "deepseek-v4-flash", name: "deepseek-v4-flash" }],
+            cached: false,
+            warnings: [],
+          },
+        },
+      });
+    const settings = makeSearchSettings({
+      providers: {
+        deepseek: {
+          providerId: "deepseek",
+          enabled: true,
+          apiKeyRef: "env-file://cogios/.env#deepseek",
+          baseUrl: null,
+          modelPerCapability: {},
+        },
+      },
+      features: {
+        chat: { enabled: true, providerId: "deepseek" },
+      },
+    });
+    const searchClient = makeSearchClient(settings);
+    vi.mocked(searchClient.hasProviderSecret).mockResolvedValue(true);
+
+    const { rerender } = render(
+      <ChatLayout client={client} searchClient={searchClient} visible={true} />
+    );
+
+    expect(await screen.findByRole("heading", { name: /Set up Chat before sending/i })).toBeInTheDocument();
+
+    rerender(<ChatLayout client={client} searchClient={searchClient} visible={false} />);
+    rerender(<ChatLayout client={client} searchClient={searchClient} visible={true} />);
+
+    expect(await screen.findByLabelText("Chat message")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /model: deepseek-v4-flash/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Set up Chat before sending/i })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(client.getModels).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("does not present chat as the primary first action when the workspace is empty", async () => {
     render(
       <ChatLayout
