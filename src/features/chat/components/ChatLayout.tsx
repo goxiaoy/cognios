@@ -649,7 +649,13 @@ export function ChatLayout({
   const renderableMemoryBody = memoryBody ? normalizeMemoryMarkdown(memoryBody) : "";
   const hasSessionHistory = sessions.length > 0;
   const chatProviderReady = !modelsLoading && selectableModels.length > 0;
-  const showProviderSetup = !modelsLoading && Boolean(settings) && models.length === 0;
+  const chatProviderConfigured = isChatProviderConfigured(settings);
+  const showProviderSetup =
+    !modelsLoading && Boolean(settings) && !chatProviderConfigured && models.length === 0;
+  const providerUnavailableReason =
+    !modelsLoading && chatProviderConfigured && models.length === 0
+      ? modelsStatus ?? "Chat provider unavailable."
+      : null;
   const composerDisabled = busy || !chatProviderReady || settingsLoading || Boolean(settingsError && !settings);
   const webSearchProviderId = settings?.features["web-search"]?.providerId ?? null;
   const webSearchEnabled = Boolean(
@@ -884,7 +890,9 @@ export function ChatLayout({
                 ? "Ask about a timeline, cost, cause, evidence gaps..."
                 : models.length > 0
                   ? "Select a tool-capable model to start..."
-                : "Configure a chat provider to start..."
+                  : chatProviderConfigured
+                    ? "Waiting for chat provider..."
+                    : "Configure a chat provider to start..."
             }
             aria-label="Chat message"
             disabled={composerDisabled}
@@ -908,6 +916,11 @@ export function ChatLayout({
               {modelUnavailableReason ? (
                 <span className="chat-model-unavailable" role="status">
                   {modelUnavailableReason}
+                </span>
+              ) : null}
+              {providerUnavailableReason ? (
+                <span className="chat-model-unavailable" role="status">
+                  {providerUnavailableReason}
                 </span>
               ) : null}
               {webSearchEnabled ? (
@@ -1527,6 +1540,13 @@ function chatModelsStatusMessage(
   if (data?.state === "provider_error") return "Chat provider returned an error.";
   if (data?.state === "provider_unavailable") return "No configured chat provider is ready.";
   return envelopeError ?? "Chat provider unavailable.";
+}
+
+function isChatProviderConfigured(settings: SearchSettings | null): boolean {
+  if (!settings?.features.chat?.enabled) return false;
+  const providerId = settings.features.chat.providerId;
+  if (!providerId) return false;
+  return settings.providers[providerId]?.enabled === true;
 }
 
 function sessionTitleFromQuery(query: string): string {

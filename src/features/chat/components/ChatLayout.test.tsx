@@ -1430,7 +1430,7 @@ describe("ChatLayout", () => {
     });
   });
 
-  it("refreshes chat provider state when returning to the chat view", async () => {
+  it("keeps a configured chat provider out of setup while startup model refresh recovers", async () => {
     const client = makeClient();
     vi.mocked(client.getModels)
       .mockResolvedValueOnce({
@@ -1478,7 +1478,11 @@ describe("ChatLayout", () => {
       <ChatLayout client={client} searchClient={searchClient} visible={true} />
     );
 
-    expect(await screen.findByRole("heading", { name: /Set up Chat before sending/i })).toBeInTheDocument();
+    const composer = await screen.findByLabelText("Chat message");
+    expect(composer).toBeDisabled();
+    expect(composer).toHaveAttribute("placeholder", "Waiting for chat provider...");
+    expect(screen.getByText("chat provider unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Set up Chat before sending/i })).not.toBeInTheDocument();
 
     rerender(<ChatLayout client={client} searchClient={searchClient} visible={false} />);
     rerender(<ChatLayout client={client} searchClient={searchClient} visible={true} />);
