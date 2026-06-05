@@ -81,6 +81,7 @@ UV_PROJECT_ENVIRONMENT="$PACKAGING_VENV" uv run --exact --no-default-groups --wi
   --hidden-import librosa \
   --hidden-import librosa.filters \
   --hidden-import librosa.feature \
+  --hidden-import scipy._cyutility \
   "$ENTRY"
 
 cp -R "$DIST_DIR/search-sidecar" "$RESOURCE_DIR"
