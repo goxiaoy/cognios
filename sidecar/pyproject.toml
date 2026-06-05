@@ -26,9 +26,10 @@ dependencies = [
   "Pillow>=10.0,<12.0",
   # Required local Voice Notes transcription runtime. Model weights and the
   # small ONNX inference script download through Cognios' model manager; these
-  # packages provide the CPU ONNX + tokenizer + audio loading runtime.
+  # packages provide the CPU ONNX + tokenizer + official audio feature runtime.
   "tokenizers>=0.22,<1.0",
   "soundfile>=0.13,<1.0",
+  "librosa>=0.11,<1.0",
   "pydantic-ai-slim[openai]>=1.0,<2.0",
   "trafilatura>=2.0,<3.0",
 ]

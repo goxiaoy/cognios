@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import numpy
 import pytest
 
 from search_sidecar.models.manager import ModelManager
@@ -53,13 +52,16 @@ def _write_fake_onnx_runtime(
     script.write_text(
         "from pathlib import Path\n"
         "RESULT = " + repr(result) + "\n"
+        "load_audio = 'official'\n"
         "class OnnxAsrPipeline:\n"
         "    def __init__(self, onnx_dir, quantize='int8'):\n"
         "        self.onnx_dir = onnx_dir\n"
         "        assert Path(onnx_dir).joinpath('tokenizer.json').exists()\n"
         "        Path(onnx_dir).parent.joinpath('loaded.txt').write_text(str(onnx_dir))\n"
+        "        Path(onnx_dir).parent.joinpath('helper.txt').write_text(str(load_audio))\n"
         "    def transcribe(self, audio_path, language=None, **_kwargs):\n"
         "        Path(self.onnx_dir).parent.joinpath('audio.txt').write_text(str(audio_path))\n"
+        "        Path(self.onnx_dir).parent.joinpath('kwargs.txt').write_text(repr({'language': language, **_kwargs}))\n"
         "        out = dict(RESULT)\n"
         "        if language is not None:\n"
         "            out['language'] = language\n"
@@ -103,8 +105,35 @@ def test_transcription_uses_activated_local_onnx_checkpoint(tmp_path: Path):
     assert result.language == "English"
     assert result.speaker_labels == {"speaker_1": "Speaker 1"}
     assert (checkpoint / "loaded.txt").read_text() == str(checkpoint / "onnx_models")
+    assert (checkpoint / "helper.txt").read_text() == "official"
     assert (checkpoint / "audio.txt").read_text() == str(audio_path)
     assert (checkpoint / "onnx_models" / "tokenizer.json").exists()
+    assert "'max_new_tokens': 1024" in (checkpoint / "kwargs.txt").read_text()
+    assert "'chunk_sec': 30" in (checkpoint / "kwargs.txt").read_text()
+
+
+def test_transcription_accepts_onnx_quality_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    manager = _make_manager(tmp_path)
+    _activate(manager)
+    _write_fake_onnx_runtime(manager)
+    audio_path = tmp_path / "source.webm"
+    audio_path.write_bytes(b"audio")
+    transcriber._MODEL_CACHE.clear()
+
+    monkeypatch.setenv("COGNIOS_QWEN_ASR_LANGUAGE", "Chinese")
+    monkeypatch.setenv("COGNIOS_QWEN_ASR_MAX_NEW_TOKENS", "1536")
+    monkeypatch.setenv("COGNIOS_QWEN_ASR_CHUNK_SEC", "20")
+
+    result = transcribe_voice_note_audio(manager, audio_path)
+    checkpoint = (manager.role_dir("audio-transcript") / "current").resolve()
+    kwargs_text = (checkpoint / "kwargs.txt").read_text()
+
+    assert result.language == "Chinese"
+    assert "'language': 'Chinese'" in kwargs_text
+    assert "'max_new_tokens': 1536" in kwargs_text
+    assert "'chunk_sec': 20" in kwargs_text
 
 
 def test_transcription_preserves_asr_speaker_hint(tmp_path: Path):
@@ -160,15 +189,3 @@ def test_warm_transcriber_loads_model_without_transcribing(tmp_path: Path):
 
     assert (checkpoint / "loaded.txt").read_text() == str(checkpoint / "onnx_models")
     assert not (checkpoint / "audio.txt").exists()
-
-
-def test_onnx_audio_helpers_do_not_require_librosa():
-    filters = transcriber._onnx_get_mel_filters()
-    waveform = numpy.zeros(1600, dtype=numpy.float32)
-
-    mel = transcriber._onnx_compute_mel_spectrogram(waveform, filters)
-    splits = transcriber._onnx_find_silence_split_points(waveform)
-
-    assert filters.shape == (128, 201)
-    assert mel.shape[0] == 128
-    assert splits == []

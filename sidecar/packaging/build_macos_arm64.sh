@@ -59,8 +59,6 @@ UV_PROJECT_ENVIRONMENT="$PACKAGING_VENV" uv run --exact --no-default-groups --wi
   --exclude-module numpy._core.tests \
   --exclude-module pytest \
   --exclude-module pandas \
-  --exclude-module scipy \
-  --exclude-module sklearn \
   --exclude-module torch \
   --exclude-module torchvision \
   --exclude-module torchaudio \
@@ -80,6 +78,9 @@ UV_PROJECT_ENVIRONMENT="$PACKAGING_VENV" uv run --exact --no-default-groups --wi
   --hidden-import uvicorn.lifespan.on \
   --hidden-import tokenizers \
   --hidden-import soundfile \
+  --hidden-import librosa \
+  --hidden-import librosa.filters \
+  --hidden-import librosa.feature \
   "$ENTRY"
 
 cp -R "$DIST_DIR/search-sidecar" "$RESOURCE_DIR"

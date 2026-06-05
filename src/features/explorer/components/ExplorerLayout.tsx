@@ -40,6 +40,7 @@ import { UrlModal } from "./UrlModal";
 import { searchClient } from "../../search/api/searchClient";
 import { voiceNoteClient } from "../../voice-notes/api/voiceNoteClient";
 import {
+  parseVoiceTranscriptSpeaker,
   VoiceNoteRecordingPreview,
   VoiceNoteSourceAudioBar,
   type VoiceNotePlaybackState,
@@ -1038,6 +1039,7 @@ interface TranscriptCue {
   id: string;
   startMs: number;
   endMs: number | null;
+  speakerLabel: string | null;
   text: string;
 }
 
@@ -1092,15 +1094,32 @@ function VoiceNoteTranscriptPlayback({
                   }
                 }}
               >
-                <time>{formatTranscriptCueRange(cue)}</time>
-                <p>{cue.text}</p>
+                <div className="voice-transcript-line-main">
+                  <div className="voice-transcript-meta">
+                    {cue.speakerLabel ? (
+                      <span className="voice-transcript-speaker">{cue.speakerLabel}</span>
+                    ) : null}
+                    <time>{formatTranscriptCueRange(cue)}</time>
+                  </div>
+                  <p>{cue.text}</p>
+                </div>
               </div>
             ))
-          : plainTranscriptLines.map((line, index) => (
-              <div className="voice-note-transcript-sync-line is-plain" key={`${index}:${line}`}>
-                <p>{line}</p>
-              </div>
-            ))}
+          : plainTranscriptLines.map((line, index) => {
+              const speaker = parseVoiceTranscriptSpeaker(line);
+              return (
+                <div className="voice-note-transcript-sync-line is-plain" key={`${index}:${line}`}>
+                  <div className="voice-transcript-line-main">
+                    {speaker.speakerLabel ? (
+                      <div className="voice-transcript-meta">
+                        <span className="voice-transcript-speaker">{speaker.speakerLabel}</span>
+                      </div>
+                    ) : null}
+                    <p>{speaker.text}</p>
+                  </div>
+                </div>
+              );
+            })}
       </div>
     </section>
   );
@@ -1148,11 +1167,13 @@ function parseTranscriptCue(line: string, index: number): TranscriptCue | null {
   const startMs = parseTranscriptTimestampMs(match[1]);
   if (startMs === null) return null;
   const endMs = match[2] ? parseTranscriptTimestampMs(match[2]) : null;
+  const speaker = parseVoiceTranscriptSpeaker(match[3]);
   return {
     id: `${index}:${startMs}`,
     startMs,
     endMs,
-    text: match[3],
+    speakerLabel: speaker.speakerLabel,
+    text: speaker.text,
   };
 }
 

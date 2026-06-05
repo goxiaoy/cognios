@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Lock, Mic2, Pause, Play, Square } from "lucide-react";
 import type { VoiceNote } from "../../../lib/contracts/voiceNote";
@@ -111,7 +111,11 @@ export function VoiceNoteRecordingPreview({
         {session.error ? <p className="voice-recording-error">{session.error}</p> : null}
         <div className="voice-recording-transcript-body">
           {liveTranscript ? (
-            <pre className="voice-recording-live-transcript">{liveTranscript}</pre>
+            <VoiceNoteTranscriptLines
+              className="voice-recording-live-transcript"
+              followTail={true}
+              transcript={liveTranscript}
+            />
           ) : (
             <>
               {session.phase === "recording" || session.phase === "paused" ? (
@@ -128,6 +132,129 @@ export function VoiceNoteRecordingPreview({
         </div>
       </section>
     </section>
+  );
+}
+
+export interface VoiceTranscriptDisplayLine {
+  id: string;
+  speakerLabel: string | null;
+  text: string;
+  timeLabel: string | null;
+}
+
+export function VoiceNoteTranscriptLines({
+  className,
+  followTail = false,
+  transcript,
+}: {
+  className?: string;
+  followTail?: boolean;
+  transcript: string;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const stickToTailRef = useRef(true);
+  const lines = useMemo(() => parseVoiceTranscriptLines(transcript), [transcript]);
+
+  useEffect(() => {
+    if (!followTail) return;
+    const scrollParent = rootRef.current?.parentElement;
+    if (!scrollParent) return;
+    const scrollElement = scrollParent;
+
+    function updateStickToTail() {
+      const distanceFromBottom =
+        scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight;
+      stickToTailRef.current = distanceFromBottom <= 32;
+    }
+
+    updateStickToTail();
+    scrollElement.addEventListener("scroll", updateStickToTail, { passive: true });
+    return () => {
+      scrollElement.removeEventListener("scroll", updateStickToTail);
+    };
+  }, [followTail]);
+
+  useEffect(() => {
+    if (!followTail || !stickToTailRef.current) return;
+    const scrollParent = rootRef.current?.parentElement;
+    if (!scrollParent) return;
+    const scrollElement = scrollParent;
+    const frame = window.requestAnimationFrame(() => {
+      scrollElement.scrollTop = scrollElement.scrollHeight;
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [followTail, transcript]);
+
+  return (
+    <div className={`voice-transcript-lines${className ? ` ${className}` : ""}`} ref={rootRef}>
+      {lines.map((line) => (
+        <VoiceTranscriptLine key={line.id} line={line} />
+      ))}
+    </div>
+  );
+}
+
+export function parseVoiceTranscriptLines(transcript: string): VoiceTranscriptDisplayLine[] {
+  return transcript
+    .split(/\r?\n/)
+    .map((line, index) => parseVoiceTranscriptLine(line, index))
+    .filter((line): line is VoiceTranscriptDisplayLine => line !== null);
+}
+
+export function parseVoiceTranscriptSpeaker(text: string): {
+  speakerLabel: string | null;
+  text: string;
+} {
+  const trimmed = text.trim();
+  const match = /^(Speaker\s+\d+|说话人\s*\d+)\s*[:：]\s*(.*)$/i.exec(trimmed);
+  if (!match) {
+    return { speakerLabel: null, text: trimmed };
+  }
+  return {
+    speakerLabel: normalizeSpeakerLabel(match[1]),
+    text: match[2].trim(),
+  };
+}
+
+function parseVoiceTranscriptLine(
+  line: string,
+  index: number
+): VoiceTranscriptDisplayLine | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const match =
+    /^\[(\d{1,3}:\d{2}(?:\.\d{1,3})?)(?:\s*-\s*(\d{1,3}:\d{2}(?:\.\d{1,3})?))?\]\s*(.*)$/.exec(
+      trimmed
+    );
+  const timeLabel = match ? formatTranscriptDisplayTime(match[1], match[2] ?? null) : null;
+  const body = match ? match[3] : trimmed;
+  const speaker = parseVoiceTranscriptSpeaker(body);
+  return {
+    id: `${index}:${trimmed}`,
+    speakerLabel: speaker.speakerLabel,
+    text: speaker.text || body.trim(),
+    timeLabel,
+  };
+}
+
+function VoiceTranscriptLine({ line }: { line: VoiceTranscriptDisplayLine }) {
+  const hasMetadata = Boolean(line.speakerLabel || line.timeLabel);
+  return (
+    <div className={`voice-transcript-line${hasMetadata ? "" : " is-plain"}`}>
+      <div className="voice-transcript-line-main">
+        {hasMetadata ? (
+          <div className="voice-transcript-meta">
+            {line.speakerLabel ? (
+              <span className="voice-transcript-speaker">{line.speakerLabel}</span>
+            ) : null}
+            {line.timeLabel ? <time>{line.timeLabel}</time> : null}
+          </div>
+        ) : null}
+        <p>{line.text}</p>
+      </div>
+    </div>
   );
 }
 
@@ -351,6 +478,15 @@ function sourceAudioUrl(filePath?: string | null): string | null {
   } catch {
     return filePath;
   }
+}
+
+function formatTranscriptDisplayTime(start: string, end: string | null): string {
+  if (!end) return start;
+  return `${start} - ${end}`;
+}
+
+function normalizeSpeakerLabel(label: string): string {
+  return label.replace(/\s+/g, " ").trim();
 }
 
 function formatElapsed(elapsedMs: number): string {

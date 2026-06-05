@@ -2881,14 +2881,21 @@ body.is-resizing-pane {
   padding: 0.4rem;
 }
 
-.voice-note-transcript-sync-line {
+.voice-transcript-lines {
   display: grid;
-  grid-template-columns: 3.8rem minmax(0, 1fr);
-  gap: 0.65rem;
-  align-items: start;
-  padding: 0.42rem 0.5rem;
+  gap: 0.35rem;
+}
+
+.voice-transcript-line,
+.voice-note-transcript-sync-line {
+  display: block;
+  padding: 0.42rem 0.45rem;
   border-radius: 6px;
   color: var(--ink-3);
+}
+
+.voice-transcript-line {
+  color: var(--ink-2);
 }
 
 .voice-note-transcript-sync-line.is-active {
@@ -2896,23 +2903,61 @@ body.is-resizing-pane {
   color: var(--ink);
 }
 
+.voice-transcript-line.is-plain,
 .voice-note-transcript-sync-line.is-plain {
-  grid-template-columns: minmax(0, 1fr);
+  padding-top: 0.32rem;
+  padding-bottom: 0.32rem;
 }
 
+.voice-transcript-line time,
 .voice-note-transcript-sync-line time {
+  max-width: 100%;
+  padding: 0.12rem 0.36rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper-2);
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: 0.68rem;
   color: var(--muted);
-  line-height: 1.45;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
+.voice-transcript-line-main {
+  min-width: 0;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.voice-transcript-meta {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.28rem;
+}
+
+.voice-transcript-speaker {
+  max-width: 100%;
+  padding: 0.08rem 0.36rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--paper));
+  color: var(--accent-ink);
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-transcript-line p,
 .voice-note-transcript-sync-line p {
   margin: 0;
   min-width: 0;
   overflow-wrap: anywhere;
   font-size: 0.88rem;
-  line-height: 1.45;
+  line-height: 1.55;
 }
 
 .visual-markdown-editor {
@@ -3496,13 +3541,8 @@ body.is-resizing-pane {
 }
 
 .voice-recording-live-transcript {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
   color: var(--ink-2);
-  font-family: var(--font-body);
   font-size: 0.9rem;
-  line-height: 1.65;
 }
 
 .voice-recording-error {
