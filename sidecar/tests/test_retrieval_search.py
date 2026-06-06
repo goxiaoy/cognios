@@ -296,6 +296,34 @@ def test_orchestrator_uses_hybrid_search_when_embedder_is_semantic(
     assert resp.degraded is False
 
 
+def test_orchestrator_uses_hybrid_relevance_score_when_present(tmp_path):
+    from unittest import mock
+
+    from search_sidecar.retrieval import SearchOrchestrator, SearchRequest
+    from search_sidecar.storage import EMBEDDING_DIMENSION
+
+    fake_embedder = mock.Mock()
+    fake_embedder.is_semantic = True
+    fake_embedder.embed.return_value = [[0.1] * EMBEDDING_DIMENSION]
+
+    fake_store = mock.Mock()
+    fake_store.hybrid_search.return_value = [
+        {
+            "node_id": "n1",
+            "kind": "note",
+            "name": "Hybrid result",
+            "text": "Hybrid result text",
+            "_relevance_score": 0.42,
+        }
+    ]
+
+    orch = SearchOrchestrator(store=fake_store, embedder=fake_embedder)
+    resp = orch.search(SearchRequest(query="hybrid"))
+
+    assert resp.results[0].score == 0.42
+    assert resp.degraded is False
+
+
 def test_orchestrator_falls_back_to_fts_when_embedder_raises(tmp_path):
     """A transient embedder failure must not kill the search request;
     the orchestrator logs and runs FTS-only with the same query."""

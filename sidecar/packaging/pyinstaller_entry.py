@@ -54,10 +54,14 @@ def _install_lancedb_embedding_stubs() -> None:
     _REGISTRY = EmbeddingFunctionRegistry()
 
     embeddings = ModuleType("lancedb.embeddings")
+    embeddings.__path__ = []
     embeddings.EmbeddingFunctionConfig = EmbeddingFunctionConfig
     embeddings.EmbeddingFunctionRegistry = EmbeddingFunctionRegistry
     embeddings.get_registry = EmbeddingFunctionRegistry.get_instance
     embeddings.register = _REGISTRY.register
+
+    base = ModuleType("lancedb.embeddings.base")
+    base.EmbeddingFunctionConfig = EmbeddingFunctionConfig
 
     registry = ModuleType("lancedb.embeddings.registry")
     registry.EmbeddingFunctionRegistry = EmbeddingFunctionRegistry
@@ -70,15 +74,58 @@ def _install_lancedb_embedding_stubs() -> None:
     reranker_base = ModuleType("lancedb.rerankers.base")
 
     class Reranker:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
+        def __init__(self, return_score: str = "relevance") -> None:
+            self.score = return_score
+            self._concat_tables_args = {"promote_options": "default"}
+
+        def merge_results(self, vector_results, fts_results):
+            import pyarrow as pa
+
+            combined = pa.concat_tables(
+                [vector_results, fts_results], **self._concat_tables_args
+            )
+            seen = set()
+            keep = []
+            for row_id in combined["_rowid"].to_pylist():
+                keep.append(row_id not in seen)
+                seen.add(row_id)
+            return combined.filter(pa.array(keep))
+
+        def _keep_relevance_score(self, combined_results):
+            if self.score == "relevance":
+                for column in ("_score", "_distance"):
+                    if column in combined_results.column_names:
+                        combined_results = combined_results.drop_columns([column])
+            return combined_results
 
     reranker_base.Reranker = Reranker
 
     reranker_rrf = ModuleType("lancedb.rerankers.rrf")
 
     class RRFReranker(Reranker):
-        pass
+        def __init__(self, K: int = 60, return_score: str = "relevance") -> None:
+            super().__init__(return_score=return_score)
+            self.K = K
+
+        def rerank_hybrid(self, query, vector_results, fts_results):
+            import pyarrow as pa
+
+            score_map = {}
+            for table in (vector_results, fts_results):
+                if table is None or table.num_rows == 0:
+                    continue
+                for rank, row_id in enumerate(table["_rowid"].to_pylist(), 1):
+                    score_map[row_id] = score_map.get(row_id, 0.0) + 1 / (
+                        rank + self.K
+                    )
+
+            combined = self.merge_results(vector_results, fts_results)
+            scores = [score_map[row_id] for row_id in combined["_rowid"].to_pylist()]
+            combined = combined.append_column(
+                "_relevance_score", pa.array(scores, type=pa.float32())
+            )
+            combined = combined.sort_by([("_relevance_score", "descending")])
+            return self._keep_relevance_score(combined)
 
     reranker_rrf.RRFReranker = RRFReranker
 
@@ -92,6 +139,7 @@ def _install_lancedb_embedding_stubs() -> None:
     rerankers.RRFReranker = RRFReranker
 
     sys.modules["lancedb.embeddings"] = embeddings
+    sys.modules["lancedb.embeddings.base"] = base
     sys.modules["lancedb.embeddings.registry"] = registry
     sys.modules["lancedb.rerankers"] = rerankers
     sys.modules["lancedb.rerankers.base"] = reranker_base

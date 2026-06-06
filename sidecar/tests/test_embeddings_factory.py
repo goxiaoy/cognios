@@ -76,7 +76,7 @@ def test_falls_back_to_stub_when_role_is_not_ready(manager: ModelManager):
 
 
 def test_falls_back_to_stub_when_extra_not_installed(manager: ModelManager):
-    """Even with the role activated, if onnxruntime/transformers are not
+    """Even with the role activated, if onnxruntime/tokenizers are not
     importable the factory must use the stub. We simulate that with a
     monkeypatch on ``can_load_real_embedder``."""
     _activate_role(manager)
@@ -135,6 +135,6 @@ def test_can_load_real_embedder_reflects_actual_environment():
 
     expected = (
         importlib.util.find_spec("onnxruntime") is not None
-        and importlib.util.find_spec("transformers") is not None
+        and importlib.util.find_spec("tokenizers") is not None
     )
     assert can_load_real_embedder() == expected

@@ -54,7 +54,7 @@ def can_load_real_embedder() -> bool:
     ``embedding`` extra is installed."""
     return (
         importlib.util.find_spec("onnxruntime") is not None
-        and importlib.util.find_spec("transformers") is not None
+        and importlib.util.find_spec("tokenizers") is not None
     )
 
 

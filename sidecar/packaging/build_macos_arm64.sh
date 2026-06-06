@@ -46,6 +46,7 @@ UV_PROJECT_ENVIRONMENT="$PACKAGING_VENV" uv run --exact --no-default-groups --wi
   --collect-binaries pyarrow \
   --collect-binaries numpy \
   --collect-submodules numpy._core \
+  --collect-data trafilatura \
   --collect-data rapidocr_onnxruntime \
   --collect-binaries rapidocr_onnxruntime \
   --copy-metadata genai-prices \

@@ -390,11 +390,11 @@ def _iso_or_none(value) -> str | None:
 def _row_score(row: dict) -> float:
     """Pull the numeric score lancedb attached.
 
-    lancedb's FTS path adds ``_score``; the brute-force search path
-    uses ``_distance`` (lower = better). FTS is the only path Phase 2.1
-    uses, but we guard for both to keep the function robust as the
-    pipeline grows.
+    lancedb's hybrid path adds ``_relevance_score`` after RRF, FTS adds
+    ``_score``, and vector search uses ``_distance`` (lower = better).
     """
+    if "_relevance_score" in row and row["_relevance_score"] is not None:
+        return float(row["_relevance_score"])
     if "_score" in row and row["_score"] is not None:
         return float(row["_score"])
     if "_distance" in row and row["_distance"] is not None:

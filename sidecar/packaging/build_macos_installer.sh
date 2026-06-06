@@ -26,6 +26,11 @@ npx tauri build --bundles app --config "$SIDECAR_CONFIG" --no-sign
 codesign --force --deep --sign - "$APP_DIR"
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
+if [[ "${COGNIOS_SKIP_PACKAGED_SMOKE:-}" != "1" ]]; then
+  python3 "$SCRIPT_DIR/smoke_test_macos_sidecar.py" \
+    "$APP_DIR/Contents/Resources/resources/search-sidecar/search-sidecar"
+fi
+
 find "$DMG_DIR" "$REPO_ROOT/src-tauri/target/release/bundle/macos" \
   -maxdepth 1 \
   -name 'rw.*.dmg' \

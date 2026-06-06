@@ -8,7 +8,7 @@ Splits across files because each model has a different argument shape:
   :class:`GteEmbedder` based on dependency presence + model state.
 
 Importing this package does not import ``onnxruntime`` or
-``transformers``; those are deferred to :class:`GteEmbedder`'s
+``tokenizers``; those are deferred to :class:`GteEmbedder`'s
 constructor so the sidecar starts even when the ``embedding`` extra
 is not installed.
 """
