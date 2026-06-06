@@ -61,6 +61,59 @@ describe("ExplorerInspector", () => {
     expect(screen.getByText("url-1")).toBeInTheDocument();
   });
 
+  it("shows detailed processing stages when node status is available", () => {
+    render(
+      <ExplorerInspector
+        client={makeClient()}
+        node={{
+          id: "voice-1",
+          parentId: null,
+          name: "Voice Note",
+          kind: "note",
+          state: "indexed",
+          createdAt: "2026-06-06 00:00:00",
+          modifiedAt: "2026-06-06 00:00:00",
+          sizeBytes: 512,
+          isVoiceNote: true,
+          children: [],
+        }}
+        nodeStatus={{
+          nodeId: "voice-1",
+          overall: "partial",
+          primaryStageId: "voice.summarize",
+          updatedAt: "2026-06-06 00:00:00",
+          stages: [
+            {
+              id: "voice.transcribe",
+              label: "Transcribing",
+              state: "succeeded",
+              importance: "required",
+              message: "Transcript completed",
+              attempt: 0,
+              updatedAt: "2026-06-06 00:00:00",
+            },
+            {
+              id: "voice.summarize",
+              label: "Summarizing",
+              state: "failed",
+              importance: "optional",
+              error: { message: "Provider unavailable", retryable: true },
+              attempt: 1,
+              updatedAt: "2026-06-06 00:00:00",
+            },
+          ],
+        }}
+        selectedArtifacts={[]}
+        selectionCount={0}
+      />
+    );
+
+    expect(screen.getByText("Partially ready")).toBeInTheDocument();
+    expect(screen.getByText("Processing")).toBeInTheDocument();
+    expect(screen.getByText("Transcribing")).toBeInTheDocument();
+    expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
+  });
+
   it("copies the node id from single-node metadata", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const originalClipboard = Object.getOwnPropertyDescriptor(

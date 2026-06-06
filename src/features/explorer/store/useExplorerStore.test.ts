@@ -147,6 +147,47 @@ describe("useExplorerStore", () => {
     expect(result.current.inspectorNode?.name).toBe("My Note");
   });
 
+  it("hydrates and updates node status snapshots", async () => {
+    const client = {
+      ...makeClient(baseSnapshot),
+      getNodeStatusSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        nodes: {
+          "url-1": {
+            nodeId: "url-1",
+            overall: "queued",
+            primaryStageId: "url.crawl",
+            updatedAt: "2026-06-06 00:00:00",
+            stages: [],
+          },
+        },
+      }),
+    };
+    const { result } = renderHook(() => useExplorerStore(client));
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.nodeStatusFor("url-1")?.overall).toBe("queued");
+
+    act(() => {
+      result.current.applyNodeStatusChanged({
+        revision: 2,
+        nodeId: "url-1",
+        status: {
+          nodeId: "url-1",
+          overall: "running",
+          primaryStageId: "url.crawl",
+          updatedAt: "2026-06-06 00:00:01",
+          stages: [],
+        },
+      });
+    });
+
+    expect(result.current.nodeStatusFor("url-1")?.overall).toBe("running");
+  });
+
   it("activateArtifact on a folder toggles expansion and does not change active surfaces", async () => {
     const client = makeClient(baseSnapshot);
     const { result } = renderHook(() => useExplorerStore(client));

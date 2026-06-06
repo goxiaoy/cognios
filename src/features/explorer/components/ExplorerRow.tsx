@@ -1,12 +1,13 @@
 import { ChevronRight } from "lucide-react";
 import { KeyboardEvent as KE, MouseEvent, useEffect, useRef, useState } from "react";
+import type { NodeStatusView } from "../../../lib/contracts/nodeStatus";
 import type { ExplorerNode } from "../types/explorer";
 import {
   formatCompactNodeMeta,
   formatTreeDisclosurePath,
   nodeIconComponent,
 } from "../utils/presentation";
-import { NodeStateDot } from "./NodeStateDot";
+import { NodeStatusIndicator } from "./NodeStatusIndicator";
 
 export interface SelectModifiers {
   shift: boolean;
@@ -26,6 +27,7 @@ function NodeIcon({ node }: { node: ExplorerNode }) {
 
 export function ExplorerRow({
   node,
+  nodeStatus,
   depth,
   isExpanded,
   isSelected,
@@ -43,6 +45,7 @@ export function ExplorerRow({
   pathNodes
 }: {
   node: ExplorerNode;
+  nodeStatus?: NodeStatusView | null;
   depth: number;
   isExpanded: boolean;
   isSelected: boolean;
@@ -173,7 +176,11 @@ export function ExplorerRow({
           </span>
           <span className="tree-row-secondary">
             {compactMeta ? <span className="tree-row-meta">{compactMeta}</span> : null}
-            <NodeStateDot kind={node.kind} state={node.state} />
+            <NodeStatusIndicator
+              fallbackKind={node.kind}
+              fallbackState={node.state}
+              status={nodeStatus}
+            />
           </span>
         </button>
       )}

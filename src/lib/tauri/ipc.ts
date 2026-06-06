@@ -36,6 +36,10 @@ import type {
   StartModelDownloadInput,
 } from "../contracts/search";
 import type {
+  NodeStatusSnapshot,
+  NodeStatusView,
+} from "../contracts/nodeStatus";
+import type {
   AppendVoiceNoteAudioChunkInput,
   BeginVoiceNoteAudioCaptureInput,
   CaptureCapability,
@@ -61,6 +65,14 @@ import type {
 
 export async function getExplorerSnapshot(): Promise<ExplorerSnapshot> {
   return invoke<ExplorerSnapshot>("get_explorer_snapshot");
+}
+
+export async function getNodeStatusSnapshot(): Promise<NodeStatusSnapshot> {
+  return invoke<NodeStatusSnapshot>("get_node_status_snapshot");
+}
+
+export async function getNodeStatus(nodeId: string): Promise<NodeStatusView> {
+  return invoke<NodeStatusView>("get_node_status", { input: { nodeId } });
 }
 
 export async function createFolder(

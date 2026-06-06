@@ -6,9 +6,13 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
+use crate::domain::node_status::{StageState, StageUpdate};
 use crate::domain::vfs::node::ExplorerSnapshotDto;
 use crate::domain::voice_note::VoiceNoteDto;
 use crate::infrastructure::db::node_repository::list_snapshot;
+use crate::infrastructure::db::node_status_repository::{
+    ensure_default_stages_for_node, update_stage,
+};
 use crate::services::mounts::watcher::VfsChangeEvent;
 use crate::services::notes::create_note::{
     create_note_with_name_and_body_without_event, CreateNoteInput, CreatedNote,
@@ -176,6 +180,37 @@ pub fn create_voice_note(
         let _ = std::fs::remove_file(transcript_path);
         return Err(error.to_string());
     }
+    ensure_default_stages_for_node(conn, &node_id).map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &node_id,
+        "voice.transcribe",
+        &StageUpdate::pending("Waiting for audio"),
+    )
+    .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &node_id,
+        "voice.summarize",
+        &StageUpdate {
+            state: StageState::Skipped,
+            message: Some("Summary unavailable until transcript is complete".to_string()),
+            detail: None,
+            error_message: None,
+            retryable: false,
+            attempt: None,
+            started_at: None,
+            finished_at: Some("CURRENT_TIMESTAMP".to_string()),
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &node_id,
+        "content.index",
+        &StageUpdate::pending("Waiting for transcript"),
+    )
+    .map_err(|error| error.to_string())?;
 
     let voice_note = get_voice_note(conn, &node_id)?
         .ok_or_else(|| "voice note metadata was not created".to_string())?;
@@ -336,6 +371,36 @@ pub fn complete_voice_note_transcript(
         params![input.note_id, summary_status, speaker_labels_json],
     )
     .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &input.note_id,
+        "voice.transcribe",
+        &StageUpdate::succeeded("Transcript completed"),
+    )
+    .map_err(|error| error.to_string())?;
+    let summary_update = if summary_status == "ready" {
+        StageUpdate::succeeded("Summary ready")
+    } else {
+        StageUpdate {
+            state: StageState::Skipped,
+            message: Some("Summary unavailable".to_string()),
+            detail: None,
+            error_message: None,
+            retryable: false,
+            attempt: None,
+            started_at: None,
+            finished_at: Some("CURRENT_TIMESTAMP".to_string()),
+        }
+    };
+    update_stage(conn, &input.note_id, "voice.summarize", &summary_update)
+        .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &input.note_id,
+        "content.index",
+        &StageUpdate::pending("Waiting to index transcript"),
+    )
+    .map_err(|error| error.to_string())?;
 
     emit_note_saved(&input.note_id, emitter);
 
@@ -397,6 +462,13 @@ pub fn append_voice_note_realtime_transcript(
         params![input.note_id, speaker_labels_json],
     )
     .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &input.note_id,
+        "voice.transcribe",
+        &StageUpdate::running("Transcribing"),
+    )
+    .map_err(|error| error.to_string())?;
 
     emit_note_saved(&input.note_id, emitter);
 
@@ -442,6 +514,13 @@ pub fn begin_voice_note_audio_capture(
         WHERE note_id = ?1
         ",
         params![input.note_id, audio_path.to_string_lossy().to_string()],
+    )
+    .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &input.note_id,
+        "voice.transcribe",
+        &StageUpdate::pending("Waiting to transcribe"),
     )
     .map_err(|error| error.to_string())?;
 
@@ -519,6 +598,13 @@ pub fn finish_voice_note_audio_capture(
         [&input.note_id],
     )
     .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &input.note_id,
+        "voice.transcribe",
+        &StageUpdate::pending("Audio captured"),
+    )
+    .map_err(|error| error.to_string())?;
 
     emit_note_saved(&input.note_id, emitter);
 
@@ -569,6 +655,13 @@ pub fn mark_voice_note_transcription_failed(
         WHERE note_id = ?1
         ",
         params![note_id, transcription_status],
+    )
+    .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        note_id,
+        "voice.transcribe",
+        &StageUpdate::failed(message, transcription_status != "failed"),
     )
     .map_err(|error| error.to_string())?;
 

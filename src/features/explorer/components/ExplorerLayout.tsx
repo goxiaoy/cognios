@@ -26,6 +26,7 @@ import {
 import type { CreateAction } from "./CreateMenu";
 import type { SelectModifiers } from "./ExplorerRow";
 import { useExplorerEvents } from "../hooks/useExplorerEvents";
+import { useNodeStatusEvents } from "../hooks/useNodeStatusEvents";
 import { useExplorerStoreContext } from "../store/ExplorerStoreContext";
 import { isDisplayFolder } from "../store/useExplorerStore";
 import { Breadcrumbs } from "./Breadcrumbs";
@@ -156,6 +157,7 @@ export function ExplorerLayout({
   }, [client, openModal]);
 
   useExplorerEvents(store.refresh);
+  useNodeStatusEvents(store.applyNodeStatusChanged);
 
   useEffect(() => {
     const activeNoteId = store.activeNoteId;
@@ -742,6 +744,7 @@ export function ExplorerLayout({
           <ExplorerTree
             expandedIds={store.expandedIds}
             nodes={sortedTreeRoots}
+            nodeStatuses={store.nodeStatuses}
             onDelete={handleDeleteById}
             onDeleteMany={handleDeleteMany}
             onInlineRename={handleInlineRename}
@@ -872,7 +875,12 @@ export function ExplorerLayout({
           <div className="inspector-panel-scroll">
             <ExplorerInspector
               client={client}
-              node={store.inspectorNode}
+          node={store.inspectorNode}
+          nodeStatus={
+            store.inspectorNode
+              ? store.nodeStatusFor(store.inspectorNode.id)
+              : null
+          }
               selectedArtifacts={store.selectedArtifacts}
               selectionCount={store.selectionCount}
             />

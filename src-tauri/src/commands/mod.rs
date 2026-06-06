@@ -1,6 +1,7 @@
 pub mod chat;
 pub mod files;
 pub mod mounts;
+pub mod node_status;
 pub mod nodes;
 pub mod notes;
 pub mod search;

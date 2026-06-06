@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
 const getExplorerSnapshot = vi.fn();
+const getNodeStatusSnapshot = vi.fn();
 const getMountSetupContext = vi.fn();
 const createFolder = vi.fn();
 const createMount = vi.fn();
@@ -26,6 +27,7 @@ const startModelDownload = vi.fn();
 
 vi.mock("../lib/tauri/ipc", () => ({
   getExplorerSnapshot: () => getExplorerSnapshot(),
+  getNodeStatusSnapshot: () => getNodeStatusSnapshot(),
   getMountSetupContext: () => getMountSetupContext(),
   getNodeThumbnail: vi.fn().mockResolvedValue("data:image/png;base64,AA=="),
   createFolder: (input: unknown) => createFolder(input),
@@ -217,6 +219,8 @@ async function openExplorer() {
 describe("App", () => {
   beforeEach(() => {
     getExplorerSnapshot.mockReset();
+    getNodeStatusSnapshot.mockReset();
+    getNodeStatusSnapshot.mockResolvedValue({ revision: 0, nodes: {} });
     getMountSetupContext.mockReset();
     getMountSetupContext.mockResolvedValue({ suggestedFolders: [], existingMounts: [] });
     createFolder.mockReset();

@@ -29,7 +29,11 @@ use std::time::Duration;
 use rusqlite::{params, OptionalExtension};
 use tauri::{AppHandle, Emitter};
 
+use crate::domain::node_status::{StageState, StageUpdate};
 use crate::infrastructure::db::connection::Database;
+use crate::infrastructure::db::node_status_repository::{
+    get_node_status_changed_event, update_stage, NODE_STATUS_CHANGED_EVENT,
+};
 use crate::services::mounts::watcher::VfsChangeEvent;
 use crate::services::search::client::{IndexChangeDto, SearchSidecarClient};
 use crate::services::search::supervisor::{SearchSidecarSupervisor, SupervisorState};
@@ -87,6 +91,26 @@ pub fn apply_index_changes(
                 continue;
             }
         };
+        let status_update = match t.state.as_str() {
+            "indexed" => Some(StageUpdate::succeeded("Indexed")),
+            "indexing" => Some(StageUpdate::running("Indexing")),
+            "pending" => Some(StageUpdate::pending("Waiting to index")),
+            "error" if is_no_processor_error(t.error.as_deref()) => Some(StageUpdate {
+                state: StageState::Skipped,
+                message: Some("No index processor available".to_string()),
+                detail: None,
+                error_message: None,
+                retryable: false,
+                attempt: None,
+                started_at: None,
+                finished_at: Some("CURRENT_TIMESTAMP".to_string()),
+            }),
+            "error" => Some(StageUpdate::failed(
+                t.error.as_deref().unwrap_or("Indexing failed").to_string(),
+                true,
+            )),
+            _ => None,
+        };
         for container_id in lineage_containers(&conn, &t.node_id)? {
             containers_to_refresh.insert(container_id);
         }
@@ -101,6 +125,17 @@ pub fn apply_index_changes(
                AND kind NOT IN ('folder', 'mount')",
             params![t.node_id, mapped],
         )?;
+        if let Some(update) = status_update {
+            match update_stage(&conn, &t.node_id, "content.index", &update) {
+                Ok(_) => updated += 1,
+                Err(error) => {
+                    log::debug!(
+                        "index-state-sync: skipped node-status update for {}: {error}",
+                        t.node_id
+                    );
+                }
+            }
+        }
         updated += rows;
     }
     updated += refresh_container_states(&conn, &containers_to_refresh)?;
@@ -264,6 +299,17 @@ pub async fn run_index_state_sync(
                                             ..Default::default()
                                         },
                                     );
+                                    if let Ok(conn) = db.connect() {
+                                        for transition in &changes.transitions {
+                                            if let Ok(Some(event)) = get_node_status_changed_event(
+                                                &conn,
+                                                &transition.node_id,
+                                            ) {
+                                                let _ = app_handle
+                                                    .emit(NODE_STATUS_CHANGED_EVENT, event);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             Err(err) => {

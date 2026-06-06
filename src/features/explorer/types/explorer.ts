@@ -13,6 +13,7 @@ import type {
   RenameNodeInput,
   RetryUrlInput,
 } from "../../../lib/contracts/vfs";
+import type { NodeStatusSnapshot } from "../../../lib/contracts/nodeStatus";
 
 export type {
   CreateFolderInput,
@@ -32,6 +33,7 @@ export type {
 
 export interface ExplorerClient {
   getExplorerSnapshot(): Promise<ExplorerSnapshot>;
+  getNodeStatusSnapshot?(): Promise<NodeStatusSnapshot>;
   getMountSetupContext(): Promise<MountSetupContext>;
   createFolder(input: CreateFolderInput): Promise<ExplorerSnapshot>;
   createMount(input: CreateMountInput): Promise<ExplorerSnapshot>;

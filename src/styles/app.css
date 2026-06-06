@@ -482,6 +482,11 @@ button:disabled {
   box-shadow: 0 0 0 3px rgba(179, 38, 30, 0.18);
 }
 
+.node-state-dot.is-partial {
+  background: #9a6a1f;
+  box-shadow: 0 0 0 3px rgba(154, 106, 31, 0.18);
+}
+
 .node-state-dot.is-unsupported {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--ink-4);
@@ -508,6 +513,10 @@ button:disabled {
 
 .node-state-pill.is-error {
   color: #b3261e;
+}
+
+.node-state-pill.is-partial {
+  color: #9a6a1f;
 }
 
 .node-state-pill.is-unsupported {
@@ -1875,6 +1884,74 @@ body.is-resizing-pane {
   color: var(--ink);
   border-color: var(--line);
   background: var(--paper-2);
+}
+
+.inspector-processing {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line-2);
+}
+
+.inspector-processing h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+
+.node-stage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.node-stage-item {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.node-stage-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.node-stage-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  color: var(--ink);
+}
+
+.node-stage-state {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--ink-3);
+}
+
+.node-stage-message {
+  font-size: 0.72rem;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.node-stage-item.is-failed .node-stage-state,
+.node-stage-item.is-blocked .node-stage-state {
+  color: #b3261e;
+}
+
+.node-stage-item.is-running .node-stage-state {
+  color: var(--warn);
 }
 
 /* ── Inspector Actions panel ── */

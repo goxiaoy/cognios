@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, Copy, FolderOpen, RefreshCw } from "lucide-react";
 
+import type { NodeStatusView } from "../../../lib/contracts/nodeStatus";
 import type { ExplorerClient, ExplorerNode } from "../types/explorer";
 import {
   formatInspectorKindLabel,
@@ -11,15 +12,17 @@ import {
   isImageNode,
 } from "../utils/presentation";
 import { InspectorImageThumbnail } from "./InspectorImageThumbnail";
-import { NodeStateDot, resolveNodeStateTone } from "./NodeStateDot";
+import { NodeStatusIndicator } from "./NodeStatusIndicator";
 
 export function ExplorerInspector({
   node,
   selectedArtifacts,
   selectionCount,
   client,
+  nodeStatus,
 }: {
   node: ExplorerNode | null;
+  nodeStatus?: NodeStatusView | null;
   selectedArtifacts: ExplorerNode[];
   selectionCount: number;
   client: ExplorerClient;
@@ -82,16 +85,37 @@ export function ExplorerInspector({
           <dd>{formatNodeSize(node.sizeBytes)}</dd>
         </div>
         <div className="inspector-meta-row">
-          <dt>State</dt>
+          <dt>Status</dt>
           <dd>
-            {resolveNodeStateTone(node.kind, node.state) ? (
-              <NodeStateDot kind={node.kind} state={node.state} withLabel />
-            ) : (
-              <span className="inspector-meta-muted">—</span>
-            )}
+            <NodeStatusIndicator
+              fallbackKind={node.kind}
+              fallbackState={node.state}
+              status={nodeStatus}
+              withLabel
+            />
           </dd>
         </div>
       </dl>
+      {nodeStatus && nodeStatus.stages.length > 0 ? (
+        <section className="inspector-processing" aria-label="Processing status">
+          <h3>Processing</h3>
+          <ol className="node-stage-list">
+            {nodeStatus.stages.map((stage) => (
+              <li className={`node-stage-item is-${stage.state}`} key={stage.id}>
+                <span className="node-stage-main">
+                  <span className="node-stage-label">{stage.label}</span>
+                  <span className="node-stage-state">{stage.state}</span>
+                </span>
+                {stage.error?.message || stage.message ? (
+                  <span className="node-stage-message">
+                    {stage.error?.message ?? stage.message}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
       {showImage ? (
         <InspectorImageThumbnail
           client={client}

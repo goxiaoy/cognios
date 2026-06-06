@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
+import type { NodeStatusView } from "../../../lib/contracts/nodeStatus";
 import type { ExplorerNode } from "../types/explorer";
 import { ExplorerRow, type SelectModifiers } from "./ExplorerRow";
 
 interface ExplorerTreeProps {
   expandedIds: string[];
   nodes: ExplorerNode[];
+  nodeStatuses?: Record<string, NodeStatusView>;
   pendingInlineRenameId: string | null;
   onDelete(nodeId: string, cascade: boolean): void;
   onDeleteMany(nodeIds: string[]): void;
@@ -22,6 +24,7 @@ interface ExplorerTreeProps {
 export function ExplorerTree({
   expandedIds,
   nodes,
+  nodeStatuses = {},
   pendingInlineRenameId,
   onDelete,
   onDeleteMany,
@@ -53,6 +56,7 @@ export function ExplorerTree({
               expandedSet={expandedSet}
               key={node.id}
               node={node}
+              nodeStatuses={nodeStatuses}
               pendingInlineRenameId={pendingInlineRenameId}
               onDelete={onDelete}
               onDeleteMany={onDeleteMany}
@@ -76,6 +80,7 @@ function TreeBranch({
   ancestorNodes,
   expandedSet,
   node,
+  nodeStatuses,
   pendingInlineRenameId,
   onDelete,
   onDeleteMany,
@@ -92,6 +97,7 @@ function TreeBranch({
   ancestorNodes: ExplorerNode[];
   expandedSet: Set<string>;
   node: ExplorerNode;
+  nodeStatuses: Record<string, NodeStatusView>;
   pendingInlineRenameId: string | null;
   onDelete(nodeId: string, cascade: boolean): void;
   onDeleteMany(nodeIds: string[]): void;
@@ -117,6 +123,7 @@ function TreeBranch({
         isSelected={selectedSet.has(node.id)}
         selectedIds={[...selectedSet]}
         node={node}
+        nodeStatus={nodeStatuses[node.id] ?? null}
         onDelete={onDelete}
         onDeleteMany={onDeleteMany}
         onOpenUrl={onOpenUrl}
@@ -137,6 +144,7 @@ function TreeBranch({
               expandedSet={expandedSet}
               key={child.id}
               node={child}
+              nodeStatuses={nodeStatuses}
               pendingInlineRenameId={pendingInlineRenameId}
               onDelete={onDelete}
               onDeleteMany={onDeleteMany}

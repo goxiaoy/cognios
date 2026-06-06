@@ -4,9 +4,13 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::domain::node_status::{StageState, StageUpdate};
 use crate::domain::vfs::node::{ExplorerSnapshotDto, NodeKind};
 use crate::domain::vfs::state::NodeState;
 use crate::infrastructure::db::node_repository::{list_snapshot, touch_node_modified_at};
+use crate::infrastructure::db::node_status_repository::{
+    ensure_default_stages_for_node, update_stage,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +78,19 @@ pub fn create_url(conn: &mut Connection, input: &CreateUrlInput) -> rusqlite::Re
         params![node_id, trimmed_url],
     )?;
     tx.commit()?;
+    ensure_default_stages_for_node(conn, &node_id)?;
+    let _ = update_stage(
+        conn,
+        &node_id,
+        "url.crawl",
+        &StageUpdate::pending("Waiting to crawl"),
+    )?;
+    let _ = update_stage(
+        conn,
+        &node_id,
+        "content.index",
+        &StageUpdate::pending("Waiting to index"),
+    )?;
     touch_node_modified_at(conn, input.parent_id.as_deref())?;
 
     Ok(CreatedUrl {
@@ -94,6 +111,27 @@ pub fn retry_url(conn: &Connection, input: &RetryUrlInput) -> rusqlite::Result<(
             NodeState::Pending.as_str(),
             NodeKind::Url.as_str()
         ],
+    )?;
+    let _ = update_stage(
+        conn,
+        &input.node_id,
+        "url.crawl",
+        &StageUpdate {
+            state: StageState::Pending,
+            message: Some("Retry queued".to_string()),
+            detail: None,
+            error_message: None,
+            retryable: false,
+            attempt: None,
+            started_at: None,
+            finished_at: None,
+        },
+    )?;
+    let _ = update_stage(
+        conn,
+        &input.node_id,
+        "content.index",
+        &StageUpdate::pending("Waiting to index"),
     )?;
     Ok(())
 }
@@ -155,6 +193,12 @@ pub fn mark_url_indexing(conn: &Connection, node_id: &str) -> rusqlite::Result<(
         "UPDATE nodes SET state = ?2 WHERE id = ?1",
         params![node_id, NodeState::Indexing.as_str()],
     )?;
+    let _ = update_stage(
+        conn,
+        node_id,
+        "url.crawl",
+        &StageUpdate::running("Crawling URL"),
+    )?;
     Ok(())
 }
 
@@ -207,6 +251,27 @@ pub fn mark_url_indexed(
             result.html_cache_path
         ],
     )?;
+    let detail = serde_json::json!({
+        "title": result.title,
+        "canonicalUrl": result.canonical_url,
+        "description": result.description,
+        "htmlCachePath": result.html_cache_path,
+    });
+    let _ = update_stage(
+        conn,
+        node_id,
+        "url.crawl",
+        &StageUpdate {
+            state: StageState::Succeeded,
+            message: Some("Crawl succeeded".to_string()),
+            detail: Some(detail),
+            error_message: None,
+            retryable: false,
+            attempt: None,
+            started_at: None,
+            finished_at: Some("CURRENT_TIMESTAMP".to_string()),
+        },
+    )?;
     Ok(())
 }
 
@@ -218,6 +283,12 @@ pub fn mark_url_error(conn: &Connection, node_id: &str, message: &str) -> rusqli
     conn.execute(
         "UPDATE url_jobs SET last_error = ?2 WHERE node_id = ?1",
         params![node_id, message],
+    )?;
+    let _ = update_stage(
+        conn,
+        node_id,
+        "url.crawl",
+        &StageUpdate::failed(message, true),
     )?;
     Ok(())
 }

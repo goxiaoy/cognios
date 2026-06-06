@@ -175,6 +175,21 @@ pub fn run() {
             let forwarder_storage_dir = app_data_dir.clone();
             let emitter: VfsEventEmitter = Arc::new(move |event: VfsChangeEvent| {
                 let _ = emit_app_handle.emit(VFS_EVENT_NAME, event.clone());
+                if !event.mount_id.is_empty() {
+                    if let Ok(conn) = forwarder_db.connect() {
+                        if let Ok(Some(status_event)) =
+                            services::node_status::current_node_status_event(
+                                &conn,
+                                &event.mount_id,
+                            )
+                        {
+                            let _ = emit_app_handle.emit(
+                                services::node_status::NODE_STATUS_CHANGED_EVENT_NAME,
+                                status_event,
+                            );
+                        }
+                    }
+                }
 
                 let client = Arc::clone(&forwarder_client);
                 let db = forwarder_db.clone();
@@ -347,6 +362,8 @@ pub fn run() {
             commands::nodes::rename_node,
             commands::nodes::delete_node,
             commands::nodes::reindex_node,
+            commands::node_status::get_node_status_snapshot,
+            commands::node_status::get_node_status,
             commands::notes::create_note,
             commands::notes::get_note_content,
             commands::notes::save_note_content,

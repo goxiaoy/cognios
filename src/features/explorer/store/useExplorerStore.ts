@@ -1,6 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
 import { error as logError } from "../../../lib/logger";
 import type {
+  NodeStatusChangedEvent,
+  NodeStatusSnapshot,
+  NodeStatusView,
+} from "../../../lib/contracts/nodeStatus";
+import type {
   ExplorerClient,
   ExplorerNode,
   ExplorerSnapshot
@@ -8,9 +13,13 @@ import type {
 import { hasExtractArtifacts, isTextLikeFile } from "../utils/presentation";
 
 const EMPTY_SNAPSHOT: ExplorerSnapshot = { roots: [] };
+const EMPTY_NODE_STATUS_SNAPSHOT: NodeStatusSnapshot = { revision: 0, nodes: {} };
 
 export function useExplorerStore(client: ExplorerClient) {
   const [snapshot, setSnapshot] = useState<ExplorerSnapshot>(EMPTY_SNAPSHOT);
+  const [nodeStatusSnapshot, setNodeStatusSnapshot] = useState<NodeStatusSnapshot>(
+    EMPTY_NODE_STATUS_SNAPSHOT
+  );
   const [selectedArtifactIds, setSelectedArtifactIds] = useState<string[]>([]);
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -34,6 +43,7 @@ export function useExplorerStore(client: ExplorerClient) {
     .filter((node): node is ExplorerNode => node !== null);
   const selectionCount = selectedArtifacts.length;
   const inspectorNode = selectionCount === 1 ? selectedArtifacts[0] : null;
+  const nodeStatuses = nodeStatusSnapshot.nodes;
 
   const applySnapshot = useCallback((nextSnapshot: ExplorerSnapshot) => {
     const nextIndex = indexNodes(nextSnapshot.roots);
@@ -57,12 +67,59 @@ export function useExplorerStore(client: ExplorerClient) {
     // Drop any selected ids whose nodes no longer exist after the snapshot
     // (covers external delete / mount unmount). Keep all others regardless of parent.
     setSelectedArtifactIds((current) => current.filter((id) => nextIndex.has(id)));
+    if (client.getNodeStatusSnapshot) {
+      void client
+        .getNodeStatusSnapshot()
+        .then(setNodeStatusSnapshot)
+        .catch(() => {});
+    }
+  }, [client]);
+
+  const applyNodeStatusSnapshot = useCallback((nextSnapshot: NodeStatusSnapshot) => {
+    setNodeStatusSnapshot(nextSnapshot);
   }, []);
 
+  const refreshNodeStatuses = useCallback(async () => {
+    if (!client.getNodeStatusSnapshot) {
+      setNodeStatusSnapshot(EMPTY_NODE_STATUS_SNAPSHOT);
+      return;
+    }
+    const nextSnapshot = await client.getNodeStatusSnapshot();
+    applyNodeStatusSnapshot(nextSnapshot);
+  }, [applyNodeStatusSnapshot, client]);
+
+  const applyNodeStatusChanged = useCallback(
+    (event: NodeStatusChangedEvent) => {
+      setNodeStatusSnapshot((current) => {
+        if (event.revision <= current.revision) return current;
+        if (event.revision > current.revision + 1) {
+          void refreshNodeStatuses().catch(() => {});
+          return current;
+        }
+        return {
+          revision: event.revision,
+          nodes: {
+            ...current.nodes,
+            [event.nodeId]: event.status,
+          },
+        };
+      });
+    },
+    [refreshNodeStatuses]
+  );
+
+  const nodeStatusFor = useCallback(
+    (nodeId: string): NodeStatusView | null => nodeStatuses[nodeId] ?? null,
+    [nodeStatuses]
+  );
+
   const refresh = useCallback(async () => {
-    const nextSnapshot = await client.getExplorerSnapshot();
+    const [nextSnapshot] = await Promise.all([
+      client.getExplorerSnapshot(),
+      refreshNodeStatuses(),
+    ]);
     applySnapshot(nextSnapshot);
-  }, [applySnapshot, client]);
+  }, [applySnapshot, client, refreshNodeStatuses]);
 
   const toggleNode = useCallback((nodeId: string) => {
     setExpandedIds((current) => {
@@ -188,6 +245,8 @@ export function useExplorerStore(client: ExplorerClient) {
 
   return {
     snapshot,
+    nodeStatuses,
+    nodeStatusRevision: nodeStatusSnapshot.revision,
     selectedArtifactIds,
     selectedArtifacts,
     selectionCount,
@@ -199,6 +258,10 @@ export function useExplorerStore(client: ExplorerClient) {
     setIsLoading,
     setError,
     applySnapshot,
+    applyNodeStatusSnapshot,
+    applyNodeStatusChanged,
+    nodeStatusFor,
+    refreshNodeStatuses,
     refresh,
     toggleNode,
     selectArtifact,

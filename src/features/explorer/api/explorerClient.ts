@@ -5,6 +5,7 @@ import {
   createUrl,
   deleteNode,
   getExplorerSnapshot,
+  getNodeStatusSnapshot,
   getMountSetupContext,
   getNodeThumbnail,
   getNoteContent,
@@ -20,6 +21,7 @@ import type { ExplorerClient } from "../types/explorer";
 
 export const explorerClient: ExplorerClient = {
   getExplorerSnapshot,
+  getNodeStatusSnapshot,
   getMountSetupContext,
   createFolder,
   createMount,
