@@ -334,7 +334,7 @@ export function ChatLayout({
   function applyProviderSettings(next: SearchSettings) {
     setSettings(next);
     setSettingsError(null);
-    const providerId = next.features.chat?.providerId;
+    const providerId = next.features.llm?.providerId;
     if (providerId && chatProviderPresets.some((preset) => preset.providerId === providerId)) {
       setSetupProviderId(providerId);
     }
@@ -1543,8 +1543,10 @@ function chatModelsStatusMessage(
 }
 
 function isChatProviderConfigured(settings: SearchSettings | null): boolean {
-  if (!settings?.features.chat?.enabled) return false;
-  const providerId = settings.features.chat.providerId;
+  const feature = settings?.features.llm;
+  if (!feature?.enabled) return false;
+  if (!settings) return false;
+  const providerId = feature.providerId;
   if (!providerId) return false;
   return settings.providers[providerId]?.enabled === true;
 }

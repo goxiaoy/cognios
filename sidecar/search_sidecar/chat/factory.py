@@ -11,23 +11,20 @@ from .provider import ChatProvider
 
 
 def select_chat_provider(settings: SearchSettings) -> ChatProvider | None:
-    feature = settings.features.get("chat")
+    feature = settings.features.get("llm")
     if feature is None or not feature.enabled or feature.provider_id is None:
         return None
     provider = settings.providers.get(feature.provider_id)
     if provider is None or not provider.enabled:
         return None
     preset = PRESETS.get(provider.provider_id)
-    if preset is None or "chat" not in preset.capabilities:
+    if preset is None or "llm" not in preset.capabilities:
         return None
     base_url = provider.base_url or preset.base_url
     if provider.provider_id == "local-ollama":
-        model = preset.default_model_per_capability["chat"]
+        model = provider.model_per_capability.get("llm") or preset.default_model_per_capability["llm"]
         return OllamaChatProvider(base_url=base_url or "http://127.0.0.1:11434", model=model)
-    model = (
-        provider.model_per_capability.get("chat")
-        or preset.default_model_per_capability["chat"]
-    )
+    model = provider.model_per_capability.get("llm") or preset.default_model_per_capability["llm"]
     if preset.auth_kind == "api-key" and base_url:
         return OpenAICompatChatProvider(
             provider_id=provider.provider_id,

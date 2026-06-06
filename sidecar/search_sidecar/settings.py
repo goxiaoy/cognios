@@ -225,7 +225,7 @@ def default_settings() -> SearchSettings:
                 enabled=True,
                 provider_id="local-qwen-asr",
             ),
-            "chat": FeatureConfig(enabled=True, provider_id="local-ollama"),
+            "llm": FeatureConfig(enabled=True, provider_id="local-ollama"),
             "web-search": FeatureConfig(enabled=False, provider_id=None),
         },
     )
@@ -377,7 +377,7 @@ def boot_signature(settings: SearchSettings) -> str:
     Explicitly NOT affecting (so changing them doesn't surface a
     spurious restart prompt):
 
-    - ``chat`` and ``web-search`` feature/provider settings — those
+    - ``llm`` and ``web-search`` feature/provider settings — those
       are refreshed in-process by the settings route and don't touch
       the indexing runner.
     - ``cloud_consent_acked`` — pure UI gate state.

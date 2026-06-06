@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import wave
 from pathlib import Path
 
 import pytest
@@ -110,6 +111,23 @@ def test_transcription_uses_activated_local_onnx_checkpoint(tmp_path: Path):
     assert (checkpoint / "onnx_models" / "tokenizer.json").exists()
     assert "'max_new_tokens': 1024" in (checkpoint / "kwargs.txt").read_text()
     assert "'chunk_sec': 30" in (checkpoint / "kwargs.txt").read_text()
+
+
+def test_transcription_rejects_wav_with_no_samples(tmp_path: Path):
+    manager = _make_manager(tmp_path)
+    _activate(manager)
+    _write_fake_onnx_runtime(manager)
+    audio_path = tmp_path / "source.wav"
+    with wave.open(str(audio_path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16_000)
+
+    with pytest.raises(ValueError, match="no audio samples"):
+        transcribe_voice_note_audio(manager, audio_path)
+
+    checkpoint = (manager.role_dir("audio-transcript") / "current").resolve()
+    assert not (checkpoint / "audio.txt").exists()
 
 
 def test_transcription_accepts_onnx_quality_overrides(

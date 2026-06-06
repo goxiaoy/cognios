@@ -210,7 +210,7 @@ export function HomeDashboard({
   }, [refreshSettings]);
 
   useEffect(() => {
-    const providerId = settings?.features.chat?.providerId;
+    const providerId = settings?.features.llm?.providerId;
     if (
       providerId &&
       CHAT_PROVIDER_PRESETS.some((preset) => preset.providerId === providerId)

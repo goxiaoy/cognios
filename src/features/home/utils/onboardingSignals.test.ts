@@ -43,7 +43,7 @@ function settings(overrides: Partial<SearchSettings> = {}): SearchSettings {
       },
     },
     features: {
-      chat: { enabled: true, providerId: "local-ollama" },
+      llm: { enabled: true, providerId: "local-ollama" },
       "advanced-ocr": { enabled: false, providerId: null },
     },
     cloudConsentAcked: [],
@@ -92,7 +92,7 @@ describe("onboardingSignals", () => {
     const image = [node({ id: "img-1", kind: "file", name: "scan.png" })];
     const configured = settings({
       features: {
-        chat: { enabled: true, providerId: "local-ollama" },
+        llm: { enabled: true, providerId: "local-ollama" },
         "advanced-ocr": {
           enabled: true,
           providerId: "local-paddleocr-advanced",
@@ -106,7 +106,7 @@ describe("onboardingSignals", () => {
   it("prompts for Chat when the feature is unbound or bound provider is disabled", () => {
     expect(
       shouldPromptForChatProvider(
-        settings({ features: { chat: { enabled: false, providerId: null } } })
+        settings({ features: { llm: { enabled: false, providerId: null } } })
       )
     ).toBe(true);
     expect(

@@ -146,7 +146,7 @@ describe("ProviderEditor", () => {
         },
       },
       features: {
-        chat: { enabled: true, providerId: "local-ollama" },
+        llm: { enabled: true, providerId: "local-ollama" },
       },
     };
 
@@ -169,7 +169,7 @@ describe("ProviderEditor", () => {
     expect(deleteProviderSecret).not.toHaveBeenCalled();
     const arg = updateSettings.mock.calls[0][0];
     expect(arg.providers["local-ollama"]).toBeUndefined();
-    expect(arg.features.chat).toEqual({ enabled: false, providerId: null });
+    expect(arg.features.llm).toEqual({ enabled: false, providerId: null });
     expect(onClose).toHaveBeenCalled();
   });
 

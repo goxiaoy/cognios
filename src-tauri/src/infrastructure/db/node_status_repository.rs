@@ -79,7 +79,8 @@ pub fn ensure_default_stages_for_node(conn: &Connection, node_id: &str) -> rusql
     let Some(definitions) = default_stage_definitions(conn, node_id)? else {
         return Ok(());
     };
-    insert_stage_defaults(conn, node_id, definitions)
+    insert_stage_defaults(conn, node_id, definitions)?;
+    reconcile_stage_defaults(conn, node_id)
 }
 
 pub fn ensure_default_stages_for_all_nodes(conn: &Connection) -> rusqlite::Result<()> {
@@ -204,6 +205,14 @@ pub fn get_node_status_snapshot(conn: &Connection) -> rusqlite::Result<NodeStatu
     Ok(NodeStatusSnapshotDto { revision, nodes })
 }
 
+pub fn node_supports_stage(
+    conn: &Connection,
+    node_id: &str,
+    stage_id: &str,
+) -> rusqlite::Result<bool> {
+    Ok(stage_definition_for_node(conn, node_id, stage_id)?.is_some())
+}
+
 pub fn get_node_status_changed_event(
     conn: &Connection,
     node_id: &str,
@@ -236,12 +245,302 @@ fn insert_stage_defaults(
                 definition.id,
                 definition.label,
                 definition.order,
-                StageState::Pending.as_str(),
+                default_state_for_definition(definition).as_str(),
                 definition.importance.as_str()
             ],
         )?;
     }
     Ok(())
+}
+
+fn default_state_for_definition(definition: &StageDefinition) -> StageState {
+    match definition.importance {
+        StageImportance::Optional => StageState::Skipped,
+        StageImportance::Required => StageState::Pending,
+    }
+}
+
+fn reconcile_stage_defaults(conn: &Connection, node_id: &str) -> rusqlite::Result<()> {
+    let row = conn
+        .query_row(
+            "
+            SELECT n.kind, n.state, EXISTS(SELECT 1 FROM voice_notes v WHERE v.note_id = n.id)
+            FROM nodes n
+            WHERE n.id = ?1
+            ",
+            [node_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)? == 1,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((kind, node_state, is_voice_note)) = row else {
+        return Ok(());
+    };
+
+    let mut changed = 0;
+    match kind.as_str() {
+        "url" => {
+            changed += reconcile_url_stages(conn, node_id, &node_state)?;
+        }
+        "file" => {
+            changed += reconcile_index_stage_from_node_state(conn, node_id, &node_state)?;
+            changed += update_stage_row(
+                conn,
+                node_id,
+                "image.enhance",
+                &StageUpdate {
+                    state: StageState::Skipped,
+                    message: Some("Enhancement not run".to_string()),
+                    detail: None,
+                    error_message: None,
+                    retryable: false,
+                    attempt: None,
+                    started_at: None,
+                    finished_at: Some("CURRENT_TIMESTAMP".to_string()),
+                },
+            )?;
+        }
+        "note" if is_voice_note => {
+            changed += reconcile_voice_note_stages(conn, node_id, &node_state)?;
+        }
+        "note" => {
+            changed += reconcile_index_stage_from_node_state(conn, node_id, &node_state)?;
+        }
+        _ => {}
+    }
+    if changed > 0 {
+        let _ = bump_revision(conn)?;
+    }
+    Ok(())
+}
+
+fn reconcile_url_stages(
+    conn: &Connection,
+    node_id: &str,
+    node_state: &str,
+) -> rusqlite::Result<usize> {
+    let row = conn
+        .query_row(
+            "
+            SELECT title, description, preview_text, canonical_url, html_cache_path, last_error
+            FROM url_jobs
+            WHERE node_id = ?1
+            ",
+            [node_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    let mut changed = 0;
+    if let Some((title, description, preview_text, canonical_url, html_cache_path, last_error)) =
+        row
+    {
+        let has_crawled_content = html_cache_path
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .is_some()
+            || preview_text
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .is_some();
+        if has_crawled_content || node_state == "indexed" {
+            changed += update_stage_row(
+                conn,
+                node_id,
+                "url.crawl",
+                &StageUpdate {
+                    state: StageState::Succeeded,
+                    message: Some("Crawl succeeded".to_string()),
+                    detail: Some(serde_json::json!({
+                        "title": title,
+                        "canonicalUrl": canonical_url,
+                        "description": description,
+                        "htmlCachePath": html_cache_path,
+                    })),
+                    error_message: None,
+                    retryable: false,
+                    attempt: None,
+                    started_at: None,
+                    finished_at: Some("CURRENT_TIMESTAMP".to_string()),
+                },
+            )?;
+        } else if node_state == "error" {
+            changed += update_stage_row(
+                conn,
+                node_id,
+                "url.crawl",
+                &StageUpdate::failed(
+                    last_error.unwrap_or_else(|| "Crawl failed".to_string()),
+                    true,
+                ),
+            )?;
+        }
+    }
+    changed += reconcile_index_stage_from_node_state(conn, node_id, node_state)?;
+    Ok(changed)
+}
+
+fn reconcile_voice_note_stages(
+    conn: &Connection,
+    node_id: &str,
+    node_state: &str,
+) -> rusqlite::Result<usize> {
+    let row = conn
+        .query_row(
+            "
+            SELECT capture_status, transcription_status, summary_status, transcript_updated_at
+            FROM voice_notes
+            WHERE note_id = ?1
+            ",
+            [node_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((capture_status, transcription_status, summary_status, transcript_updated_at)) = row
+    else {
+        return Ok(0);
+    };
+
+    let mut changed = 0;
+    let transcribe_update = match transcription_status.as_str() {
+        "completed" => Some(StageUpdate::succeeded("Transcript completed")),
+        "transcribing" if capture_status == "recording" => {
+            Some(StageUpdate::running("Transcribing"))
+        }
+        "transcribing" if transcript_updated_at.is_some() => {
+            Some(StageUpdate::succeeded("Transcript completed"))
+        }
+        "transcribing" => Some(StageUpdate::failed("Transcription did not complete", true)),
+        "failed" => Some(StageUpdate::failed("Transcription failed", false)),
+        "unavailable" => Some(StageUpdate {
+            state: StageState::Skipped,
+            message: Some("Transcription unavailable".to_string()),
+            detail: None,
+            error_message: None,
+            retryable: false,
+            attempt: None,
+            started_at: None,
+            finished_at: Some("CURRENT_TIMESTAMP".to_string()),
+        }),
+        _ => None,
+    };
+    if let Some(update) = transcribe_update {
+        changed += update_stage_row(conn, node_id, "voice.transcribe", &update)?;
+    }
+
+    let summary_update = match summary_status.as_str() {
+        "ready" => Some(StageUpdate::succeeded("Summary ready")),
+        "pending" => Some(StageUpdate::running("Summarizing")),
+        "failed" => Some(StageUpdate::failed("Summary failed", true)),
+        _ => None,
+    };
+    if let Some(update) = summary_update {
+        changed += update_stage_row(conn, node_id, "voice.summarize", &update)?;
+    }
+    changed += reconcile_index_stage_from_node_state(conn, node_id, node_state)?;
+    Ok(changed)
+}
+
+fn reconcile_index_stage_from_node_state(
+    conn: &Connection,
+    node_id: &str,
+    node_state: &str,
+) -> rusqlite::Result<usize> {
+    let update = match node_state {
+        "indexed" => Some(StageUpdate::succeeded("Indexed")),
+        "indexing" => Some(StageUpdate::running("Indexing")),
+        "unsupported" => Some(StageUpdate {
+            state: StageState::Skipped,
+            message: Some("No index processor available".to_string()),
+            detail: None,
+            error_message: None,
+            retryable: false,
+            attempt: None,
+            started_at: None,
+            finished_at: Some("CURRENT_TIMESTAMP".to_string()),
+        }),
+        "error" => Some(StageUpdate::failed("Indexing failed", true)),
+        _ => None,
+    };
+    match update {
+        Some(update) => update_stage_row(conn, node_id, "content.index", &update),
+        None => Ok(0),
+    }
+}
+
+fn update_stage_row(
+    conn: &Connection,
+    node_id: &str,
+    stage_id: &str,
+    update: &StageUpdate,
+) -> rusqlite::Result<usize> {
+    let detail_json = update
+        .detail
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+    let message_key = update.message.as_deref().unwrap_or_default();
+    let error_key = update.error_message.as_deref().unwrap_or_default();
+    conn.execute(
+        "
+        UPDATE node_statuses
+        SET state = ?3,
+            message = ?4,
+            detail_json = COALESCE(?5, detail_json),
+            error_message = ?6,
+            retryable = ?7,
+            attempt = COALESCE(?8, attempt),
+            started_at = CASE WHEN ?9 = 1 THEN COALESCE(started_at, CURRENT_TIMESTAMP) ELSE started_at END,
+            finished_at = CASE WHEN ?10 = 1 THEN COALESCE(finished_at, CURRENT_TIMESTAMP) ELSE finished_at END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE node_id = ?1
+          AND stage_id = ?2
+          AND (
+            state != ?3
+            OR COALESCE(message, '') != ?11
+            OR COALESCE(error_message, '') != ?12
+            OR retryable != ?7
+            OR (?5 IS NOT NULL AND COALESCE(detail_json, '') != ?5)
+            OR (?9 = 1 AND started_at IS NULL)
+            OR (?10 = 1 AND finished_at IS NULL)
+          )
+        ",
+        params![
+            node_id,
+            stage_id,
+            update.state.as_str(),
+            update.message,
+            detail_json,
+            update.error_message,
+            update.retryable as i64,
+            update.attempt,
+            update.started_at.is_some() as i64,
+            update.finished_at.is_some() as i64,
+            message_key,
+            error_key,
+        ],
+    )
 }
 
 fn default_stage_definitions(
@@ -274,6 +573,7 @@ fn default_stage_definitions(
         "file" => FILE_STAGES,
         "note" if is_voice_note => VOICE_NOTE_STAGES,
         "note" => NOTE_STAGES,
+        "folder" | "mount" | "directory" => &[],
         _ => &[],
     };
     Ok(Some(definitions))
@@ -387,7 +687,6 @@ fn select_primary_stage(stages: &[NodeStageStatusDto]) -> Option<&NodeStageStatu
                 .iter()
                 .find(|stage| stage.importance == "required" && stage.state == "pending")
         })
-        .or_else(|| stages.iter().find(|stage| stage.state == "pending"))
 }
 
 fn derive_overall(stages: &[NodeStageStatusDto]) -> NodeStatusOverall {
@@ -426,7 +725,7 @@ fn is_failed_like(state: &str) -> bool {
 }
 
 fn is_incomplete_or_failed(state: &str) -> bool {
-    state == "pending" || state == "failed" || state == "blocked"
+    state == "failed" || state == "blocked"
 }
 
 fn current_revision(conn: &Connection) -> rusqlite::Result<u64> {

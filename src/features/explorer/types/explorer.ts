@@ -49,4 +49,5 @@ export interface ExplorerClient {
   readFileContent(nodeId: string): Promise<string>;
   showNodeInFileManager(nodeId: string): Promise<void>;
   showNodeExtractArtifacts(nodeId: string): Promise<void>;
+  retranscribeVoiceNote?(noteId: string): Promise<unknown>;
 }

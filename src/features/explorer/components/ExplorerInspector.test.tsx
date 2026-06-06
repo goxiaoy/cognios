@@ -24,6 +24,7 @@ function makeClient(): ExplorerClient {
     readFileContent: vi.fn(),
     showNodeInFileManager: vi.fn(),
     showNodeExtractArtifacts: vi.fn().mockResolvedValue(undefined),
+    retranscribeVoiceNote: vi.fn().mockResolvedValue({}),
   };
 }
 
@@ -112,6 +113,89 @@ describe("ExplorerInspector", () => {
     expect(screen.getByText("Processing")).toBeInTheDocument();
     expect(screen.getByText("Transcribing")).toBeInTheDocument();
     expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
+  });
+
+  it("hides skipped optional processing stages", () => {
+    render(
+      <ExplorerInspector
+        client={makeClient()}
+        node={{
+          id: "voice-1",
+          parentId: null,
+          name: "Voice Note",
+          kind: "note",
+          state: "indexed",
+          createdAt: "2026-06-06 00:00:00",
+          modifiedAt: "2026-06-06 00:00:00",
+          sizeBytes: 512,
+          isVoiceNote: true,
+          children: [],
+        }}
+        nodeStatus={{
+          nodeId: "voice-1",
+          overall: "ready",
+          primaryStageId: null,
+          updatedAt: "2026-06-06 00:00:00",
+          stages: [
+            {
+              id: "voice.transcribe",
+              label: "Transcribing",
+              state: "succeeded",
+              importance: "required",
+              message: "Transcript completed",
+              attempt: 0,
+              updatedAt: "2026-06-06 00:00:00",
+            },
+            {
+              id: "voice.summarize",
+              label: "Summarizing",
+              state: "skipped",
+              importance: "optional",
+              message: "Summary unavailable",
+              attempt: 0,
+              updatedAt: "2026-06-06 00:00:00",
+            },
+          ],
+        }}
+        selectedArtifacts={[]}
+        selectionCount={0}
+      />
+    );
+
+    expect(screen.getByText("Processing")).toBeInTheDocument();
+    expect(screen.getByText("Transcribing")).toBeInTheDocument();
+    expect(screen.queryByText("Summarizing")).not.toBeInTheDocument();
+    expect(screen.queryByText("Summary unavailable")).not.toBeInTheDocument();
+  });
+
+  it("starts retranscription for voice notes", async () => {
+    const client = makeClient();
+    render(
+      <ExplorerInspector
+        client={client}
+        node={{
+          id: "voice-1",
+          parentId: null,
+          name: "Voice Note",
+          kind: "note",
+          state: "indexed",
+          createdAt: "2026-06-06 00:00:00",
+          modifiedAt: "2026-06-06 00:00:00",
+          sizeBytes: 512,
+          isVoiceNote: true,
+          children: [],
+        }}
+        selectedArtifacts={[]}
+        selectionCount={0}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Retranscribe" }));
+
+    await waitFor(() =>
+      expect(client.retranscribeVoiceNote).toHaveBeenCalledWith("voice-1")
+    );
+    expect(screen.getByText("Retranscription started.")).toBeInTheDocument();
   });
 
   it("copies the node id from single-node metadata", async () => {

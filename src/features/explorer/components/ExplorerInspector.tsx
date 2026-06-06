@@ -63,6 +63,10 @@ export function ExplorerInspector({
   }
 
   const showImage = isImageNode(node);
+  const visibleStages =
+    nodeStatus?.stages.filter(
+      (stage) => !(stage.importance === "optional" && stage.state === "skipped")
+    ) ?? [];
 
   return (
     <div className="inspector-pane">
@@ -96,11 +100,11 @@ export function ExplorerInspector({
           </dd>
         </div>
       </dl>
-      {nodeStatus && nodeStatus.stages.length > 0 ? (
+      {visibleStages.length > 0 ? (
         <section className="inspector-processing" aria-label="Processing status">
           <h3>Processing</h3>
           <ol className="node-stage-list">
-            {nodeStatus.stages.map((stage) => (
+            {visibleStages.map((stage) => (
               <li className={`node-stage-item is-${stage.state}`} key={stage.id}>
                 <span className="node-stage-main">
                   <span className="node-stage-label">{stage.label}</span>
@@ -208,7 +212,7 @@ function InspectorActions({
 }) {
   type Status =
     | { kind: "idle" }
-    | { kind: "running"; action: "reindex" | "reveal" }
+    | { kind: "running"; action: "reindex" | "reveal" | "retranscribe" }
     | { kind: "done"; message: string }
     | { kind: "error"; message: string };
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -261,11 +265,28 @@ function InspectorActions({
     }
   }
 
+  async function handleRetranscribe() {
+    if (!client.retranscribeVoiceNote) return;
+    setStatus({ kind: "running", action: "retranscribe" });
+    try {
+      await client.retranscribeVoiceNote(node.id);
+      setStatus({ kind: "done", message: "Retranscription started." });
+    } catch (cause) {
+      setStatus({
+        kind: "error",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
+  }
+
   const isContainer = node.kind === "folder" || node.kind === "mount";
   const reindexLabel = isContainer ? "Reindex contents" : "Reindex";
   const showExtractedAction = hasExtractArtifacts(node);
+  const showRetranscribeAction = node.isVoiceNote && !!client.retranscribeVoiceNote;
   const isReindexing = status.kind === "running" && status.action === "reindex";
   const isRevealing = status.kind === "running" && status.action === "reveal";
+  const isRetranscribing =
+    status.kind === "running" && status.action === "retranscribe";
   const isRunning = status.kind === "running";
 
   return (
@@ -302,6 +323,25 @@ function InspectorActions({
               className="inspector-action-icon"
             />
             {isRevealing ? "Opening…" : "Reveal Extracted"}
+          </button>
+        ) : null}
+        {showRetranscribeAction ? (
+          <button
+            type="button"
+            className="inspector-action-button"
+            onClick={() => void handleRetranscribe()}
+            disabled={isRunning}
+          >
+            <RefreshCw
+              size={12}
+              aria-hidden="true"
+              className={
+                isRetranscribing
+                  ? "inspector-action-icon is-spinning"
+                  : "inspector-action-icon"
+              }
+            />
+            {isRetranscribing ? "Retranscribing…" : "Retranscribe"}
           </button>
         ) : null}
       </div>

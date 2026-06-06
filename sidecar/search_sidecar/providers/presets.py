@@ -37,7 +37,8 @@ from typing import Literal
 # with embedded tables and LaTeX formulas — distinct from the basic
 # ``ocr`` capability which only returns flat detected text.
 # ``audio-transcript`` powers Voice Notes transcription from captured
-# meeting audio.
+# meeting audio. ``llm`` is the general text-generation slot shared by
+# Chat, memory refresh, and Voice Note summarization.
 Capability = Literal[
     "embedding",
     "reranking",
@@ -45,7 +46,7 @@ Capability = Literal[
     "ocr",
     "advanced-ocr",
     "audio-transcript",
-    "chat",
+    "llm",
     "web-search",
 ]
 ProviderType = Literal["local", "cloud"]
@@ -73,16 +74,16 @@ class ProviderPreset:
 
 # v1 preset table. Capability/provider matrix:
 #
-#                   embedding  reranking  vision  ocr  adv-ocr  audio  chat  web-search
+#                   embedding  reranking  vision  ocr  adv-ocr  audio  llm  web-search
 #   local-gte           ✓
 #   local-gte-reranker             ✓
 #   local-paddleocr                                  ✓
 #   local-paddleocr-advanced                                ✓
 #   local-qwen-asr                                               ✓
-#   local-ollama                                                       ✓
-#   openai              ✓                    ✓     ✓       ✓           ✓
-#   qwen-dashscope                           ✓     ✓       ✓           ✓
-#   deepseek                                                         ✓
+#   local-ollama                                                     ✓
+#   openai              ✓                    ✓     ✓       ✓         ✓
+#   qwen-dashscope                           ✓     ✓       ✓         ✓
+#   deepseek                                                       ✓
 #   brave-search                                                               ✓
 #   tavily-search                                                              ✓
 #
@@ -163,9 +164,9 @@ PRESETS: dict[str, ProviderPreset] = {
         provider_id="local-ollama",
         display_name="Local Ollama",
         provider_type="local",
-        capabilities=frozenset({"chat"}),
+        capabilities=frozenset({"llm"}),
         default_model_per_capability={
-            "chat": "llama3.2",
+            "llm": "llama3.2",
         },
         auth_kind="none",
         base_url="http://127.0.0.1:11434",
@@ -175,7 +176,7 @@ PRESETS: dict[str, ProviderPreset] = {
         display_name="OpenAI",
         provider_type="cloud",
         capabilities=frozenset(
-            {"embedding", "vision", "ocr", "advanced-ocr", "chat"}
+            {"embedding", "vision", "ocr", "advanced-ocr", "llm"}
         ),
         default_model_per_capability={
             # 3-small natively returns 1536-dim; the cloud Embedder
@@ -187,7 +188,7 @@ PRESETS: dict[str, ProviderPreset] = {
             # the entry tier; users can override per-feature in
             # Settings if they want 4o or a beefier upgrade path.
             "advanced-ocr": "gpt-4o-mini",
-            "chat": "gpt-4o-mini",
+            "llm": "gpt-4o-mini",
         },
         auth_kind="api-key",
         base_url="https://api.openai.com/v1",
@@ -198,14 +199,14 @@ PRESETS: dict[str, ProviderPreset] = {
         provider_id="qwen-dashscope",
         display_name="Qwen DashScope",
         provider_type="cloud",
-        capabilities=frozenset({"vision", "ocr", "advanced-ocr", "chat"}),
+        capabilities=frozenset({"vision", "ocr", "advanced-ocr", "llm"}),
         default_model_per_capability={
             "vision": "qwen-vl-plus",
             "ocr": "qwen-vl-plus",
             # qwen-vl-plus handles structured invoice/receipt prompts
             # competitively with 4o-mini on Chinese-language docs.
             "advanced-ocr": "qwen-vl-plus",
-            "chat": "qwen-plus",
+            "llm": "qwen-plus",
         },
         auth_kind="api-key",
         # OpenAI-compatible mode endpoint; Qwen embedding/reranking
@@ -220,9 +221,9 @@ PRESETS: dict[str, ProviderPreset] = {
         provider_id="deepseek",
         display_name="DeepSeek",
         provider_type="cloud",
-        capabilities=frozenset({"chat"}),
+        capabilities=frozenset({"llm"}),
         default_model_per_capability={
-            "chat": "deepseek-v4-flash",
+            "llm": "deepseek-v4-flash",
         },
         auth_kind="api-key",
         base_url="https://api.deepseek.com",

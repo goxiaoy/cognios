@@ -32,7 +32,7 @@ use tauri::{AppHandle, Emitter};
 use crate::domain::node_status::{StageState, StageUpdate};
 use crate::infrastructure::db::connection::Database;
 use crate::infrastructure::db::node_status_repository::{
-    get_node_status_changed_event, update_stage, NODE_STATUS_CHANGED_EVENT,
+    get_node_status_changed_event, node_supports_stage, update_stage, NODE_STATUS_CHANGED_EVENT,
 };
 use crate::services::mounts::watcher::VfsChangeEvent;
 use crate::services::search::client::{IndexChangeDto, SearchSidecarClient};
@@ -52,10 +52,11 @@ const VFS_EVENT_NAME: &str = "vfs://changed";
 /// no-op — the sidecar's queue may legitimately hold ids that were
 /// since deleted (the resync flow cleans those up separately).
 ///
-/// Returns the number of rows actually updated. If a node's stored
-/// state already matches the incoming state, ``UPDATE`` returns zero
-/// rows changed and we don't count it — that lets the caller skip
-/// emitting a vfs change event when the batch was a no-op.
+/// Returns the number of visible changes worth emitting to the UI:
+/// ``nodes.state`` row changes, container rollups, and node-status
+/// stage changes. A sidecar transition can still be visible even when
+/// the coarse ``nodes.state`` value already matches, because the
+/// per-node status timeline may have progressed.
 pub fn apply_index_changes(
     db: &Database,
     transitions: &[IndexChangeDto],
@@ -126,13 +127,15 @@ pub fn apply_index_changes(
             params![t.node_id, mapped],
         )?;
         if let Some(update) = status_update {
-            match update_stage(&conn, &t.node_id, "content.index", &update) {
-                Ok(_) => updated += 1,
-                Err(error) => {
-                    log::debug!(
-                        "index-state-sync: skipped node-status update for {}: {error}",
-                        t.node_id
-                    );
+            if node_supports_stage(&conn, &t.node_id, "content.index")? {
+                match update_stage(&conn, &t.node_id, "content.index", &update) {
+                    Ok(_) => updated += 1,
+                    Err(error) => {
+                        log::debug!(
+                            "index-state-sync: skipped node-status update for {}: {error}",
+                            t.node_id
+                        );
+                    }
                 }
             }
         }
@@ -397,6 +400,16 @@ mod tests {
         .unwrap()
     }
 
+    fn count_status_rows(db: &Database, id: &str) -> i64 {
+        let conn = db.connect().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM node_statuses WHERE node_id = ?1",
+            params![id],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+    }
+
     fn change(node_id: &str, state: &str, seq: u64) -> IndexChangeDto {
         IndexChangeDto {
             node_id: node_id.to_string(),
@@ -422,16 +435,16 @@ mod tests {
         let db = setup_db();
         insert_node(&db, "abc", "ready");
         let updated = apply_index_changes(&db, &[change("abc", "indexed", 1)]).unwrap();
-        assert_eq!(updated, 1);
+        assert_eq!(updated, 2);
         assert_eq!(read_state(&db, "abc"), "indexed");
     }
 
     #[test]
-    fn no_op_when_state_already_matches() {
+    fn stage_update_counts_when_state_already_matches() {
         let db = setup_db();
         insert_node(&db, "abc", "indexed");
         let updated = apply_index_changes(&db, &[change("abc", "indexed", 1)]).unwrap();
-        assert_eq!(updated, 0);
+        assert_eq!(updated, 1);
     }
 
     #[test]
@@ -466,7 +479,7 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(updated, 3);
+        assert_eq!(updated, 6);
         assert_eq!(read_state(&db, "a"), "indexing");
         assert_eq!(read_state(&db, "b"), "indexed");
         assert_eq!(read_state(&db, "c"), "error");
@@ -496,8 +509,19 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(updated, 0);
+        assert_eq!(updated, 1);
         assert_eq!(read_state(&db, "folder-1"), "indexed");
+    }
+
+    #[test]
+    fn container_sidecar_rows_do_not_create_node_status_rows() {
+        let db = setup_db();
+        insert_node_with_kind(&db, "folder-1", "folder", "ready");
+
+        let updated = apply_index_changes(&db, &[change("folder-1", "indexed", 1)]).unwrap();
+
+        assert_eq!(updated, 0);
+        assert_eq!(count_status_rows(&db, "folder-1"), 0);
     }
 
     #[test]
@@ -510,7 +534,7 @@ mod tests {
 
         let updated = apply_index_changes(&db, &[change("file-1", "pending", 1)]).unwrap();
 
-        assert_eq!(updated, 3);
+        assert_eq!(updated, 4);
         assert_eq!(read_state(&db, "file-1"), "pending");
         assert_eq!(read_state(&db, "folder-1"), "pending");
         assert_eq!(read_state(&db, "mount-1"), "pending");
@@ -527,7 +551,7 @@ mod tests {
 
         let updated = apply_index_changes(&db, &[change("file-1", "indexed", 1)]).unwrap();
 
-        assert_eq!(updated, 3);
+        assert_eq!(updated, 4);
         assert_eq!(read_state(&db, "file-1"), "indexed");
         assert_eq!(read_state(&db, "folder-1"), "indexed");
         assert_eq!(read_state(&db, "mount-1"), "indexed");
@@ -561,7 +585,7 @@ mod tests {
             )],
         )
         .unwrap();
-        assert_eq!(updated, 1);
+        assert_eq!(updated, 2);
         assert_eq!(read_state(&db, "abc"), "unsupported");
     }
 
@@ -577,7 +601,7 @@ mod tests {
             &[change_with_error("abc", "error", "OCR backend crashed", 1)],
         )
         .unwrap();
-        assert_eq!(updated, 1);
+        assert_eq!(updated, 2);
         assert_eq!(read_state(&db, "abc"), "error");
     }
 
@@ -589,7 +613,7 @@ mod tests {
         let db = setup_db();
         insert_node(&db, "abc", "indexed");
         let updated = apply_index_changes(&db, &[change("abc", "pending", 1)]).unwrap();
-        assert_eq!(updated, 1);
+        assert_eq!(updated, 2);
         assert_eq!(read_state(&db, "abc"), "pending");
     }
 }

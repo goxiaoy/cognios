@@ -219,6 +219,10 @@ export async function deleteVoiceNoteSourceAudio(noteId: string): Promise<VoiceN
   return invoke<VoiceNote>("delete_voice_note_source_audio", { input: { noteId } });
 }
 
+export async function retranscribeVoiceNote(noteId: string): Promise<VoiceNote> {
+  return invoke<VoiceNote>("retranscribe_voice_note", { input: { noteId } });
+}
+
 export async function retryUrl(input: RetryUrlInput): Promise<void> {
   return invoke<void>("retry_url", { input });
 }

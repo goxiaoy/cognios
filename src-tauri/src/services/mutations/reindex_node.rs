@@ -32,6 +32,7 @@ pub struct ReindexOutcome {
     /// 1 for a single file/note/url; ``N`` for a container with
     /// ``N`` indexable descendants.
     pub enqueued: usize,
+    pub url_recrawl_ids: Vec<String>,
 }
 
 pub fn reindex_node(
@@ -41,22 +42,37 @@ pub fn reindex_node(
 ) -> Result<ReindexOutcome, String> {
     let kind = load_node_kind(conn, &input.node_id)?.ok_or_else(|| "node not found".to_string())?;
 
-    let leaf_ids = match kind {
+    let targets = match kind {
         NodeKind::Folder | NodeKind::Mount => collect_indexable_descendants(conn, &input.node_id)?,
-        NodeKind::File | NodeKind::Note | NodeKind::Url => vec![input.node_id.clone()],
+        NodeKind::File | NodeKind::Note | NodeKind::Url => vec![ReindexTarget {
+            node_id: input.node_id.clone(),
+            kind,
+        }],
     };
 
-    for node_id in &leaf_ids {
-        emitter(VfsChangeEvent {
-            mount_id: node_id.clone(),
-            reason: "node-saved".to_string(),
-            ..Default::default()
-        });
+    let mut url_recrawl_ids = Vec::new();
+    for target in &targets {
+        if target.kind == NodeKind::Url {
+            url_recrawl_ids.push(target.node_id.clone());
+        } else {
+            emitter(VfsChangeEvent {
+                mount_id: target.node_id.clone(),
+                reason: "node-saved".to_string(),
+                ..Default::default()
+            });
+        }
     }
 
     Ok(ReindexOutcome {
-        enqueued: leaf_ids.len(),
+        enqueued: targets.len(),
+        url_recrawl_ids,
     })
+}
+
+#[derive(Debug)]
+struct ReindexTarget {
+    node_id: String,
+    kind: NodeKind,
 }
 
 fn load_node_kind(conn: &Connection, node_id: &str) -> Result<Option<NodeKind>, String> {
@@ -72,7 +88,10 @@ fn load_node_kind(conn: &Connection, node_id: &str) -> Result<Option<NodeKind>, 
 /// (file / note / url). Container descendants are filtered out so
 /// the emitter doesn't generate one event per folder — those are
 /// no-ops on the sidecar side and only add load.
-fn collect_indexable_descendants(conn: &Connection, root_id: &str) -> Result<Vec<String>, String> {
+fn collect_indexable_descendants(
+    conn: &Connection,
+    root_id: &str,
+) -> Result<Vec<ReindexTarget>, String> {
     let mut stmt = conn
         .prepare(
             "
@@ -82,13 +101,18 @@ fn collect_indexable_descendants(conn: &Connection, root_id: &str) -> Result<Vec
                 SELECT n.id, n.kind FROM nodes n
                 INNER JOIN descendants d ON n.parent_id = d.id
             )
-            SELECT id FROM descendants
+            SELECT id, kind FROM descendants
             WHERE kind IN ('file', 'note', 'url')
             ",
         )
         .map_err(|error| error.to_string())?;
     let rows = stmt
-        .query_map([root_id], |row| row.get::<_, String>(0))
+        .query_map([root_id], |row| {
+            Ok(ReindexTarget {
+                node_id: row.get::<_, String>(0)?,
+                kind: NodeKind::from_db(&row.get::<_, String>(1)?),
+            })
+        })
         .map_err(|error| error.to_string())?;
     let mut ids = Vec::new();
     for row in rows {
@@ -136,10 +160,30 @@ mod tests {
             )
             .unwrap();
             assert_eq!(outcome.enqueued, 1);
+            assert!(outcome.url_recrawl_ids.is_empty());
         });
         assert_eq!(emits.len(), 1);
         assert_eq!(emits[0].mount_id, "note-1");
         assert_eq!(emits[0].reason, "node-saved");
+    }
+
+    #[test]
+    fn reindex_url_returns_recrawl_target_without_node_saved_event() {
+        let conn = open_in_memory_database().unwrap();
+        insert(&conn, "url-1", "url", None);
+        let emits = collect_emits(|emitter| {
+            let outcome = reindex_node(
+                &conn,
+                &ReindexNodeInput {
+                    node_id: "url-1".into(),
+                },
+                emitter,
+            )
+            .unwrap();
+            assert_eq!(outcome.enqueued, 1);
+            assert_eq!(outcome.url_recrawl_ids, vec!["url-1"]);
+        });
+        assert!(emits.is_empty());
     }
 
     #[test]
@@ -155,6 +199,7 @@ mod tests {
         insert(&conn, "file-1", "file", Some("folder"));
         insert(&conn, "file-2", "file", Some("subfolder"));
         insert(&conn, "note-1", "note", Some("folder"));
+        insert(&conn, "url-1", "url", Some("folder"));
 
         let emits = collect_emits(|emitter| {
             let outcome = reindex_node(
@@ -165,7 +210,8 @@ mod tests {
                 emitter,
             )
             .unwrap();
-            assert_eq!(outcome.enqueued, 3);
+            assert_eq!(outcome.enqueued, 4);
+            assert_eq!(outcome.url_recrawl_ids, vec!["url-1"]);
         });
         let ids: std::collections::HashSet<_> = emits.iter().map(|e| e.mount_id.clone()).collect();
         // Only the indexable leaves — the subfolder itself is

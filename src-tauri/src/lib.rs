@@ -380,6 +380,7 @@ pub fn run() {
             commands::voice_notes::finish_native_voice_note_audio_capture,
             commands::voice_notes::pause_native_voice_note_audio_capture,
             commands::voice_notes::resume_native_voice_note_audio_capture,
+            commands::voice_notes::retranscribe_voice_note,
             commands::voice_notes::rename_voice_note_speaker,
             commands::voice_notes::delete_voice_note_source_audio,
             commands::files::read_file_content,

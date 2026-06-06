@@ -42,7 +42,7 @@ def test_each_preset_is_well_formed():
         "ocr",
         "advanced-ocr",
         "audio-transcript",
-        "chat",
+        "llm",
         "web-search",
     }
     valid_types: set[ProviderType] = {"local", "cloud"}
@@ -84,10 +84,10 @@ def test_capability_matrix_matches_v1_decision():
     - local-paddleocr → ocr
     - local-paddleocr-advanced → advanced-ocr (PP-StructureV3 bundle)
     - local-qwen-asr → audio-transcript (Qwen3-ASR ONNX CPU)
-    - local-ollama → chat
-    - openai → embedding + vision + ocr + advanced-ocr + chat
-    - qwen-dashscope → vision + ocr + advanced-ocr + chat
-    - deepseek → chat
+    - local-ollama → llm
+    - openai → embedding + vision + ocr + advanced-ocr + llm
+    - qwen-dashscope → vision + ocr + advanced-ocr + llm
+    - deepseek → llm
     - brave-search → web-search
     - tavily-search → web-search
     """
@@ -100,23 +100,23 @@ def test_capability_matrix_matches_v1_decision():
     assert PRESETS["local-qwen-asr"].capabilities == frozenset(
         {"audio-transcript"}
     )
-    assert PRESETS["local-ollama"].capabilities == frozenset({"chat"})
+    assert PRESETS["local-ollama"].capabilities == frozenset({"llm"})
     assert PRESETS["openai"].capabilities == frozenset(
-        {"embedding", "vision", "ocr", "advanced-ocr", "chat"}
+        {"embedding", "vision", "ocr", "advanced-ocr", "llm"}
     )
     assert PRESETS["qwen-dashscope"].capabilities == frozenset(
-        {"vision", "ocr", "advanced-ocr", "chat"}
+        {"vision", "ocr", "advanced-ocr", "llm"}
     )
-    assert PRESETS["deepseek"].capabilities == frozenset({"chat"})
+    assert PRESETS["deepseek"].capabilities == frozenset({"llm"})
     assert PRESETS["brave-search"].capabilities == frozenset({"web-search"})
     assert PRESETS["tavily-search"].capabilities == frozenset({"web-search"})
 
 
-def test_chat_and_web_search_capabilities_are_explicit():
-    chat_ids = {p.provider_id for p in presets_with_capability("chat")}
+def test_llm_and_web_search_capabilities_are_explicit():
+    llm_ids = {p.provider_id for p in presets_with_capability("llm")}
     web_ids = {p.provider_id for p in presets_with_capability("web-search")}
 
-    assert chat_ids == {"local-ollama", "openai", "qwen-dashscope", "deepseek"}
+    assert llm_ids == {"local-ollama", "openai", "qwen-dashscope", "deepseek"}
     assert web_ids == {"brave-search", "tavily-search"}
 
 
@@ -143,9 +143,9 @@ def test_presets_with_capability_filters_correctly():
         "qwen-dashscope",
     }
 
-    chat_providers = presets_with_capability("chat")
-    chat_ids = {p.provider_id for p in chat_providers}
-    assert chat_ids == {"local-ollama", "openai", "qwen-dashscope", "deepseek"}
+    llm_providers = presets_with_capability("llm")
+    llm_ids = {p.provider_id for p in llm_providers}
+    assert llm_ids == {"local-ollama", "openai", "qwen-dashscope", "deepseek"}
 
     audio_transcript_providers = presets_with_capability("audio-transcript")
     audio_transcript_ids = {p.provider_id for p in audio_transcript_providers}

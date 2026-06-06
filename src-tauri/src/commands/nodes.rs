@@ -3,6 +3,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::domain::vfs::node::ExplorerSnapshotDto;
+use crate::infrastructure::db::url_repository::{retry_url as retry_url_record, RetryUrlInput};
 use crate::services::mutations::delete_node::{delete_node as delete_node_record, DeleteNodeInput};
 use crate::services::mutations::reindex_node::{
     reindex_node as reindex_node_record, ReindexNodeInput,
@@ -59,6 +60,16 @@ pub fn reindex_node(
         .map_err(|error: rusqlite::Error| error.to_string())?;
     let emitter = state.emitter.as_ref();
     let outcome = reindex_node_record(&conn, &input, &emitter)?;
+    for node_id in &outcome.url_recrawl_ids {
+        retry_url_record(
+            &conn,
+            &RetryUrlInput {
+                node_id: node_id.clone(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        state.url_jobs.enqueue(node_id.clone())?;
+    }
     Ok(ReindexNodeResult {
         enqueued: outcome.enqueued,
     })

@@ -12,6 +12,7 @@ import {
   readFileContent,
   reindexNode,
   renameNode,
+  retranscribeVoiceNote,
   retryUrl,
   saveNoteContent,
   showNodeExtractArtifacts,
@@ -37,4 +38,5 @@ export const explorerClient: ExplorerClient = {
   readFileContent,
   showNodeInFileManager,
   showNodeExtractArtifacts,
+  retranscribeVoiceNote,
 };

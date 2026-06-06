@@ -12,12 +12,14 @@ use cognios_lib::services::notes::get_note_content::get_note_content;
 use cognios_lib::services::notes::save_note_content::save_note_content;
 use cognios_lib::services::voice_notes::{
     append_voice_note_audio_chunk, append_voice_note_realtime_transcript,
-    begin_voice_note_audio_capture, capture_capability, complete_voice_note_transcript,
+    begin_voice_note_audio_capture, begin_voice_note_retranscription, begin_voice_note_summary,
+    capture_capability, complete_voice_note_summary, complete_voice_note_transcript,
     create_voice_note, delete_voice_note_source_audio, finish_voice_note_audio_capture,
     get_voice_note, get_voice_note_transcript, mark_voice_note_transcription_failed,
     rename_voice_note_speaker, AppendRealtimeTranscriptInput, AppendVoiceNoteAudioChunkInput,
-    BeginVoiceNoteAudioCaptureInput, CompleteVoiceNoteTranscriptInput, CreateVoiceNoteInput,
-    FinishVoiceNoteAudioCaptureInput, RenameVoiceNoteSpeakerInput, VoiceNoteInput,
+    BeginVoiceNoteAudioCaptureInput, CompleteVoiceNoteSummaryInput,
+    CompleteVoiceNoteTranscriptInput, CreateVoiceNoteInput, FinishVoiceNoteAudioCaptureInput,
+    RenameVoiceNoteSpeakerInput, VoiceNoteInput,
 };
 
 fn noop_emitter(_event: VfsChangeEvent) {}
@@ -124,6 +126,122 @@ fn complete_transcript_saves_markdown_and_marks_voice_note_completed() {
                 && event.reason == "node-saved"),
         "completed transcript should use the normal note save event for search indexing"
     );
+}
+
+#[test]
+fn retranscription_requires_source_audio_and_marks_voice_note_transcribing() {
+    let (app_dir, db_path, notes_dir) = setup();
+    let mut conn = open_database(&db_path).expect("database");
+    let created = create_voice_note(
+        &mut conn,
+        &CreateVoiceNoteInput { parent_id: None },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("create voice note");
+    begin_voice_note_audio_capture(
+        &conn,
+        &BeginVoiceNoteAudioCaptureInput {
+            note_id: created.voice_note.note_id.clone(),
+            mime_type: Some("audio/wav".into()),
+            file_extension: Some("wav".into()),
+        },
+        app_dir.path(),
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("begin capture");
+    append_voice_note_audio_chunk(
+        &conn,
+        &AppendVoiceNoteAudioChunkInput {
+            note_id: created.voice_note.note_id.clone(),
+            bytes: b"audio".to_vec(),
+        },
+    )
+    .expect("append audio");
+    finish_voice_note_audio_capture(
+        &conn,
+        &FinishVoiceNoteAudioCaptureInput {
+            note_id: created.voice_note.note_id.clone(),
+            duration_ms: Some(1_000),
+        },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("finish capture");
+    complete_voice_note_transcript(
+        &conn,
+        &CompleteVoiceNoteTranscriptInput {
+            note_id: created.voice_note.note_id.clone(),
+            transcript: "[00:00.000] Speaker 1: original".into(),
+            summary: None,
+            action_items: vec![],
+            speaker_labels: BTreeMap::new(),
+        },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("complete transcript");
+
+    let retranscribing = begin_voice_note_retranscription(
+        &conn,
+        &VoiceNoteInput {
+            note_id: created.voice_note.note_id.clone(),
+        },
+        &noop_emitter,
+    )
+    .expect("begin retranscription");
+
+    assert_eq!(retranscribing.status, "transcribing");
+    assert_eq!(retranscribing.transcription_status, "transcribing");
+    assert_eq!(retranscribing.summary_status, "unavailable");
+}
+
+#[test]
+fn summary_completion_updates_markdown_and_status_after_transcript() {
+    let (_app_dir, db_path, notes_dir) = setup();
+    let mut conn = open_database(&db_path).expect("database");
+    let created = create_voice_note(
+        &mut conn,
+        &CreateVoiceNoteInput { parent_id: None },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("create voice note");
+    complete_voice_note_transcript(
+        &conn,
+        &CompleteVoiceNoteTranscriptInput {
+            note_id: created.voice_note.note_id.clone(),
+            transcript: "[00:00.000] Speaker 1: launch update".into(),
+            summary: None,
+            action_items: vec![],
+            speaker_labels: BTreeMap::new(),
+        },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("complete transcript");
+
+    let summarizing = begin_voice_note_summary(&conn, &created.voice_note.note_id, &noop_emitter)
+        .expect("begin summary");
+    assert_eq!(summarizing.summary_status, "pending");
+
+    let summarized = complete_voice_note_summary(
+        &conn,
+        &CompleteVoiceNoteSummaryInput {
+            note_id: created.voice_note.note_id.clone(),
+            summary: "They discussed the launch.".into(),
+            action_items: vec!["Ship the build".into()],
+        },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("complete summary");
+
+    assert_eq!(summarized.summary_status, "ready");
+    let body = get_note_content(&created.voice_note.note_id, &notes_dir).expect("body");
+    assert!(body.contains("They discussed the launch."));
+    assert!(body.contains("- Ship the build"));
 }
 
 #[test]
@@ -606,7 +724,7 @@ fn mark_transcription_unavailable_updates_metadata_and_transcript_file() {
 }
 
 #[test]
-fn transcription_failure_preserves_existing_realtime_transcript() {
+fn transcription_failure_completes_existing_realtime_transcript() {
     let (_app_dir, db_path, notes_dir) = setup();
     let mut conn = open_database(&db_path).expect("database");
     let created = create_voice_note(
@@ -631,7 +749,7 @@ fn transcription_failure_preserves_existing_realtime_transcript() {
     )
     .expect("append realtime transcript");
 
-    mark_voice_note_transcription_failed(
+    let updated = mark_voice_note_transcription_failed(
         &conn,
         &created.voice_note.note_id,
         "failed",
@@ -641,12 +759,15 @@ fn transcription_failure_preserves_existing_realtime_transcript() {
     )
     .expect("mark failed");
 
+    assert_eq!(updated.status, "completed");
+    assert_eq!(updated.transcription_status, "completed");
     let transcript = get_voice_note_transcript(&conn, &created.voice_note.note_id, &notes_dir)
         .expect("transcript");
     assert!(transcript.contains("[00:01.500 - 00:03.500] Speaker 1: live transcript survived"));
-    assert!(transcript.contains("Transcription failed: final pass failed"));
+    assert!(!transcript.contains("Transcription failed: final pass failed"));
     let body = get_note_content(&created.voice_note.note_id, &notes_dir).expect("body");
     assert!(!body.contains("live transcript survived"));
+    assert!(!body.contains("final pass failed"));
 }
 
 #[test]

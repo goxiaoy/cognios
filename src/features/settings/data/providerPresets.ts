@@ -6,7 +6,7 @@
  * values to the sidecar's response would catch drift in CI.
  *
  * Capability vocabulary v1: ``embedding`` / ``reranking`` / ``vision``
- * / ``ocr`` / ``advanced-ocr`` / ``audio-transcript`` / ``chat`` /
+ * / ``ocr`` / ``advanced-ocr`` / ``audio-transcript`` / ``llm`` /
  * ``web-search``.
  */
 
@@ -19,7 +19,7 @@ export type Capability =
   | "ocr"
   | "advanced-ocr"
   | "audio-transcript"
-  | "chat"
+  | "llm"
   | "web-search";
 
 export interface ProviderPreset {
@@ -111,8 +111,8 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     providerId: "local-ollama",
     displayName: "Local Ollama",
     providerType: "local",
-    capabilities: ["chat"],
-    defaultModelPerCapability: { chat: "llama3.2" },
+    capabilities: ["llm"],
+    defaultModelPerCapability: { llm: "llama3.2" },
     authKind: "none",
     baseUrl: "http://127.0.0.1:11434",
   },
@@ -120,13 +120,13 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     providerId: "openai",
     displayName: "OpenAI",
     providerType: "cloud",
-    capabilities: ["embedding", "vision", "ocr", "advanced-ocr", "chat"],
+    capabilities: ["embedding", "vision", "ocr", "advanced-ocr", "llm"],
     defaultModelPerCapability: {
       embedding: "text-embedding-3-small",
       vision: "gpt-4o-mini",
       ocr: "gpt-4o-mini",
       "advanced-ocr": "gpt-4o-mini",
-      chat: "gpt-4o-mini",
+      llm: "gpt-4o-mini",
     },
     authKind: "api-key",
     baseUrl: "https://api.openai.com/v1",
@@ -137,12 +137,12 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     providerId: "qwen-dashscope",
     displayName: "Qwen DashScope",
     providerType: "cloud",
-    capabilities: ["vision", "ocr", "advanced-ocr", "chat"],
+    capabilities: ["vision", "ocr", "advanced-ocr", "llm"],
     defaultModelPerCapability: {
       vision: "qwen-vl-plus",
       ocr: "qwen-vl-plus",
       "advanced-ocr": "qwen-vl-plus",
-      chat: "qwen-plus",
+      llm: "qwen-plus",
     },
     authKind: "api-key",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -153,8 +153,8 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     providerId: "deepseek",
     displayName: "DeepSeek",
     providerType: "cloud",
-    capabilities: ["chat"],
-    defaultModelPerCapability: { chat: "deepseek-v4-flash" },
+    capabilities: ["llm"],
+    defaultModelPerCapability: { llm: "deepseek-v4-flash" },
     authKind: "api-key",
     baseUrl: "https://api.deepseek.com",
     validationEndpoint: "/models",
@@ -246,11 +246,11 @@ export const FEATURE_CATALOG: readonly FeatureMeta[] = [
     comingSoon: false,
   },
   {
-    featureId: "chat",
-    displayName: "Chat",
+    featureId: "llm",
+    displayName: "LLM",
     description:
       "Answers questions from selected workspace and web sources. Local Ollama stays on-device; cloud providers send prompt context off-device.",
-    capability: "chat",
+    capability: "llm",
     mandatory: false,
     comingSoon: false,
   },

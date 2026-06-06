@@ -144,7 +144,7 @@ function makeSettings(overrides: Partial<SearchSettings> = {}): SearchSettings {
       },
     },
     features: {
-      chat: { enabled: true, providerId: "local-ollama" },
+      llm: { enabled: true, providerId: "local-ollama" },
       "advanced-ocr": { enabled: false, providerId: null },
     },
     cloudConsentAcked: [],
@@ -310,7 +310,7 @@ describe("HomeDashboard", () => {
   it("shows secondary prompts only after content exists and settings make them relevant", async () => {
     const settings = makeSettings({
       features: {
-        chat: { enabled: false, providerId: null },
+        llm: { enabled: false, providerId: null },
         "advanced-ocr": { enabled: false, providerId: null },
       },
     });
@@ -344,13 +344,13 @@ describe("HomeDashboard", () => {
   it("refreshes secondary prompts when settings change outside Home", async () => {
     const disabled = makeSettings({
       features: {
-        chat: { enabled: true, providerId: "local-ollama" },
+        llm: { enabled: true, providerId: "local-ollama" },
         "advanced-ocr": { enabled: false, providerId: null },
       },
     });
     const enabled = makeSettings({
       features: {
-        chat: { enabled: true, providerId: "local-ollama" },
+        llm: { enabled: true, providerId: "local-ollama" },
         "advanced-ocr": {
           enabled: true,
           providerId: "local-paddleocr-advanced",
@@ -390,7 +390,7 @@ describe("HomeDashboard", () => {
     const client = makeClient(
       makeSettings({
         features: {
-          chat: { enabled: false, providerId: null },
+          llm: { enabled: false, providerId: null },
           "advanced-ocr": { enabled: false, providerId: null },
         },
       })
@@ -432,7 +432,7 @@ describe("HomeDashboard", () => {
   it("keeps dismissed secondary prompts hidden until their relevance changes", async () => {
     const settings = makeSettings({
       features: {
-        chat: { enabled: true, providerId: "local-ollama" },
+        llm: { enabled: true, providerId: "local-ollama" },
         "advanced-ocr": { enabled: false, providerId: null },
       },
     });

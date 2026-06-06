@@ -26,7 +26,7 @@ const CAPABILITY_LABEL: Record<Capability, string> = {
   ocr: "OCR",
   "advanced-ocr": "Advanced OCR",
   "audio-transcript": "Audio Transcript",
-  chat: "Chat",
+  llm: "LLM",
   "web-search": "Web Search",
 };
 
@@ -37,7 +37,7 @@ const CAPABILITY_FILTER_ORDER: readonly Capability[] = [
   "ocr",
   "advanced-ocr",
   "audio-transcript",
-  "chat",
+  "llm",
   "web-search",
 ];
 
@@ -55,7 +55,7 @@ const CAPABILITY_TO_ROLE: Record<Capability, string> = {
   ocr: "ocr",
   "advanced-ocr": "advanced-ocr",
   "audio-transcript": "audio-transcript",
-  chat: "chat",
+  llm: "llm",
   "web-search": "web-search",
 };
 

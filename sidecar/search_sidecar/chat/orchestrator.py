@@ -20,6 +20,7 @@ from .types import (
     ChatModelList,
     ChatProviderError,
 )
+from ..voice_notes.summarizer import VoiceNoteSummary, summarize_voice_note_transcript
 from ..web_search.types import WebSearchProvider
 
 
@@ -153,6 +154,20 @@ class ChatOrchestrator:
         self, web_search_provider: WebSearchProvider | None
     ) -> None:
         self._retrieval.set_web_search_provider(web_search_provider)
+
+    def summarize_voice_note(
+        self,
+        transcript: str,
+        *,
+        model: str | None = None,
+    ) -> VoiceNoteSummary | None:
+        if self._chat_provider is None:
+            return None
+        return summarize_voice_note_transcript(
+            self._chat_provider,
+            transcript,
+            model=model,
+        )
 
     def run_turn(self, request: ChatTurnRequest) -> ChatTurnResponse:
         if self._agent_runtime is not None and self._toolset_factory is not None:

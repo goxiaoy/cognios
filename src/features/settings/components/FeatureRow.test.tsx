@@ -18,7 +18,7 @@ const SEMANTIC = FEATURE_CATALOG.find((m) => m.featureId === "semantic-search")!
 const RERANKING = FEATURE_CATALOG.find((m) => m.featureId === "result-reranking")!;
 const OCR = FEATURE_CATALOG.find((m) => m.featureId === "image-ocr")!;
 const CAPTIONING = FEATURE_CATALOG.find((m) => m.featureId === "image-captioning")!;
-const CHAT = FEATURE_CATALOG.find((m) => m.featureId === "chat")!;
+const CHAT = FEATURE_CATALOG.find((m) => m.featureId === "llm")!;
 const VOICE_NOTES = FEATURE_CATALOG.find((m) => m.featureId === "voice-notes")!;
 
 // Synthetic optional/non-coming-soon feature for toggle-path tests
@@ -244,10 +244,10 @@ describe("FeatureRow", () => {
     expect(updateSettings).not.toHaveBeenCalled();
   });
 
-  it("opens provider setup for a selected but unconfigured Ollama chat provider", async () => {
+  it("opens provider setup for a selected but unconfigured Ollama LLM provider", async () => {
     const updateSettings = vi.fn();
     const settings = baseSettings();
-    settings.features.chat = { enabled: true, providerId: "local-ollama" };
+    settings.features.llm = { enabled: true, providerId: "local-ollama" };
     render(
       <FeatureRow
         meta={CHAT}
@@ -260,7 +260,7 @@ describe("FeatureRow", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: /change provider for chat/i,
+        name: /change provider for llm/i,
       })
     );
     expect(screen.getAllByText(/needs setup/i).length).toBeGreaterThan(0);

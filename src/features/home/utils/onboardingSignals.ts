@@ -25,7 +25,7 @@ export function shouldPromptForChatProvider(
   settings: SearchSettings | null
 ): boolean {
   if (!settings) return false;
-  return !isFeatureUsable(settings, "chat");
+  return !isFeatureUsable(settings, "llm", "chat");
 }
 
 export function advancedOcrPromptFingerprint(
@@ -44,7 +44,7 @@ export function advancedOcrPromptFingerprint(
 }
 
 export function chatPromptFingerprint(settings: SearchSettings | null): string {
-  const feature = settings?.features.chat;
+  const feature = settings?.features.llm;
   const providerId = feature?.providerId ?? "unbound";
   const provider = settings?.providers[providerId];
   return [
@@ -55,8 +55,14 @@ export function chatPromptFingerprint(settings: SearchSettings | null): string {
   ].join(":");
 }
 
-function isFeatureUsable(settings: SearchSettings, featureId: string): boolean {
-  const feature = settings.features[featureId];
+function isFeatureUsable(
+  settings: SearchSettings,
+  featureId: string,
+  fallbackFeatureId?: string
+): boolean {
+  const feature =
+    settings.features[featureId] ??
+    (fallbackFeatureId ? settings.features[fallbackFeatureId] : undefined);
   if (!feature?.enabled || !feature.providerId) return false;
   const provider = settings.providers[feature.providerId];
   return provider?.enabled === true;

@@ -64,13 +64,13 @@ def test_default_settings_seeds_local_gte_and_semantic_search():
     assert s.providers["local-qwen-asr"].enabled is True
     assert s.features["voice-notes"].enabled is True
     assert s.features["voice-notes"].provider_id == "local-qwen-asr"
-    # Chat is pre-bound to local Ollama, but the provider is not
+    # LLM is pre-bound to local Ollama, but the provider is not
     # considered ready until the user opens Add and saves the default
     # endpoint. This keeps first launch from claiming Ollama is ready
     # before the user has acknowledged the runtime configuration.
     assert "local-ollama" not in s.providers
-    assert s.features["chat"].enabled is True
-    assert s.features["chat"].provider_id == "local-ollama"
+    assert s.features["llm"].enabled is True
+    assert s.features["llm"].provider_id == "local-ollama"
     assert s.features["web-search"].enabled is False
     assert s.features["web-search"].provider_id is None
     # No cloud providers consented to on first install.

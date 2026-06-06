@@ -14,6 +14,7 @@ import re
 import shutil
 import sys
 import threading
+import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -157,6 +158,7 @@ def transcribe_voice_note_audio(
         raise FileNotFoundError(f"voice note audio file not found: {audio_path}")
     if audio_path.stat().st_size == 0:
         raise ValueError("voice note audio file is empty")
+    _validate_audio_file_has_samples(audio_path)
 
     checkpoint = _activated_checkpoint(manager, ASR_ROLE)
     model = _load_onnx_asr_pipeline(checkpoint)
@@ -179,6 +181,17 @@ def transcribe_voice_note_audio(
         language=detected_language,
         speaker_labels=speaker_labels,
     )
+
+
+def _validate_audio_file_has_samples(audio_path: Path) -> None:
+    if audio_path.suffix.lower() != ".wav":
+        return
+    try:
+        with wave.open(str(audio_path), "rb") as wav:
+            if wav.getnframes() == 0:
+                raise ValueError("voice note audio file has no audio samples")
+    except wave.Error as err:
+        raise ValueError("voice note WAV file is invalid") from err
 
 
 def warm_voice_note_transcriber(manager: ModelManager) -> None:

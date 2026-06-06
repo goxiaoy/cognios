@@ -34,6 +34,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CHAT_MEMORY_REFRESH_TIMEOUT: Duration = Duration::from_secs(4 * 60);
 const VOICE_NOTE_TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const VOICE_NOTE_TRANSCRIBER_WARMUP_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+const VOICE_NOTE_SUMMARY_TIMEOUT: Duration = Duration::from_secs(4 * 60);
 
 /// All Tauri-facing sidecar commands return one of these envelopes.
 ///
@@ -719,6 +720,15 @@ pub struct VoiceNoteTranscriptionRequestDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
+pub struct VoiceNoteSummaryRequestDto {
+    pub note_id: String,
+    pub transcript: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct VoiceNoteTranscriptionResponseDto {
     pub status: String,
@@ -728,6 +738,20 @@ pub struct VoiceNoteTranscriptionResponseDto {
     pub language: Option<String>,
     #[serde(default)]
     pub speaker_labels: BTreeMap<String, String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct VoiceNoteSummaryResponseDto {
+    pub status: String,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub action_items: Vec<String>,
+    #[serde(default)]
+    pub provider: Option<serde_json::Value>,
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -989,6 +1013,14 @@ impl SearchSidecarClient {
             VOICE_NOTE_TRANSCRIPTION_TIMEOUT,
         )
         .await
+    }
+
+    pub async fn summarize_voice_note(
+        &self,
+        body: &VoiceNoteSummaryRequestDto,
+    ) -> SidecarEnvelope<VoiceNoteSummaryResponseDto> {
+        self.post_envelope_with_timeout("/voice-notes/summarize", body, VOICE_NOTE_SUMMARY_TIMEOUT)
+            .await
     }
 
     pub async fn warm_voice_note_transcriber(

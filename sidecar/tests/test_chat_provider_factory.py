@@ -24,17 +24,17 @@ def test_saved_ollama_config_selects_local_chat_provider():
     assert provider.model == "llama3.2"
 
 
-def test_disabled_chat_feature_returns_none():
+def test_disabled_llm_feature_returns_none():
     settings = default_settings()
-    settings.features["chat"].enabled = False
+    settings.features["llm"].enabled = False
 
     assert select_chat_provider(settings) is None
 
 
-def test_non_chat_provider_binding_returns_none():
+def test_non_llm_provider_binding_returns_none():
     settings = SearchSettings(
         providers={"local-gte": ProviderConfig(provider_id="local-gte")},
-        features={"chat": FeatureConfig(enabled=True, provider_id="local-gte")},
+        features={"llm": FeatureConfig(enabled=True, provider_id="local-gte")},
     )
 
     assert select_chat_provider(settings) is None
@@ -43,7 +43,7 @@ def test_non_chat_provider_binding_returns_none():
 def test_saved_qwen_config_selects_litellm_openai_compatible_provider():
     settings = SearchSettings(
         providers={"qwen-dashscope": ProviderConfig(provider_id="qwen-dashscope")},
-        features={"chat": FeatureConfig(enabled=True, provider_id="qwen-dashscope")},
+        features={"llm": FeatureConfig(enabled=True, provider_id="qwen-dashscope")},
     )
 
     provider = select_chat_provider(settings)
@@ -56,7 +56,7 @@ def test_saved_qwen_config_selects_litellm_openai_compatible_provider():
 def test_saved_deepseek_config_selects_litellm_openai_compatible_provider():
     settings = SearchSettings(
         providers={"deepseek": ProviderConfig(provider_id="deepseek")},
-        features={"chat": FeatureConfig(enabled=True, provider_id="deepseek")},
+        features={"llm": FeatureConfig(enabled=True, provider_id="deepseek")},
     )
 
     provider = select_chat_provider(settings)

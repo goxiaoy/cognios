@@ -6,7 +6,7 @@ import { PROVIDER_PRESETS, type ProviderPreset } from "../../settings/data/provi
 
 export const DEFAULT_CHAT_PROVIDER_ID = "local-ollama";
 export const CHAT_PROVIDER_PRESETS = PROVIDER_PRESETS.filter((preset) =>
-  preset.capabilities.includes("chat")
+  preset.capabilities.includes("llm")
 );
 
 export function ChatProviderSetup({
@@ -33,11 +33,11 @@ export function ChatProviderSetup({
   const editorSettings = settingsWithChatProvider(settings, selectedPreset);
 
   return (
-    <section className="chat-provider-setup" aria-label="Set up chat provider">
+    <section className="chat-provider-setup" aria-label="Set up LLM provider">
       <div className="chat-provider-setup-head">
         <div>
           <p className="chat-provider-setup-kicker">Provider required</p>
-          <h3>Set up Chat before sending</h3>
+          <h3>Set up LLM before sending</h3>
         </div>
         <AppSelect
           label="Provider"
@@ -51,7 +51,7 @@ export function ChatProviderSetup({
         />
       </div>
       <p className="chat-provider-setup-copy">
-        Choose a provider, save it here, then send your first message.
+        Choose an LLM provider, save it here, then send your first message.
       </p>
       {providerStatus ? (
         <p className="chat-provider-setup-note">{providerStatus}</p>
@@ -78,7 +78,7 @@ function settingsWithChatProvider(
     ...settings,
     features: {
       ...settings.features,
-      chat: {
+      llm: {
         enabled: true,
         providerId: preset.providerId,
       },

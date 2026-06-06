@@ -40,6 +40,7 @@ export function NodeStatusIndicator({
   const primary = status.stages.find((stage) => stage.id === status.primaryStageId);
   const label = labelForStatus(status, primary?.label);
   const title = status.stages
+    .filter((stage) => !(stage.importance === "optional" && stage.state === "skipped"))
     .map((stage) => {
       const message = stage.error?.message ?? stage.message;
       return message

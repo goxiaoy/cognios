@@ -88,6 +88,13 @@ pub struct CompleteVoiceNoteTranscriptInput {
 }
 
 #[derive(Debug, Clone)]
+pub struct CompleteVoiceNoteSummaryInput {
+    pub note_id: String,
+    pub summary: String,
+    pub action_items: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct AppendRealtimeTranscriptInput {
     pub note_id: String,
     pub transcript: String,
@@ -408,6 +415,127 @@ pub fn complete_voice_note_transcript(
         .ok_or_else(|| "voice note metadata missing after transcript update".to_string())
 }
 
+pub fn begin_voice_note_summary(
+    conn: &Connection,
+    note_id: &str,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<VoiceNoteDto, String> {
+    let voice_note =
+        get_voice_note(conn, note_id)?.ok_or_else(|| "voice note not found".to_string())?;
+    if voice_note.transcription_status != "completed" {
+        return Err("voice note transcript is not completed".to_string());
+    }
+
+    conn.execute(
+        "
+        UPDATE voice_notes
+        SET
+          summary_status = 'pending',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE note_id = ?1
+        ",
+        [note_id],
+    )
+    .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        note_id,
+        "voice.summarize",
+        &StageUpdate::running("Summarizing"),
+    )
+    .map_err(|error| error.to_string())?;
+
+    emit_note_saved(note_id, emitter);
+
+    get_voice_note(conn, note_id)?
+        .ok_or_else(|| "voice note metadata missing after summary start".to_string())
+}
+
+pub fn complete_voice_note_summary(
+    conn: &Connection,
+    input: &CompleteVoiceNoteSummaryInput,
+    notes_dir: &Path,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<VoiceNoteDto, String> {
+    let voice_note =
+        get_voice_note(conn, &input.note_id)?.ok_or_else(|| "voice note not found".to_string())?;
+    if voice_note.transcription_status != "completed" {
+        return Err("voice note transcript is not completed".to_string());
+    }
+    let summary = input.summary.trim();
+    if summary.is_empty() {
+        return Err("voice note summary cannot be blank".to_string());
+    }
+
+    let existing_body = get_note_content(&input.note_id, notes_dir)?;
+    let body = render_voice_note_summary_body(&existing_body, summary, &input.action_items);
+    write_note_content(conn, &input.note_id, &body, notes_dir)?;
+
+    conn.execute(
+        "
+        UPDATE voice_notes
+        SET
+          summary_status = 'ready',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE note_id = ?1
+        ",
+        [&input.note_id],
+    )
+    .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &input.note_id,
+        "voice.summarize",
+        &StageUpdate::succeeded("Summary ready"),
+    )
+    .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &input.note_id,
+        "content.index",
+        &StageUpdate::pending("Waiting to index summary"),
+    )
+    .map_err(|error| error.to_string())?;
+
+    emit_note_saved(&input.note_id, emitter);
+
+    get_voice_note(conn, &input.note_id)?
+        .ok_or_else(|| "voice note metadata missing after summary update".to_string())
+}
+
+pub fn mark_voice_note_summary_failed(
+    conn: &Connection,
+    note_id: &str,
+    message: &str,
+    retryable: bool,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<VoiceNoteDto, String> {
+    get_voice_note(conn, note_id)?.ok_or_else(|| "voice note not found".to_string())?;
+    conn.execute(
+        "
+        UPDATE voice_notes
+        SET
+          summary_status = 'failed',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE note_id = ?1
+        ",
+        [note_id],
+    )
+    .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        note_id,
+        "voice.summarize",
+        &StageUpdate::failed(message, retryable),
+    )
+    .map_err(|error| error.to_string())?;
+
+    emit_note_saved(note_id, emitter);
+
+    get_voice_note(conn, note_id)?
+        .ok_or_else(|| "voice note metadata missing after summary failure".to_string())
+}
+
 pub fn append_voice_note_realtime_transcript(
     conn: &Connection,
     input: &AppendRealtimeTranscriptInput,
@@ -624,14 +752,33 @@ pub fn mark_voice_note_transcription_failed(
         return Err("invalid transcription failure status".to_string());
     }
 
-    get_voice_note(conn, note_id)?.ok_or_else(|| "voice note not found".to_string())?;
+    let voice_note =
+        get_voice_note(conn, note_id)?.ok_or_else(|| "voice note not found".to_string())?;
+    if voice_note.transcription_status == "completed" {
+        return Ok(voice_note);
+    }
+    let current_transcript = read_voice_note_transcript_file(conn, note_id, notes_dir)?;
+    let existing_transcript = current_transcript.trim();
+    if let Some(transcript) = usable_voice_note_transcript(existing_transcript) {
+        return complete_voice_note_transcript(
+            conn,
+            &CompleteVoiceNoteTranscriptInput {
+                note_id: note_id.to_string(),
+                transcript,
+                summary: None,
+                action_items: Vec::new(),
+                speaker_labels: voice_note.speaker_labels,
+            },
+            notes_dir,
+            emitter,
+        );
+    }
+
     let prefix = if transcription_status == "unavailable" {
         "Transcription unavailable"
     } else {
         "Transcription failed"
     };
-    let current_transcript = read_voice_note_transcript_file(conn, note_id, notes_dir)?;
-    let existing_transcript = current_transcript.trim();
     let failure_text = format!("{prefix}: {}", one_line_message(message));
     let transcript_text = if is_transcript_placeholder(existing_transcript) {
         failure_text
@@ -669,6 +816,72 @@ pub fn mark_voice_note_transcription_failed(
 
     get_voice_note(conn, note_id)?
         .ok_or_else(|| "voice note metadata missing after transcription failure".to_string())
+}
+
+pub fn begin_voice_note_retranscription(
+    conn: &Connection,
+    input: &VoiceNoteInput,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<VoiceNoteDto, String> {
+    let voice_note =
+        get_voice_note(conn, &input.note_id)?.ok_or_else(|| "voice note not found".to_string())?;
+    let source_audio_path = voice_note
+        .source_audio_path
+        .as_deref()
+        .filter(|path| !path.trim().is_empty())
+        .ok_or_else(|| "voice note has no source audio to retranscribe".to_string())?;
+    if !Path::new(source_audio_path).exists() {
+        return Err("voice note source audio file is missing".to_string());
+    }
+
+    conn.execute(
+        "
+        UPDATE voice_notes
+        SET
+          status = 'transcribing',
+          transcription_status = 'transcribing',
+          summary_status = 'unavailable',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE note_id = ?1
+        ",
+        [&input.note_id],
+    )
+    .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &input.note_id,
+        "voice.transcribe",
+        &StageUpdate::running("Retranscribing from source audio"),
+    )
+    .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &input.note_id,
+        "voice.summarize",
+        &StageUpdate {
+            state: StageState::Skipped,
+            message: Some("Summary unavailable".to_string()),
+            detail: None,
+            error_message: None,
+            retryable: false,
+            attempt: None,
+            started_at: None,
+            finished_at: Some("CURRENT_TIMESTAMP".to_string()),
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        &input.note_id,
+        "content.index",
+        &StageUpdate::pending("Waiting for transcript"),
+    )
+    .map_err(|error| error.to_string())?;
+
+    emit_note_saved(&input.note_id, emitter);
+
+    get_voice_note(conn, &input.note_id)?
+        .ok_or_else(|| "voice note metadata missing after retranscription start".to_string())
 }
 
 pub fn rename_voice_note_speaker(
@@ -819,6 +1032,29 @@ fn render_completed_voice_note_body(
     )
 }
 
+fn render_voice_note_summary_body(
+    existing_body: &str,
+    summary: &str,
+    action_items: &[String],
+) -> String {
+    let action_items = if action_items.is_empty() {
+        "No action items yet.".to_string()
+    } else {
+        action_items
+            .iter()
+            .map(|item| format!("- {}", item.trim()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let with_summary = replace_section(existing_body, SUMMARY_START, SUMMARY_END, summary);
+    replace_section(
+        &with_summary,
+        ACTION_ITEMS_START,
+        ACTION_ITEMS_END,
+        &action_items,
+    )
+}
+
 fn replace_section(existing: &str, start: &str, end: &str, replacement: &str) -> String {
     let Some(start_index) = existing.find(start) else {
         return append_section(existing, start, end, replacement);
@@ -879,6 +1115,24 @@ fn is_transcript_placeholder(text: &str) -> bool {
         || text == "Transcription pending."
         || text.starts_with("Transcription failed:")
         || text.starts_with("Transcription unavailable:")
+}
+
+fn usable_voice_note_transcript(text: &str) -> Option<String> {
+    let transcript = text
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.starts_with("Transcription failed:")
+                && !trimmed.starts_with("Transcription unavailable:")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let transcript = transcript.trim();
+    if transcript.is_empty() || transcript == "Transcription pending." {
+        None
+    } else {
+        Some(transcript.to_string())
+    }
 }
 
 fn transcript_has_timestamps(text: &str) -> bool {

@@ -133,7 +133,7 @@ function makeSearchSettings(overrides: Partial<SearchSettings> = {}): SearchSett
       },
     },
     features: {
-      chat: { enabled: true, providerId: "local-ollama" },
+      llm: { enabled: true, providerId: "local-ollama" },
     },
     cloudConsentAcked: [],
     firstRunSkipped: false,
@@ -1390,14 +1390,14 @@ describe("ChatLayout", () => {
     const settings = makeSearchSettings({
       providers: {},
       features: {
-        chat: { enabled: false, providerId: null },
+        llm: { enabled: false, providerId: null },
       },
     });
     const searchClient = makeSearchClient(settings);
 
     render(<ChatLayout client={client} searchClient={searchClient} />);
 
-    expect(await screen.findByRole("heading", { name: /Set up Chat before sending/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /Set up LLM before sending/i })).toBeInTheDocument();
     expect(screen.queryByLabelText("Chat message")).not.toBeInTheDocument();
     expect(screen.queryByRole("form", { name: /chat composer/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Send$/i })).not.toBeInTheDocument();
@@ -1419,7 +1419,7 @@ describe("ChatLayout", () => {
             }),
           }),
           features: expect.objectContaining({
-            chat: { enabled: true, providerId: "local-ollama" },
+            llm: { enabled: true, providerId: "local-ollama" },
           }),
         })
       );
@@ -1468,7 +1468,7 @@ describe("ChatLayout", () => {
         },
       },
       features: {
-        chat: { enabled: true, providerId: "deepseek" },
+        llm: { enabled: true, providerId: "deepseek" },
       },
     });
     const searchClient = makeSearchClient(settings);
@@ -1482,14 +1482,14 @@ describe("ChatLayout", () => {
     expect(composer).toBeDisabled();
     expect(composer).toHaveAttribute("placeholder", "Waiting for chat provider...");
     expect(screen.getByText("chat provider unavailable")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: /Set up Chat before sending/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Set up LLM before sending/i })).not.toBeInTheDocument();
 
     rerender(<ChatLayout client={client} searchClient={searchClient} visible={false} />);
     rerender(<ChatLayout client={client} searchClient={searchClient} visible={true} />);
 
     expect(await screen.findByLabelText("Chat message")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /model: deepseek-v4-flash/i })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: /Set up Chat before sending/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Set up LLM before sending/i })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(client.getModels).toHaveBeenCalledTimes(2);
     });
