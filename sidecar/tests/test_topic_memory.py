@@ -136,7 +136,13 @@ def test_topic_memory_proposer_uses_llm_structured_topics_with_citations():
     assert atlas["relationships"][0]["citation"]["chunkId"] == "vault-1:intro"
 
 
-def test_topic_memory_ignores_css_and_html_noise_before_llm():
-    payload = TopicMemoryProposer(NoiseStore()).propose()
+def test_topic_memory_prompt_delegates_noise_judgment_to_llm():
+    provider = FakeProvider('{"topics": []}')
+
+    payload = TopicMemoryProposer(NoiseStore(), chat_provider=provider).propose()
 
     assert payload == {"topics": []}
+    prompt = "\n".join(message.content for message in provider.requests[0].messages)
+    assert "do not create topics for UI tokens" in prompt
+    assert "text-align" in prompt
+    assert "hero.jpeg" in prompt

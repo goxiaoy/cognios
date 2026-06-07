@@ -169,7 +169,6 @@ pub fn apply_topic_proposals(
     conn: &Connection,
     batch: &TopicProposalBatchInput,
 ) -> rusqlite::Result<TopicMemoryRefreshResultDto> {
-    archive_noise_topics(conn)?;
     let mut result = TopicMemoryRefreshResultDto {
         topics_created: 0,
         topics_updated: 0,
@@ -182,9 +181,6 @@ pub fn apply_topic_proposals(
             continue;
         }
         let normalized = normalize_title(title);
-        if is_noise_topic_title(&normalized) {
-            continue;
-        }
         let existing = get_topic_by_normalized_title(conn, &normalized)?;
         let topic_id = if let Some(existing) = existing {
             conn.execute(
@@ -256,7 +252,6 @@ pub fn apply_topic_proposals(
                 insert_relationship_proposal(conn, &topic_id, relationship)?;
         }
     }
-    archive_noise_topics(conn)?;
     Ok(result)
 }
 
@@ -789,61 +784,6 @@ fn normalize_title(title: &str) -> String {
         .join(" ")
 }
 
-fn archive_noise_topics(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute(
-        "
-        UPDATE topic_memories
-        SET status = ?1, archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-        WHERE status != ?1
-          AND (
-            normalized_title IN (
-              'align', 'center', 'class', 'container', 'display', 'div',
-              'div style', 'font', 'height', 'html', 'image', 'img',
-              'jpeg', 'jpg', 'margin', 'padding', 'png', 'style',
-              'style text-align', 'text-align', 'text-align center', 'width'
-            )
-            OR normalized_title LIKE '%text-align%'
-            OR normalized_title LIKE 'div %'
-            OR normalized_title LIKE '% div'
-            OR normalized_title LIKE '% div %'
-        )
-        ",
-        params![ARCHIVED],
-    )?;
-    Ok(())
-}
-
-fn is_noise_topic_title(normalized_title: &str) -> bool {
-    matches!(
-        normalized_title,
-        "align"
-            | "center"
-            | "class"
-            | "container"
-            | "display"
-            | "div"
-            | "div style"
-            | "font"
-            | "height"
-            | "html"
-            | "image"
-            | "img"
-            | "jpeg"
-            | "jpg"
-            | "margin"
-            | "padding"
-            | "png"
-            | "style"
-            | "style text-align"
-            | "text-align"
-            | "text-align center"
-            | "width"
-    ) || normalized_title.contains("text-align")
-        || normalized_title.starts_with("div ")
-        || normalized_title.ends_with(" div")
-        || normalized_title.contains(" div ")
-}
-
 fn source_signature(topic_id: &str, source: &SourceProposalInput) -> String {
     format!(
         "source:{}:{}:{}",
@@ -981,37 +921,4 @@ mod tests {
         assert_eq!(detail.proposals[0].status, PENDING);
     }
 
-    #[test]
-    fn apply_archives_and_ignores_code_noise_topics() {
-        let conn = setup_conn();
-        conn.execute(
-            "INSERT INTO topic_memories (id, title, normalized_title) VALUES ('old-noise', 'Text-align Center', 'text-align center')",
-            [],
-        )
-        .expect("old noise topic");
-        let batch = TopicProposalBatchInput {
-            topics: vec![TopicProposalInput {
-                title: "Div Style".into(),
-                summary: "CSS noise".into(),
-                confidence: 0.95,
-                rationale: "repeated tokens".into(),
-                sources: vec![],
-                claims: vec![],
-                events: vec![],
-                relationships: vec![],
-            }],
-        };
-
-        let result = apply_topic_proposals(&conn, &batch).expect("apply");
-        assert_eq!(result.topics_created, 0);
-        assert!(list_topics(&conn).expect("topics").is_empty());
-        let status: String = conn
-            .query_row(
-                "SELECT status FROM topic_memories WHERE id = 'old-noise'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("status");
-        assert_eq!(status, ARCHIVED);
-    }
 }

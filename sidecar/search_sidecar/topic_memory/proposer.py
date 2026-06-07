@@ -20,60 +20,6 @@ from ..chat.provider import ChatProvider
 from ..chat.types import ChatGenerationRequest, ChatMessage, ChatProviderError
 from ..storage import LanceDBStore, role_or_default
 
-CODE_NOISE_TERMS = {
-    "align",
-    "attribute",
-    "background",
-    "block",
-    "border",
-    "center",
-    "class",
-    "color",
-    "const",
-    "container",
-    "display",
-    "div",
-    "element",
-    "false",
-    "file",
-    "flex",
-    "font",
-    "function",
-    "height",
-    "html",
-    "image",
-    "img",
-    "jpeg",
-    "jpg",
-    "margin",
-    "padding",
-    "pixel",
-    "png",
-    "props",
-    "return",
-    "src",
-    "style",
-    "text-align",
-    "true",
-    "width",
-}
-CODE_EXTENSIONS = (
-    ".css",
-    ".html",
-    ".js",
-    ".jsx",
-    ".json",
-    ".scss",
-    ".svg",
-    ".ts",
-    ".tsx",
-    ".xml",
-)
-CSS_PROPERTY_RE = re.compile(
-    r"\b(?:align-items|background|border|color|display|font-size|height|"
-    r"justify-content|margin|padding|text-align|width)\s*:",
-    re.IGNORECASE,
-)
 JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 
 
@@ -89,7 +35,7 @@ class TopicMemoryProposer:
         rows = [
             row
             for row in self.store.scan_user_chunks(limit=self.max_chunks)
-            if _is_memory_evidence_row(row)
+            if str(row.get("text") or "").strip()
         ]
         if not rows:
             return {"topics": []}
@@ -114,8 +60,10 @@ class TopicMemoryProposer:
                             "indexed evidence. Create only meaningful topics a user "
                             "may ask about later: projects, people, decisions, plans, "
                             "meetings, research areas, tasks, and recurring themes. "
-                            "Exclude UI tokens, CSS/HTML/code syntax, file formats, "
-                            "generic layout words, and isolated keywords. Every source, "
+                            "You are responsible for deciding what is not memory: "
+                            "do not create topics for UI tokens, CSS/HTML/code syntax, "
+                            "file formats, generic layout words, or isolated keywords. "
+                            "Every source, "
                             "claim, event, and relationship must cite evidence by "
                             "citationId from the supplied list. Return only JSON."
                         ),
@@ -196,32 +144,6 @@ def _truncate(value: str, max_len: int) -> str:
     return f"{value[: max_len - 1].rstrip()}…"
 
 
-def _is_memory_evidence_row(row: dict[str, Any]) -> bool:
-    text = str(row.get("text") or "")
-    if not text.strip():
-        return False
-    name = str(row.get("name") or "")
-    if _path_has_code_extension(name) or _looks_like_code_or_style(text):
-        return False
-    return True
-
-
-def _path_has_code_extension(path: str) -> bool:
-    lowered = path.strip().lower()
-    return any(lowered.endswith(ext) for ext in CODE_EXTENSIONS)
-
-
-def _looks_like_code_or_style(text: str) -> bool:
-    sample = text[:4_000]
-    if CSS_PROPERTY_RE.search(sample):
-        return True
-    lowered = sample.lower()
-    if any(term in lowered for term in ("text-align", "<div", "</div", "div style=")):
-        return True
-    punctuation = sum(sample.count(char) for char in "{};<>")
-    return punctuation >= 12 and punctuation / max(len(sample), 1) > 0.025
-
-
 def _evidence_pack(rows: list[dict[str, Any]], *, limit: int = 80) -> list[dict[str, Any]]:
     packed: list[dict[str, Any]] = []
     seen_chunks: set[str] = set()
@@ -277,7 +199,7 @@ def _topics_from_llm_payload(
         if not isinstance(raw_topic, dict):
             continue
         title = str(raw_topic.get("title") or "").strip()
-        if not title or _is_noise_title(title):
+        if not title:
             continue
         source_ids = _citation_ids(raw_topic.get("sourceCitationIds"))
         for key in ("claims", "events", "relationships"):
@@ -433,16 +355,6 @@ def _confidence(value: Any, *, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return max(0.0, min(1.0, parsed))
-
-
-def _is_noise_title(title: str) -> bool:
-    normalized = normalize = title.strip().lower()
-    parts = re.split(r"[^a-z0-9\u4e00-\u9fff-]+", normalize)
-    if normalized in CODE_NOISE_TERMS:
-        return True
-    if any(part in CODE_NOISE_TERMS for part in parts):
-        return True
-    return bool(CSS_PROPERTY_RE.search(normalized))
 
 
 def _normalise_date(value: str) -> str:
