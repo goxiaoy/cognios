@@ -4,6 +4,7 @@ pub mod mounts;
 pub mod mutations;
 pub mod node_status;
 pub mod notes;
+pub mod realtime_voice;
 pub mod search;
 pub mod secure_storage;
 pub mod url_indexing;

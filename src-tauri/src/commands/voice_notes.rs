@@ -8,6 +8,9 @@ use tauri::State;
 use crate::commands::realtime_voice::RealtimeVoiceEventPayload;
 use crate::domain::voice_note::VoiceNoteDto;
 use crate::infrastructure::db::connection::Database;
+use crate::services::realtime_voice::vllm::{
+    run_vllm_realtime_transcription, VllmRealtimeTranscriptEvent,
+};
 use crate::services::search::{
     SearchSidecarClient, SidecarEnvelope, SidecarEnvelopeState, VoiceNoteSummaryRequestDto,
     VoiceNoteSummaryResponseDto, VoiceNoteTranscriptionRequestDto,
@@ -489,6 +492,48 @@ async fn run_realtime_voice_note_transcription_job(
     audio_capture: Arc<NativeAudioCapture>,
     note_id: String,
 ) {
+    if let Some(websocket_url) = realtime_voice_websocket_url(&search_client).await {
+        match run_vllm_realtime_voice_note_transcription_job(
+            &db,
+            &notes_dir,
+            &emitter,
+            &realtime_voice_emitter,
+            Arc::clone(&search_client),
+            &audio_capture,
+            &note_id,
+            websocket_url,
+        )
+        .await
+        {
+            Ok(()) => return,
+            Err(error) => {
+                log::warn!(
+                    "vLLM realtime voice note transcription failed for {note_id}; falling back to segment ASR: {error}"
+                );
+            }
+        }
+    }
+    run_segment_realtime_voice_note_transcription_job(
+        db,
+        notes_dir,
+        emitter,
+        realtime_voice_emitter,
+        search_client,
+        audio_capture,
+        note_id,
+    )
+    .await;
+}
+
+async fn run_segment_realtime_voice_note_transcription_job(
+    db: Database,
+    notes_dir: PathBuf,
+    emitter: VfsEventEmitter,
+    realtime_voice_emitter: RealtimeVoiceEventEmitter,
+    search_client: Arc<SearchSidecarClient>,
+    audio_capture: Arc<NativeAudioCapture>,
+    note_id: String,
+) {
     loop {
         tokio::time::sleep(REALTIME_TRANSCRIPTION_SEGMENT_POLL_INTERVAL).await;
         drain_realtime_voice_note_segments(
@@ -521,6 +566,79 @@ async fn run_realtime_voice_note_transcription_job(
             );
             return;
         }
+    }
+}
+
+async fn realtime_voice_websocket_url(search_client: &SearchSidecarClient) -> Option<String> {
+    match search_client.realtime_voice_status().await {
+        SidecarEnvelope {
+            state: SidecarEnvelopeState::Ready,
+            data: Some(status),
+            ..
+        } if status.available && status.status == "ready" => status.websocket_url,
+        _ => None,
+    }
+}
+
+async fn run_vllm_realtime_voice_note_transcription_job(
+    db: &Database,
+    notes_dir: &Path,
+    emitter: &VfsEventEmitter,
+    realtime_voice_emitter: &RealtimeVoiceEventEmitter,
+    search_client: Arc<SearchSidecarClient>,
+    audio_capture: &NativeAudioCapture,
+    note_id: &str,
+    websocket_url: String,
+) -> Result<(), String> {
+    let audio_rx = audio_capture.subscribe_realtime_audio(note_id)?;
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
+    let realtime_task = tauri::async_runtime::spawn(run_vllm_realtime_transcription(
+        websocket_url,
+        audio_rx,
+        event_tx,
+    ));
+    let started_at = Instant::now();
+    let mut sequence = 0;
+
+    while let Some(event) = event_rx.recv().await {
+        sequence += 1;
+        match event {
+            VllmRealtimeTranscriptEvent::Provisional(text) => {
+                realtime_voice_emitter(RealtimeVoiceEventPayload::provisional_caption(
+                    note_id.to_string(),
+                    text,
+                    sequence,
+                ));
+            }
+            VllmRealtimeTranscriptEvent::Final(text) => {
+                append_vllm_realtime_voice_note_transcript(
+                    db,
+                    notes_dir,
+                    emitter,
+                    realtime_voice_emitter,
+                    note_id,
+                    started_at.elapsed().as_millis() as u64,
+                    sequence,
+                    text,
+                )?;
+            }
+            VllmRealtimeTranscriptEvent::Error(message) => return Err(message),
+        }
+    }
+
+    match realtime_task.await {
+        Ok(Ok(())) => {
+            complete_realtime_voice_note_transcription(
+                db,
+                notes_dir,
+                emitter,
+                &search_client,
+                note_id,
+            );
+            Ok(())
+        }
+        Ok(Err(error)) => Err(error),
+        Err(error) => Err(format!("vLLM realtime voice task failed: {error}")),
     }
 }
 
@@ -690,6 +808,36 @@ fn append_realtime_voice_note_segment_transcript(
             );
         }
     }
+}
+
+fn append_vllm_realtime_voice_note_transcript(
+    db: &Database,
+    notes_dir: &Path,
+    emitter: &VfsEventEmitter,
+    realtime_voice_emitter: &RealtimeVoiceEventEmitter,
+    note_id: &str,
+    start_ms: u64,
+    sequence: u64,
+    transcript: String,
+) -> Result<(), String> {
+    let conn = db.connect().map_err(|error| {
+        format!("voice note realtime transcription could not open database: {error}")
+    })?;
+    let input = AppendRealtimeTranscriptInput {
+        note_id: note_id.to_string(),
+        transcript: transcript.clone(),
+        start_ms,
+        duration_ms: 0,
+        speaker_labels: Default::default(),
+    };
+    append_voice_note_realtime_transcript_record(&conn, &input, notes_dir, emitter.as_ref())?;
+    realtime_voice_emitter(RealtimeVoiceEventPayload::final_utterance(
+        note_id.to_string(),
+        transcript,
+        sequence,
+        true,
+    ));
+    Ok(())
 }
 
 fn complete_realtime_voice_note_transcription(

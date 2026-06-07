@@ -7,11 +7,14 @@ use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SizedSample};
+use tokio::sync::mpsc as tokio_mpsc;
 
 type WavWriter = hound::WavWriter<BufWriter<File>>;
 type SharedWavWriter = Arc<Mutex<Option<WavWriter>>>;
 type SharedSegmentRecorder = Arc<Mutex<Option<SegmentRecorder>>>;
 type SharedSegmentBacklog = Arc<Mutex<HashMap<String, VecDeque<CompletedAudioSegment>>>>;
+type RealtimeAudioSender = tokio_mpsc::Sender<RealtimeAudioChunk>;
+type SharedRealtimeAudioSubscribers = Arc<Mutex<HashMap<String, Vec<RealtimeAudioSender>>>>;
 const MICROPHONE_START_TIMEOUT: Duration = Duration::from_secs(10);
 const REALTIME_PREROLL_DURATION: Duration = Duration::from_millis(300);
 const REALTIME_VOICE_WINDOW_DURATION: Duration = Duration::from_millis(30);
@@ -25,6 +28,7 @@ const REALTIME_VOICE_AVERAGE_THRESHOLD: u64 = 120;
 pub struct NativeAudioCapture {
     active: Mutex<Option<ActiveNativeAudioCapture>>,
     segment_backlog: SharedSegmentBacklog,
+    realtime_audio_subscribers: SharedRealtimeAudioSubscribers,
 }
 
 struct ActiveNativeAudioCapture {
@@ -45,11 +49,19 @@ pub struct CompletedAudioSegment {
     pub duration_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealtimeAudioChunk {
+    pub samples: Vec<i16>,
+    pub sample_rate: u32,
+    pub channels: u16,
+}
+
 impl NativeAudioCapture {
     pub fn new() -> Self {
         Self {
             active: Mutex::new(None),
             segment_backlog: Arc::new(Mutex::new(HashMap::new())),
+            realtime_audio_subscribers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -89,10 +101,12 @@ impl NativeAudioCapture {
         )?)));
         let (started_tx, started_rx) = mpsc::sync_channel(1);
         let stream = build_input_stream(
+            note_id,
             &device,
             &config,
             Arc::clone(&writer),
             Arc::clone(&segments),
+            Arc::clone(&self.realtime_audio_subscribers),
             started_tx,
         )?;
         stream
@@ -169,6 +183,9 @@ impl NativeAudioCapture {
             .saturating_sub(paused_duration)
             .as_millis() as u64;
         drop(active.stream);
+        if let Ok(mut subscribers) = self.realtime_audio_subscribers.lock() {
+            subscribers.remove(note_id);
+        }
         let mut writer_guard = active.writer.lock().map_err(|error| error.to_string())?;
         let writer = writer_guard
             .take()
@@ -207,6 +224,22 @@ impl NativeAudioCapture {
             .as_ref()
             .map(|active| active.note_id == note_id)
             .unwrap_or(false)
+    }
+
+    pub fn subscribe_realtime_audio(
+        &self,
+        note_id: &str,
+    ) -> Result<tokio_mpsc::Receiver<RealtimeAudioChunk>, String> {
+        if !self.is_recording_active(note_id) {
+            return Err("voice note recording is not active".to_string());
+        }
+        let (tx, rx) = tokio_mpsc::channel(32);
+        let mut subscribers = self
+            .realtime_audio_subscribers
+            .lock()
+            .map_err(|error| error.to_string())?;
+        subscribers.entry(note_id.to_string()).or_default().push(tx);
+        Ok(rx)
     }
 }
 
@@ -248,58 +281,124 @@ fn default_input_config() -> Result<(cpal::Device, cpal::SupportedStreamConfig),
 }
 
 fn build_input_stream(
+    note_id: &str,
     device: &cpal::Device,
     config: &cpal::SupportedStreamConfig,
     writer: SharedWavWriter,
     segments: SharedSegmentRecorder,
+    realtime_audio_subscribers: SharedRealtimeAudioSubscribers,
     started_tx: mpsc::SyncSender<()>,
 ) -> Result<cpal::Stream, String> {
     let stream_config = cpal::StreamConfig::from(config.clone());
     match config.sample_format() {
-        cpal::SampleFormat::I8 => {
-            build_typed_input_stream::<i8>(device, &stream_config, writer, segments, started_tx)
-        }
-        cpal::SampleFormat::I16 => {
-            build_typed_input_stream::<i16>(device, &stream_config, writer, segments, started_tx)
-        }
+        cpal::SampleFormat::I8 => build_typed_input_stream::<i8>(
+            note_id,
+            device,
+            &stream_config,
+            writer,
+            segments,
+            realtime_audio_subscribers,
+            started_tx,
+        ),
+        cpal::SampleFormat::I16 => build_typed_input_stream::<i16>(
+            note_id,
+            device,
+            &stream_config,
+            writer,
+            segments,
+            realtime_audio_subscribers,
+            started_tx,
+        ),
         cpal::SampleFormat::I24 => build_typed_input_stream::<cpal::I24>(
+            note_id,
             device,
             &stream_config,
             writer,
             segments,
+            realtime_audio_subscribers,
             started_tx,
         ),
-        cpal::SampleFormat::I32 => {
-            build_typed_input_stream::<i32>(device, &stream_config, writer, segments, started_tx)
-        }
-        cpal::SampleFormat::I64 => {
-            build_typed_input_stream::<i64>(device, &stream_config, writer, segments, started_tx)
-        }
-        cpal::SampleFormat::U8 => {
-            build_typed_input_stream::<u8>(device, &stream_config, writer, segments, started_tx)
-        }
-        cpal::SampleFormat::U16 => {
-            build_typed_input_stream::<u16>(device, &stream_config, writer, segments, started_tx)
-        }
+        cpal::SampleFormat::I32 => build_typed_input_stream::<i32>(
+            note_id,
+            device,
+            &stream_config,
+            writer,
+            segments,
+            realtime_audio_subscribers,
+            started_tx,
+        ),
+        cpal::SampleFormat::I64 => build_typed_input_stream::<i64>(
+            note_id,
+            device,
+            &stream_config,
+            writer,
+            segments,
+            realtime_audio_subscribers,
+            started_tx,
+        ),
+        cpal::SampleFormat::U8 => build_typed_input_stream::<u8>(
+            note_id,
+            device,
+            &stream_config,
+            writer,
+            segments,
+            realtime_audio_subscribers,
+            started_tx,
+        ),
+        cpal::SampleFormat::U16 => build_typed_input_stream::<u16>(
+            note_id,
+            device,
+            &stream_config,
+            writer,
+            segments,
+            realtime_audio_subscribers,
+            started_tx,
+        ),
         cpal::SampleFormat::U24 => build_typed_input_stream::<cpal::U24>(
+            note_id,
             device,
             &stream_config,
             writer,
             segments,
+            realtime_audio_subscribers,
             started_tx,
         ),
-        cpal::SampleFormat::U32 => {
-            build_typed_input_stream::<u32>(device, &stream_config, writer, segments, started_tx)
-        }
-        cpal::SampleFormat::U64 => {
-            build_typed_input_stream::<u64>(device, &stream_config, writer, segments, started_tx)
-        }
-        cpal::SampleFormat::F32 => {
-            build_typed_input_stream::<f32>(device, &stream_config, writer, segments, started_tx)
-        }
-        cpal::SampleFormat::F64 => {
-            build_typed_input_stream::<f64>(device, &stream_config, writer, segments, started_tx)
-        }
+        cpal::SampleFormat::U32 => build_typed_input_stream::<u32>(
+            note_id,
+            device,
+            &stream_config,
+            writer,
+            segments,
+            realtime_audio_subscribers,
+            started_tx,
+        ),
+        cpal::SampleFormat::U64 => build_typed_input_stream::<u64>(
+            note_id,
+            device,
+            &stream_config,
+            writer,
+            segments,
+            realtime_audio_subscribers,
+            started_tx,
+        ),
+        cpal::SampleFormat::F32 => build_typed_input_stream::<f32>(
+            note_id,
+            device,
+            &stream_config,
+            writer,
+            segments,
+            realtime_audio_subscribers,
+            started_tx,
+        ),
+        cpal::SampleFormat::F64 => build_typed_input_stream::<f64>(
+            note_id,
+            device,
+            &stream_config,
+            writer,
+            segments,
+            realtime_audio_subscribers,
+            started_tx,
+        ),
         sample_format => Err(format!(
             "unsupported microphone sample format: {sample_format}"
         )),
@@ -307,16 +406,21 @@ fn build_input_stream(
 }
 
 fn build_typed_input_stream<T>(
+    note_id: &str,
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     writer: SharedWavWriter,
     segments: SharedSegmentRecorder,
+    realtime_audio_subscribers: SharedRealtimeAudioSubscribers,
     started_tx: mpsc::SyncSender<()>,
 ) -> Result<cpal::Stream, String>
 where
     T: SizedSample,
     i16: FromSample<T>,
 {
+    let note_id = note_id.to_string();
+    let sample_rate = config.sample_rate;
+    let channels = config.channels;
     let err_fn = |error| {
         log::warn!("voice note microphone stream error: {error}");
     };
@@ -327,7 +431,15 @@ where
                 if !data.is_empty() {
                     let _ = started_tx.try_send(());
                 }
-                write_input_data::<T>(data, &writer, &segments);
+                write_input_data::<T>(
+                    data,
+                    &writer,
+                    &segments,
+                    &realtime_audio_subscribers,
+                    &note_id,
+                    sample_rate,
+                    channels,
+                );
             },
             err_fn,
             None,
@@ -335,8 +447,15 @@ where
         .map_err(|error| format!("failed to open microphone input stream: {error}"))
 }
 
-fn write_input_data<T>(input: &[T], writer: &SharedWavWriter, segments: &SharedSegmentRecorder)
-where
+fn write_input_data<T>(
+    input: &[T],
+    writer: &SharedWavWriter,
+    segments: &SharedSegmentRecorder,
+    realtime_audio_subscribers: &SharedRealtimeAudioSubscribers,
+    note_id: &str,
+    sample_rate: u32,
+    channels: u16,
+) where
     T: Sample,
     i16: FromSample<T>,
 {
@@ -360,6 +479,35 @@ where
         if let Err(error) = segment_recorder.write_samples(&converted) {
             log::warn!("failed to write voice note realtime segment: {error}");
         }
+    }
+    publish_realtime_audio_chunk(
+        realtime_audio_subscribers,
+        note_id,
+        RealtimeAudioChunk {
+            samples: converted,
+            sample_rate,
+            channels,
+        },
+    );
+}
+
+fn publish_realtime_audio_chunk(
+    subscribers: &SharedRealtimeAudioSubscribers,
+    note_id: &str,
+    chunk: RealtimeAudioChunk,
+) {
+    let Ok(mut subscribers) = subscribers.try_lock() else {
+        return;
+    };
+    let Some(note_subscribers) = subscribers.get_mut(note_id) else {
+        return;
+    };
+    note_subscribers.retain(|sender| match sender.try_send(chunk.clone()) {
+        Ok(()) | Err(tokio_mpsc::error::TrySendError::Full(_)) => true,
+        Err(tokio_mpsc::error::TrySendError::Closed(_)) => false,
+    });
+    if note_subscribers.is_empty() {
+        subscribers.remove(note_id);
     }
 }
 

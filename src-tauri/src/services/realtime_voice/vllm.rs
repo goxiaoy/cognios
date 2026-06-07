@@ -1,0 +1,265 @@
+use std::time::Duration;
+
+use base64::{engine::general_purpose, Engine as _};
+use futures_util::{SinkExt, StreamExt};
+use serde_json::Value;
+use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::Message;
+
+use crate::services::voice_notes::native_audio::RealtimeAudioChunk;
+
+const VLLM_REALTIME_TARGET_SAMPLE_RATE: u32 = 16_000;
+const VLLM_SESSION_START_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VllmRealtimeTranscriptEvent {
+    Provisional(String),
+    Final(String),
+    Error(String),
+}
+
+pub async fn run_vllm_realtime_transcription(
+    websocket_url: String,
+    mut audio_rx: mpsc::Receiver<RealtimeAudioChunk>,
+    event_tx: mpsc::Sender<VllmRealtimeTranscriptEvent>,
+) -> Result<(), String> {
+    let (ws_stream, _) = tokio_tungstenite::connect_async(websocket_url.as_str())
+        .await
+        .map_err(|error| format!("failed to connect to realtime ASR WebSocket: {error}"))?;
+    let (mut writer, mut reader) = ws_stream.split();
+
+    let first_message = tokio::time::timeout(VLLM_SESSION_START_TIMEOUT, reader.next())
+        .await
+        .map_err(|_| "timed out waiting for realtime ASR session".to_string())?;
+    match first_message {
+        Some(Ok(message)) if session_started(&message) => {}
+        Some(Ok(message)) => {
+            return Err(format!(
+                "realtime ASR returned unexpected session response: {}",
+                message_text(&message).unwrap_or("<binary>")
+            ));
+        }
+        Some(Err(error)) => {
+            return Err(format!(
+                "realtime ASR WebSocket failed during startup: {error}"
+            ));
+        }
+        None => return Err("realtime ASR WebSocket closed during startup".to_string()),
+    }
+
+    writer
+        .send(Message::Text(
+            serde_json::json!({ "type": "input_audio_buffer.commit" })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .map_err(|error| format!("failed to start realtime ASR buffer: {error}"))?;
+
+    let mut provisional = String::new();
+    loop {
+        tokio::select! {
+            chunk = audio_rx.recv() => {
+                let Some(chunk) = chunk else {
+                    writer
+                        .send(Message::Text(
+                            serde_json::json!({
+                                "type": "input_audio_buffer.commit",
+                                "final": true,
+                            })
+                            .to_string()
+                            .into(),
+                        ))
+                        .await
+                        .map_err(|error| format!("failed to finish realtime ASR buffer: {error}"))?;
+                    return Ok(());
+                };
+                let Some(audio) = vllm_pcm16_base64(&chunk) else {
+                    continue;
+                };
+                writer
+                    .send(Message::Text(
+                        serde_json::json!({
+                            "type": "input_audio_buffer.append",
+                            "audio": audio,
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await
+                    .map_err(|error| format!("failed to send realtime ASR audio: {error}"))?;
+            }
+            message = reader.next() => {
+                let Some(message) = message else {
+                    return Err("realtime ASR WebSocket closed".to_string());
+                };
+                let message = message.map_err(|error| {
+                    format!("realtime ASR WebSocket receive failed: {error}")
+                })?;
+                let Some(text) = message_text(&message) else {
+                    continue;
+                };
+                match parse_vllm_realtime_message(text) {
+                    Some(VllmRealtimeTranscriptEvent::Provisional(delta)) => {
+                        provisional.push_str(&delta);
+                        let text = provisional.trim();
+                        if !text.is_empty() {
+                            let _ = event_tx
+                                .send(VllmRealtimeTranscriptEvent::Provisional(text.to_string()))
+                                .await;
+                        }
+                    }
+                    Some(VllmRealtimeTranscriptEvent::Final(text)) => {
+                        provisional.clear();
+                        if !text.trim().is_empty() {
+                            let _ = event_tx
+                                .send(VllmRealtimeTranscriptEvent::Final(text.trim().to_string()))
+                                .await;
+                        }
+                    }
+                    Some(VllmRealtimeTranscriptEvent::Error(message)) => {
+                        return Err(message);
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+}
+
+pub fn parse_vllm_realtime_message(raw: &str) -> Option<VllmRealtimeTranscriptEvent> {
+    let value: Value = serde_json::from_str(raw).ok()?;
+    match value.get("type").and_then(Value::as_str)? {
+        "transcription.delta" => {
+            let delta = value.get("delta").and_then(Value::as_str)?.to_string();
+            Some(VllmRealtimeTranscriptEvent::Provisional(delta))
+        }
+        "transcription.done" => {
+            let text = value
+                .get("text")
+                .or_else(|| value.get("transcript"))
+                .or_else(|| value.get("transcription"))
+                .and_then(Value::as_str)?
+                .to_string();
+            Some(VllmRealtimeTranscriptEvent::Final(text))
+        }
+        "error" => {
+            let message = value
+                .get("message")
+                .or_else(|| value.get("error"))
+                .and_then(Value::as_str)
+                .unwrap_or("realtime ASR returned an error");
+            Some(VllmRealtimeTranscriptEvent::Error(message.to_string()))
+        }
+        _ => None,
+    }
+}
+
+pub fn vllm_pcm16_base64(chunk: &RealtimeAudioChunk) -> Option<String> {
+    let bytes = pcm16_mono_16khz_bytes(chunk)?;
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(general_purpose::STANDARD.encode(bytes))
+}
+
+fn pcm16_mono_16khz_bytes(chunk: &RealtimeAudioChunk) -> Option<Vec<u8>> {
+    let channels = usize::from(chunk.channels.max(1));
+    if chunk.samples.is_empty() || chunk.sample_rate == 0 {
+        return None;
+    }
+    let source_frames = chunk.samples.len() / channels;
+    if source_frames == 0 {
+        return None;
+    }
+    let target_frames = ((source_frames as u128 * u128::from(VLLM_REALTIME_TARGET_SAMPLE_RATE))
+        / u128::from(chunk.sample_rate))
+    .max(1) as usize;
+    let mut bytes = Vec::with_capacity(target_frames * 2);
+    for target_frame in 0..target_frames {
+        let source_frame = ((target_frame as u128 * u128::from(chunk.sample_rate))
+            / u128::from(VLLM_REALTIME_TARGET_SAMPLE_RATE)) as usize;
+        let source_frame = source_frame.min(source_frames.saturating_sub(1));
+        let offset = source_frame * channels;
+        let sum = chunk.samples[offset..offset + channels]
+            .iter()
+            .map(|sample| i32::from(*sample))
+            .sum::<i32>();
+        let mono = (sum / channels as i32).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        bytes.extend_from_slice(&mono.to_le_bytes());
+    }
+    Some(bytes)
+}
+
+fn session_started(message: &Message) -> bool {
+    let Some(text) = message_text(message) else {
+        return false;
+    };
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("type")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .map(|event_type| event_type == "session.created")
+        .unwrap_or(false)
+}
+
+fn message_text(message: &Message) -> Option<&str> {
+    match message {
+        Message::Text(text) => Some(text.as_ref()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_vllm_delta_and_done_events() {
+        assert_eq!(
+            parse_vllm_realtime_message(r#"{"type":"transcription.delta","delta":"hel"}"#),
+            Some(VllmRealtimeTranscriptEvent::Provisional("hel".to_string()))
+        );
+        assert_eq!(
+            parse_vllm_realtime_message(r#"{"type":"transcription.done","text":"hello"}"#),
+            Some(VllmRealtimeTranscriptEvent::Final("hello".to_string()))
+        );
+    }
+
+    #[test]
+    fn converts_stereo_48khz_pcm_to_mono_16khz_base64() {
+        let chunk = RealtimeAudioChunk {
+            samples: vec![
+                1_000, 3_000, 2_000, 4_000, 3_000, 5_000, 4_000, 6_000, 5_000, 7_000, 6_000, 8_000,
+            ],
+            sample_rate: 48_000,
+            channels: 2,
+        };
+
+        let bytes = pcm16_mono_16khz_bytes(&chunk).expect("pcm bytes");
+
+        assert_eq!(bytes.len(), 4);
+        assert_eq!(i16::from_le_bytes([bytes[0], bytes[1]]), 2_000);
+        assert_eq!(i16::from_le_bytes([bytes[2], bytes[3]]), 5_000);
+    }
+
+    #[test]
+    fn preserves_16khz_mono_pcm_shape() {
+        let chunk = RealtimeAudioChunk {
+            samples: vec![10, -20, 30],
+            sample_rate: 16_000,
+            channels: 1,
+        };
+
+        let bytes = pcm16_mono_16khz_bytes(&chunk).expect("pcm bytes");
+
+        assert_eq!(bytes.len(), 6);
+        assert_eq!(i16::from_le_bytes([bytes[0], bytes[1]]), 10);
+        assert_eq!(i16::from_le_bytes([bytes[2], bytes[3]]), -20);
+        assert_eq!(i16::from_le_bytes([bytes[4], bytes[5]]), 30);
+    }
+}

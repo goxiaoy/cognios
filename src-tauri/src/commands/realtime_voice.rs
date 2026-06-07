@@ -16,6 +16,20 @@ pub struct RealtimeVoiceEventPayload {
 }
 
 impl RealtimeVoiceEventPayload {
+    pub fn provisional_caption(
+        session_id: impl Into<String>,
+        text: impl Into<String>,
+        sequence: u64,
+    ) -> Self {
+        Self {
+            kind: "provisional_caption".to_string(),
+            session_id: session_id.into(),
+            text: text.into(),
+            sequence,
+            persisted: false,
+        }
+    }
+
     pub fn final_utterance(
         session_id: impl Into<String>,
         text: impl Into<String>,
@@ -53,12 +67,8 @@ mod tests {
 
     #[test]
     fn final_utterance_event_serialises_for_frontend_contract() {
-        let event = RealtimeVoiceEventPayload::final_utterance(
-            "voice-note-1",
-            "hello realtime",
-            7,
-            true,
-        );
+        let event =
+            RealtimeVoiceEventPayload::final_utterance("voice-note-1", "hello realtime", 7, true);
 
         let json = serde_json::to_value(event).expect("serialize event");
 
@@ -67,5 +77,18 @@ mod tests {
         assert_eq!(json["text"], "hello realtime");
         assert_eq!(json["sequence"], 7);
         assert_eq!(json["persisted"], true);
+    }
+
+    #[test]
+    fn provisional_caption_event_serialises_for_frontend_contract() {
+        let event = RealtimeVoiceEventPayload::provisional_caption("voice-note-1", "hello", 3);
+
+        let json = serde_json::to_value(event).expect("serialize event");
+
+        assert_eq!(json["kind"], "provisional_caption");
+        assert_eq!(json["sessionId"], "voice-note-1");
+        assert_eq!(json["text"], "hello");
+        assert_eq!(json["sequence"], 3);
+        assert_eq!(json["persisted"], false);
     }
 }

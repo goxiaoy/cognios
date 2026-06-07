@@ -351,7 +351,7 @@ describe("ExplorerLayout", () => {
     });
   });
 
-  it("does not append provisional realtime voice captions to voice notes", async () => {
+  it("renders provisional realtime voice captions without appending them to voice notes", async () => {
     const client = makeClient();
     vi.mocked(client.getExplorerSnapshot).mockResolvedValue({
       roots: [voiceNoteNode("voice-1")],
@@ -370,7 +370,7 @@ describe("ExplorerLayout", () => {
       },
     });
 
-    expect(screen.queryByText("partial text")).not.toBeInTheDocument();
+    expect(await screen.findByText("partial text")).toBeInTheDocument();
     expect(appendRealtimeTranscript).not.toHaveBeenCalled();
   });
 

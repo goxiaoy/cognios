@@ -103,6 +103,7 @@ export function ExplorerLayout({
   const [openedVoiceNote, setOpenedVoiceNote] = useState<VoiceNote | null>(null);
   const [openedVoiceNoteId, setOpenedVoiceNoteId] = useState<string | null>(null);
   const [liveVoiceNoteTranscript, setLiveVoiceNoteTranscript] = useState("");
+  const [liveVoiceNoteProvisionalCaption, setLiveVoiceNoteProvisionalCaption] = useState("");
   const [voiceNoteTranscript, setVoiceNoteTranscript] = useState("");
   const [voiceNotePlayback, setVoiceNotePlayback] = useState<VoiceNotePlaybackState>({
     currentMs: 0,
@@ -602,7 +603,9 @@ export function ExplorerLayout({
   const liveVoiceNoteSession = displayedVoiceNoteSession
     ? {
         ...displayedVoiceNoteSession,
-        transcript: liveVoiceNoteTranscript,
+        transcript: [liveVoiceNoteTranscript.trim(), liveVoiceNoteProvisionalCaption.trim()]
+          .filter(Boolean)
+          .join("\n"),
       }
     : null;
   const activeVoiceNoteSession =
@@ -648,6 +651,7 @@ export function ExplorerLayout({
   useEffect(() => {
     if (!showVoiceNoteRecording || !store.activeNoteId) {
       setLiveVoiceNoteTranscript("");
+      setLiveVoiceNoteProvisionalCaption("");
       return;
     }
 
@@ -660,7 +664,10 @@ export function ExplorerLayout({
           setLiveVoiceNoteTranscript(transcript.trim());
         }
       } catch {
-        if (!cancelled) setLiveVoiceNoteTranscript("");
+        if (!cancelled) {
+          setLiveVoiceNoteTranscript("");
+          setLiveVoiceNoteProvisionalCaption("");
+        }
       }
     }
 
@@ -680,11 +687,17 @@ export function ExplorerLayout({
     const noteId = liveVoiceNoteSession.note.noteId;
     const unlistenPromise = listen<RealtimeVoiceEvent>(REALTIME_VOICE_EVENT, (event) => {
       if (cancelled || event.payload.sessionId !== noteId) return;
+      const provisionalCaption = voiceNoteProvisionalCaptionFromRealtimeEvent(event.payload);
+      if (provisionalCaption !== null) {
+        setLiveVoiceNoteProvisionalCaption(provisionalCaption);
+        return;
+      }
       const realtimeLine = voiceNoteTranscriptLineFromRealtimeEvent(
         event.payload,
         liveVoiceNoteElapsedRef.current
       );
       if (!realtimeLine) return;
+      setLiveVoiceNoteProvisionalCaption("");
       setLiveVoiceNoteTranscript((current) =>
         current.trim() ? `${current.trim()}\n${realtimeLine.text}` : realtimeLine.text
       );
@@ -1215,6 +1228,12 @@ function voiceNoteTranscriptLineFromRealtimeEvent(
     startMs: Math.max(0, elapsedMs),
     durationMs: 0,
   };
+}
+
+function voiceNoteProvisionalCaptionFromRealtimeEvent(event: RealtimeVoiceEvent): string | null {
+  if (event.kind !== "provisional_caption") return null;
+  const text = event.text.trim();
+  return text || null;
 }
 
 function parseTimestampedTranscript(transcript: string): TranscriptCue[] {
