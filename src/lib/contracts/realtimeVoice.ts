@@ -25,6 +25,7 @@ export interface RealtimeVoiceCaptionEvent {
   sessionId: string;
   text: string;
   sequence: number;
+  persisted?: boolean;
 }
 
 export interface RealtimeVoiceUtteranceEvent {
@@ -32,6 +33,7 @@ export interface RealtimeVoiceUtteranceEvent {
   sessionId: string;
   text: string;
   sequence: number;
+  persisted?: boolean;
 }
 
 export type RealtimeVoiceEvent =

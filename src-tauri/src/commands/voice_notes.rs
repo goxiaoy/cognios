@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use tauri::State;
 
+use crate::commands::realtime_voice::RealtimeVoiceEventPayload;
 use crate::domain::voice_note::VoiceNoteDto;
 use crate::infrastructure::db::connection::Database;
 use crate::services::search::{
@@ -44,7 +45,7 @@ use crate::services::voice_notes::{
     CreateVoiceNoteInput, CreatedVoiceNote, FinishVoiceNoteAudioCaptureInput,
     RenameVoiceNoteSpeakerInput, VoiceNoteInput, VoiceNoteSummaryJob, VoiceNoteSummaryJobFailure,
 };
-use crate::{AppState, VfsEventEmitter};
+use crate::{AppState, RealtimeVoiceEventEmitter, VfsEventEmitter};
 
 const TRANSCRIPTION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const TRANSCRIPTION_READY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -245,6 +246,7 @@ pub fn begin_native_voice_note_audio_capture(
         state.db.clone(),
         notes_dir,
         Arc::clone(&state.emitter),
+        Arc::clone(&state.realtime_voice_emitter),
         Arc::clone(&state.search_client),
         Arc::clone(&state.voice_note_audio_capture),
         voice_note.note_id.clone(),
@@ -392,6 +394,7 @@ fn spawn_realtime_voice_note_transcription(
     db: Database,
     notes_dir: PathBuf,
     emitter: VfsEventEmitter,
+    realtime_voice_emitter: RealtimeVoiceEventEmitter,
     search_client: Arc<SearchSidecarClient>,
     audio_capture: Arc<NativeAudioCapture>,
     note_id: String,
@@ -401,6 +404,7 @@ fn spawn_realtime_voice_note_transcription(
             db,
             notes_dir,
             emitter,
+            realtime_voice_emitter,
             search_client,
             audio_capture,
             note_id,
@@ -480,6 +484,7 @@ async fn run_realtime_voice_note_transcription_job(
     db: Database,
     notes_dir: PathBuf,
     emitter: VfsEventEmitter,
+    realtime_voice_emitter: RealtimeVoiceEventEmitter,
     search_client: Arc<SearchSidecarClient>,
     audio_capture: Arc<NativeAudioCapture>,
     note_id: String,
@@ -490,6 +495,7 @@ async fn run_realtime_voice_note_transcription_job(
             &db,
             &notes_dir,
             &emitter,
+            &realtime_voice_emitter,
             &search_client,
             &audio_capture,
             &note_id,
@@ -500,6 +506,7 @@ async fn run_realtime_voice_note_transcription_job(
                 &db,
                 &notes_dir,
                 &emitter,
+                &realtime_voice_emitter,
                 &search_client,
                 &audio_capture,
                 &note_id,
@@ -521,6 +528,7 @@ async fn drain_realtime_voice_note_segments(
     db: &Database,
     notes_dir: &Path,
     emitter: &VfsEventEmitter,
+    realtime_voice_emitter: &RealtimeVoiceEventEmitter,
     search_client: &Arc<SearchSidecarClient>,
     audio_capture: &NativeAudioCapture,
     note_id: &str,
@@ -539,7 +547,13 @@ async fn drain_realtime_voice_note_segments(
             continue;
         };
         append_realtime_voice_note_segment_transcript(
-            db, notes_dir, emitter, note_id, &segment, response,
+            db,
+            notes_dir,
+            emitter,
+            realtime_voice_emitter,
+            note_id,
+            &segment,
+            response,
         );
     }
 }
@@ -634,6 +648,7 @@ fn append_realtime_voice_note_segment_transcript(
     db: &Database,
     notes_dir: &Path,
     emitter: &VfsEventEmitter,
+    realtime_voice_emitter: &RealtimeVoiceEventEmitter,
     note_id: &str,
     segment: &CompletedAudioSegment,
     response: VoiceNoteTranscriptionResponseDto,
@@ -654,20 +669,26 @@ fn append_realtime_voice_note_segment_transcript(
     };
     let input = AppendRealtimeTranscriptInput {
         note_id: note_id.to_string(),
-        transcript,
+        transcript: transcript.clone(),
         start_ms: segment.start_ms,
         duration_ms: segment.duration_ms,
         speaker_labels: response.speaker_labels,
     };
-    if let Err(error) =
-        append_voice_note_realtime_transcript_record(&conn, &input, notes_dir, emitter.as_ref())
-    {
-        log::warn!(
-            "voice note realtime transcript append failed for {} segment {}: {}",
-            note_id,
+    match append_voice_note_realtime_transcript_record(&conn, &input, notes_dir, emitter.as_ref()) {
+        Ok(_) => realtime_voice_emitter(RealtimeVoiceEventPayload::final_utterance(
+            note_id.to_string(),
+            transcript,
             segment.index,
-            error
-        );
+            true,
+        )),
+        Err(error) => {
+            log::warn!(
+                "voice note realtime transcript append failed for {} segment {}: {}",
+                note_id,
+                segment.index,
+                error
+            );
+        }
     }
 }
 

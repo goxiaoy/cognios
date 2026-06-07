@@ -373,6 +373,30 @@ describe("ExplorerLayout", () => {
     expect(screen.queryByText("partial text")).not.toBeInTheDocument();
     expect(appendRealtimeTranscript).not.toHaveBeenCalled();
   });
+
+  it("renders persisted native realtime voice utterances without appending them again", async () => {
+    const client = makeClient();
+    vi.mocked(client.getExplorerSnapshot).mockResolvedValue({
+      roots: [voiceNoteNode("voice-1")],
+    });
+
+    renderWithProvider(client, { voiceNoteSession: recordingSession("voice-1", 8_000) });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Live note/i }));
+    await screen.findByLabelText("Voice note recording");
+    eventMock.realtimeVoiceListener?.({
+      payload: {
+        kind: "final_utterance",
+        sessionId: "voice-1",
+        text: "native realtime line",
+        sequence: 2,
+        persisted: true,
+      },
+    });
+
+    expect(await screen.findByText("native realtime line")).toBeInTheDocument();
+    expect(appendRealtimeTranscript).not.toHaveBeenCalled();
+  });
 });
 
 function treeRowNames(container: HTMLElement): string[] {

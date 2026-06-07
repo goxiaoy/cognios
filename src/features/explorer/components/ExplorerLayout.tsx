@@ -688,6 +688,7 @@ export function ExplorerLayout({
       setLiveVoiceNoteTranscript((current) =>
         current.trim() ? `${current.trim()}\n${realtimeLine.text}` : realtimeLine.text
       );
+      if (event.payload.persisted) return;
       void voiceNoteClient
         .appendRealtimeTranscript({
           noteId,

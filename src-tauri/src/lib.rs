@@ -21,6 +21,8 @@ use crate::services::voice_notes::native_audio::NativeAudioCapture;
 const VFS_EVENT_NAME: &str = "vfs://changed";
 
 pub type VfsEventEmitter = Arc<dyn Fn(VfsChangeEvent) + Send + Sync>;
+pub type RealtimeVoiceEventEmitter =
+    Arc<dyn Fn(commands::realtime_voice::RealtimeVoiceEventPayload) + Send + Sync>;
 
 pub struct AppState {
     pub db: Database,
@@ -28,6 +30,7 @@ pub struct AppState {
     pub mount_watchers: Arc<MountWatcherRegistry>,
     pub url_jobs: Arc<UrlJobRunner>,
     pub emitter: VfsEventEmitter,
+    pub realtime_voice_emitter: RealtimeVoiceEventEmitter,
     pub search_sidecar: Arc<SearchSidecarSupervisor>,
     pub search_client: Arc<SearchSidecarClient>,
     pub voice_note_audio_capture: Arc<NativeAudioCapture>,
@@ -220,6 +223,14 @@ pub fn run() {
                     emitter(event);
                 }))
             };
+            let realtime_voice_app_handle = app.handle().clone();
+            let realtime_voice_emitter: RealtimeVoiceEventEmitter = Arc::new(move |event| {
+                if let Err(error) = realtime_voice_app_handle
+                    .emit(commands::realtime_voice::REALTIME_VOICE_EVENT, event)
+                {
+                    log::warn!("failed to emit realtime voice event: {error}");
+                }
+            });
             mount_watchers.start_all(db.clone())?;
 
             let url_jobs = {
@@ -298,6 +309,7 @@ pub fn run() {
                 mount_watchers,
                 url_jobs,
                 emitter,
+                realtime_voice_emitter,
                 search_sidecar,
                 search_client,
                 voice_note_audio_capture: Arc::new(NativeAudioCapture::new()),
