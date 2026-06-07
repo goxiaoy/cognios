@@ -154,6 +154,7 @@ def test_realtime_voice_status_allows_reachable_loopback_development_runtime(
         "COGNIOS_REALTIME_VOICE_WS_URL", f"ws://127.0.0.1:{port}/v1/realtime"
     )
     monkeypatch.setenv("COGNIOS_REALTIME_VOICE_ALLOW_EXTERNAL", "1")
+    monkeypatch.setenv("COGNIOS_REALTIME_VOICE_MODEL", "Qwen/Qwen3-ASR-0.6B")
     app = build_app(token=TOKEN)
 
     try:
@@ -168,3 +169,4 @@ def test_realtime_voice_status_allows_reachable_loopback_development_runtime(
     assert body["available"] is True
     assert body["packaging"] == "supported"
     assert body["websocket_url"] == f"ws://127.0.0.1:{port}/v1/realtime"
+    assert body["model"] == "Qwen/Qwen3-ASR-0.6B"

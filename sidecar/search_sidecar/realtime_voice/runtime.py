@@ -29,6 +29,7 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 _RUNTIME_PATH_ENV = "COGNIOS_REALTIME_VOICE_RUNTIME_PATH"
 _WS_URL_ENV = "COGNIOS_REALTIME_VOICE_WS_URL"
 _ALLOW_EXTERNAL_ENV = "COGNIOS_REALTIME_VOICE_ALLOW_EXTERNAL"
+_MODEL_ENV = "COGNIOS_REALTIME_VOICE_MODEL"
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class RealtimeVoiceStatus:
     packaging: str
     runtime_path: str | None = None
     websocket_url: str | None = None
+    model: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -52,12 +54,14 @@ class RealtimeVoiceStatus:
             "packaging": self.packaging,
             "runtime_path": self.runtime_path,
             "websocket_url": self.websocket_url,
+            "model": self.model,
         }
 
 
 def get_realtime_voice_status() -> RealtimeVoiceStatus:
     runtime_path = _runtime_path()
     websocket_url = _websocket_url()
+    model = _model()
 
     if runtime_path is None:
         return RealtimeVoiceStatus(
@@ -68,6 +72,7 @@ def get_realtime_voice_status() -> RealtimeVoiceStatus:
             reason="Local realtime ASR runtime is not packaged with this build.",
             packaging="missing",
             websocket_url=websocket_url,
+            model=model,
         )
 
     if not runtime_path.exists():
@@ -80,6 +85,7 @@ def get_realtime_voice_status() -> RealtimeVoiceStatus:
             packaging="missing",
             runtime_path=str(runtime_path),
             websocket_url=websocket_url,
+            model=model,
         )
 
     if not os.access(runtime_path, os.X_OK):
@@ -92,6 +98,7 @@ def get_realtime_voice_status() -> RealtimeVoiceStatus:
             packaging="supported",
             runtime_path=str(runtime_path),
             websocket_url=websocket_url,
+            model=model,
         )
 
     if websocket_url:
@@ -104,6 +111,7 @@ def get_realtime_voice_status() -> RealtimeVoiceStatus:
                 reason="Packaged runtime exists, but no managed realtime ASR session is running.",
                 packaging="supported",
                 runtime_path=str(runtime_path),
+                model=model,
             )
         if not _is_loopback_websocket_url(websocket_url):
             return RealtimeVoiceStatus(
@@ -114,6 +122,7 @@ def get_realtime_voice_status() -> RealtimeVoiceStatus:
                 reason="Realtime ASR development WebSocket must be a loopback endpoint.",
                 packaging="supported",
                 runtime_path=str(runtime_path),
+                model=model,
             )
         if not _websocket_endpoint_is_reachable(websocket_url):
             return RealtimeVoiceStatus(
@@ -124,6 +133,7 @@ def get_realtime_voice_status() -> RealtimeVoiceStatus:
                 reason="Realtime ASR development WebSocket is not reachable yet.",
                 packaging="supported",
                 runtime_path=str(runtime_path),
+                model=model,
             )
         return RealtimeVoiceStatus(
             status="ready",
@@ -134,6 +144,7 @@ def get_realtime_voice_status() -> RealtimeVoiceStatus:
             packaging="supported",
             runtime_path=str(runtime_path),
             websocket_url=websocket_url,
+            model=model,
         )
 
     return RealtimeVoiceStatus(
@@ -144,6 +155,7 @@ def get_realtime_voice_status() -> RealtimeVoiceStatus:
         reason="Packaged runtime exists, but realtime ASR startup is not wired yet.",
         packaging="supported",
         runtime_path=str(runtime_path),
+        model=model,
     )
 
 
@@ -165,6 +177,11 @@ def _websocket_url() -> str | None:
 
 def _allow_external_runtime() -> bool:
     return os.getenv(_ALLOW_EXTERNAL_ENV, "").strip().lower() in _TRUE_VALUES
+
+
+def _model() -> str | None:
+    value = os.getenv(_MODEL_ENV, "").strip()
+    return value or None
 
 
 def _is_loopback_websocket_url(value: str) -> bool:

@@ -18,6 +18,7 @@ export interface RealtimeVoiceStatus {
   packaging: "missing" | "supported" | "disabled" | string;
   runtimePath?: string | null;
   websocketUrl?: string | null;
+  model?: string | null;
 }
 
 export interface RealtimeVoiceCaptionEvent {

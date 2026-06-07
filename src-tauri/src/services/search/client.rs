@@ -679,6 +679,8 @@ pub struct RealtimeVoiceStatusDto {
     pub runtime_path: Option<String>,
     #[serde(default)]
     pub websocket_url: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -1681,7 +1683,8 @@ data: {"event":"final","turn":{"state":"ready","clusters":[],"answer":"hello","c
             "reason": "Development realtime ASR runtime is explicitly enabled.",
             "packaging": "supported",
             "runtime_path": "/tmp/realtime-asr",
-            "websocket_url": "ws://127.0.0.1:9000/v1/realtime"
+            "websocket_url": "ws://127.0.0.1:9000/v1/realtime",
+            "model": "Qwen/Qwen3-ASR-0.6B"
         }"#;
         let parsed: RealtimeVoiceStatusDto =
             serde_json::from_str(from_python).expect("decode realtime voice status");
@@ -1692,10 +1695,12 @@ data: {"event":"final","turn":{"state":"ready","clusters":[],"answer":"hello","c
             parsed.websocket_url.as_deref(),
             Some("ws://127.0.0.1:9000/v1/realtime")
         );
+        assert_eq!(parsed.model.as_deref(), Some("Qwen/Qwen3-ASR-0.6B"));
 
         let to_ts = serde_json::to_value(&parsed).unwrap();
         assert_eq!(to_ts["runtimePath"], "/tmp/realtime-asr");
         assert_eq!(to_ts["websocketUrl"], "ws://127.0.0.1:9000/v1/realtime");
+        assert_eq!(to_ts["model"], "Qwen/Qwen3-ASR-0.6B");
         assert!(to_ts.get("runtime_path").is_none());
         assert!(to_ts.get("websocket_url").is_none());
     }

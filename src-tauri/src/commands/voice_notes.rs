@@ -492,7 +492,7 @@ async fn run_realtime_voice_note_transcription_job(
     audio_capture: Arc<NativeAudioCapture>,
     note_id: String,
 ) {
-    if let Some(websocket_url) = realtime_voice_websocket_url(&search_client).await {
+    if let Some((websocket_url, model)) = realtime_voice_websocket_config(&search_client).await {
         match run_vllm_realtime_voice_note_transcription_job(
             &db,
             &notes_dir,
@@ -502,6 +502,7 @@ async fn run_realtime_voice_note_transcription_job(
             &audio_capture,
             &note_id,
             websocket_url,
+            model,
         )
         .await
         {
@@ -569,13 +570,17 @@ async fn run_segment_realtime_voice_note_transcription_job(
     }
 }
 
-async fn realtime_voice_websocket_url(search_client: &SearchSidecarClient) -> Option<String> {
+async fn realtime_voice_websocket_config(
+    search_client: &SearchSidecarClient,
+) -> Option<(String, Option<String>)> {
     match search_client.realtime_voice_status().await {
         SidecarEnvelope {
             state: SidecarEnvelopeState::Ready,
             data: Some(status),
             ..
-        } if status.available && status.status == "ready" => status.websocket_url,
+        } if status.available && status.status == "ready" => status
+            .websocket_url
+            .map(|websocket_url| (websocket_url, status.model)),
         _ => None,
     }
 }
@@ -589,11 +594,13 @@ async fn run_vllm_realtime_voice_note_transcription_job(
     audio_capture: &NativeAudioCapture,
     note_id: &str,
     websocket_url: String,
+    model: Option<String>,
 ) -> Result<(), String> {
     let audio_rx = audio_capture.subscribe_realtime_audio(note_id)?;
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
     let realtime_task = tauri::async_runtime::spawn(run_vllm_realtime_transcription(
         websocket_url,
+        model,
         audio_rx,
         event_tx,
     ));

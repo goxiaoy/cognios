@@ -20,6 +20,7 @@ pub enum VllmRealtimeTranscriptEvent {
 
 pub async fn run_vllm_realtime_transcription(
     websocket_url: String,
+    model: Option<String>,
     mut audio_rx: mpsc::Receiver<RealtimeAudioChunk>,
     event_tx: mpsc::Sender<VllmRealtimeTranscriptEvent>,
 ) -> Result<(), String> {
@@ -45,6 +46,24 @@ pub async fn run_vllm_realtime_transcription(
             ));
         }
         None => return Err("realtime ASR WebSocket closed during startup".to_string()),
+    }
+
+    if let Some(model) = model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        writer
+            .send(Message::Text(
+                serde_json::json!({
+                    "type": "session.update",
+                    "model": model,
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .map_err(|error| format!("failed to configure realtime ASR model: {error}"))?;
     }
 
     writer
