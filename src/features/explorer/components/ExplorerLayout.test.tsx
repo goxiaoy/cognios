@@ -337,8 +337,12 @@ describe("ExplorerLayout", () => {
       payload: {
         kind: "final_utterance",
         sessionId: "voice-1",
+        utteranceId: "utt-1",
         text: "  realtime transcript line  ",
         sequence: 1,
+        revision: 1,
+        startMs: 12_345,
+        endMs: 12_345,
       },
     });
 
@@ -365,12 +369,68 @@ describe("ExplorerLayout", () => {
       payload: {
         kind: "provisional_caption",
         sessionId: "voice-1",
+        utteranceId: "utt-1",
         text: "partial text",
         sequence: 1,
+        revision: 1,
+        startMs: 0,
+        endMs: 1_000,
       },
     });
 
     expect(await screen.findByText("partial text")).toBeInTheDocument();
+    expect(appendRealtimeTranscript).not.toHaveBeenCalled();
+  });
+
+  it("replaces provisional realtime voice captions by utterance revision", async () => {
+    const client = makeClient();
+    vi.mocked(client.getExplorerSnapshot).mockResolvedValue({
+      roots: [voiceNoteNode("voice-1")],
+    });
+
+    renderWithProvider(client, { voiceNoteSession: recordingSession("voice-1", 5_000) });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Live note/i }));
+    await screen.findByLabelText("Voice note recording");
+    eventMock.realtimeVoiceListener?.({
+      payload: {
+        kind: "provisional_caption",
+        sessionId: "voice-1",
+        utteranceId: "utt-1",
+        text: "old partial",
+        sequence: 1,
+        revision: 1,
+        startMs: 0,
+        endMs: 1_000,
+      },
+    });
+    eventMock.realtimeVoiceListener?.({
+      payload: {
+        kind: "provisional_caption",
+        sessionId: "voice-1",
+        utteranceId: "utt-1",
+        text: "corrected partial",
+        sequence: 2,
+        revision: 2,
+        startMs: 0,
+        endMs: 1_200,
+      },
+    });
+    eventMock.realtimeVoiceListener?.({
+      payload: {
+        kind: "provisional_caption",
+        sessionId: "voice-1",
+        utteranceId: "utt-1",
+        text: "old partial",
+        sequence: 3,
+        revision: 1,
+        startMs: 0,
+        endMs: 1_000,
+      },
+    });
+
+    expect(await screen.findByText("corrected partial")).toBeInTheDocument();
+    expect(screen.queryByText("old partial")).not.toBeInTheDocument();
     expect(appendRealtimeTranscript).not.toHaveBeenCalled();
   });
 
@@ -388,8 +448,12 @@ describe("ExplorerLayout", () => {
       payload: {
         kind: "final_utterance",
         sessionId: "voice-1",
+        utteranceId: "utt-1",
         text: "native realtime line",
         sequence: 2,
+        revision: 1,
+        startMs: 0,
+        endMs: 1_000,
         persisted: true,
       },
     });

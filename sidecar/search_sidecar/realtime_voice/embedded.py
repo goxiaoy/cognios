@@ -95,8 +95,10 @@ class _WindowedRealtimeTranscriber:
         self.session_id = session_id
         self.buffer = bytearray()
         self.window_bytes = _window_bytes()
+        self.processed_bytes = 0
+        self.utterance_index = 1
 
-    async def append_audio(self, encoded_audio: Any) -> list[str]:
+    async def append_audio(self, encoded_audio: Any) -> list[dict[str, Any]]:
         if not isinstance(encoded_audio, str) or not encoded_audio:
             return []
         try:
@@ -104,23 +106,58 @@ class _WindowedRealtimeTranscriber:
         except ValueError:
             return []
 
-        transcripts: list[str] = []
+        transcripts: list[dict[str, Any]] = []
         while len(self.buffer) >= self.window_bytes:
+            start_ms = _byte_offset_ms(self.processed_bytes)
             chunk = bytes(self.buffer[: self.window_bytes])
             del self.buffer[: self.window_bytes]
+            self.processed_bytes += len(chunk)
             transcript = await asyncio.to_thread(self._transcribe_pcm16, chunk)
             if transcript:
-                transcripts.append(transcript)
+                transcripts.append(
+                    self._event_payload(
+                        transcript,
+                        start_ms=start_ms,
+                        end_ms=_byte_offset_ms(self.processed_bytes),
+                    )
+                )
         return transcripts
 
-    async def flush(self) -> list[str]:
+    async def flush(self) -> list[dict[str, Any]]:
         if len(self.buffer) < _min_window_bytes():
             self.buffer.clear()
             return []
+        start_ms = _byte_offset_ms(self.processed_bytes)
         chunk = bytes(self.buffer)
         self.buffer.clear()
+        self.processed_bytes += len(chunk)
         transcript = await asyncio.to_thread(self._transcribe_pcm16, chunk)
-        return [transcript] if transcript else []
+        if not transcript:
+            return []
+        return [
+            self._event_payload(
+                transcript,
+                start_ms=start_ms,
+                end_ms=_byte_offset_ms(self.processed_bytes),
+            )
+        ]
+
+    def _event_payload(
+        self,
+        transcript: str,
+        *,
+        start_ms: int,
+        end_ms: int,
+    ) -> dict[str, Any]:
+        utterance_id = f"{self.session_id}:utterance:{self.utterance_index}"
+        self.utterance_index += 1
+        return {
+            "text": transcript,
+            "utterance_id": utterance_id,
+            "revision": 1,
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+        }
 
     def _transcribe_pcm16(self, audio: bytes) -> str | None:
         if not audio:
@@ -140,12 +177,17 @@ class _WindowedRealtimeTranscriber:
             return text or None
 
 
-async def _send_transcript(websocket: WebSocket, transcript: str) -> None:
+async def _send_transcript(websocket: WebSocket, transcript: dict[str, Any]) -> None:
+    text = str(transcript.get("text") or "")
     await websocket.send_text(
         json.dumps(
             {
                 "type": "transcription.delta",
-                "delta": transcript,
+                "delta": text,
+                "utterance_id": transcript.get("utterance_id"),
+                "revision": transcript.get("revision"),
+                "start_ms": transcript.get("start_ms"),
+                "end_ms": transcript.get("end_ms"),
             }
         )
     )
@@ -153,7 +195,11 @@ async def _send_transcript(websocket: WebSocket, transcript: str) -> None:
         json.dumps(
             {
                 "type": "transcription.done",
-                "text": transcript,
+                "text": text,
+                "utterance_id": transcript.get("utterance_id"),
+                "revision": transcript.get("revision"),
+                "start_ms": transcript.get("start_ms"),
+                "end_ms": transcript.get("end_ms"),
             }
         )
     )
@@ -185,6 +231,10 @@ def _window_bytes() -> int:
 
 def _min_window_bytes() -> int:
     return int(SAMPLE_RATE * SAMPLE_WIDTH_BYTES * MIN_WINDOW_MS / 1000)
+
+
+def _byte_offset_ms(offset: int) -> int:
+    return int(offset * 1000 / (SAMPLE_RATE * SAMPLE_WIDTH_BYTES))
 
 
 def _positive_int_env(name: str, fallback: int) -> int:

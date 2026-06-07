@@ -403,8 +403,12 @@ describe("ChatLayout", () => {
         payload: {
           kind: "provisional_caption",
           sessionId: "voice-session-1",
+          utteranceId: "utt-1",
           text: "partial words",
           sequence: 1,
+          revision: 1,
+          startMs: 0,
+          endMs: 500,
         },
       });
     });
@@ -425,8 +429,12 @@ describe("ChatLayout", () => {
         payload: {
           kind: "final_utterance",
           sessionId: "voice-session-1",
+          utteranceId: "utt-1",
           text: "  summarize the meeting  ",
           sequence: 2,
+          revision: 2,
+          startMs: 0,
+          endMs: 1_200,
         },
       });
     });
@@ -456,8 +464,12 @@ describe("ChatLayout", () => {
         payload: {
           kind: "final_utterance",
           sessionId: "voice-note-1",
+          utteranceId: "utt-1",
           text: "voice note transcript line",
           sequence: 3,
+          revision: 1,
+          startMs: 0,
+          endMs: 900,
           persisted: true,
         },
       });

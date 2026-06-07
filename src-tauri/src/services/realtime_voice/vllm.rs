@@ -14,9 +14,18 @@ const VLLM_FINAL_TRANSCRIPT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VllmRealtimeTranscriptEvent {
-    Provisional(String),
-    Final(String),
+    Provisional(VllmRealtimeTranscriptSegment),
+    Final(VllmRealtimeTranscriptSegment),
     Error(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VllmRealtimeTranscriptSegment {
+    pub text: String,
+    pub utterance_id: Option<String>,
+    pub revision: Option<u64>,
+    pub start_ms: Option<u64>,
+    pub end_ms: Option<u64>,
 }
 
 pub async fn run_vllm_realtime_transcription(
@@ -153,24 +162,24 @@ fn realtime_event_from_message(
         return Ok(None);
     };
     match parse_vllm_realtime_message(text) {
-        Some(VllmRealtimeTranscriptEvent::Provisional(delta)) => {
-            provisional.push_str(&delta);
+        Some(VllmRealtimeTranscriptEvent::Provisional(mut segment)) => {
+            provisional.push_str(&segment.text);
             let text = provisional.trim();
             if text.is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(VllmRealtimeTranscriptEvent::Provisional(
-                    text.to_string(),
-                )))
+                segment.text = text.to_string();
+                Ok(Some(VllmRealtimeTranscriptEvent::Provisional(segment)))
             }
         }
-        Some(VllmRealtimeTranscriptEvent::Final(text)) => {
+        Some(VllmRealtimeTranscriptEvent::Final(mut segment)) => {
             provisional.clear();
-            let text = text.trim();
+            let text = segment.text.trim();
             if text.is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(VllmRealtimeTranscriptEvent::Final(text.to_string())))
+                segment.text = text.to_string();
+                Ok(Some(VllmRealtimeTranscriptEvent::Final(segment)))
             }
         }
         Some(VllmRealtimeTranscriptEvent::Error(message)) => Err(message),
@@ -183,7 +192,9 @@ pub fn parse_vllm_realtime_message(raw: &str) -> Option<VllmRealtimeTranscriptEv
     match value.get("type").and_then(Value::as_str)? {
         "transcription.delta" => {
             let delta = value.get("delta").and_then(Value::as_str)?.to_string();
-            Some(VllmRealtimeTranscriptEvent::Provisional(delta))
+            Some(VllmRealtimeTranscriptEvent::Provisional(
+                transcript_segment_from_value(&value, delta),
+            ))
         }
         "transcription.done" => {
             let text = value
@@ -192,7 +203,9 @@ pub fn parse_vllm_realtime_message(raw: &str) -> Option<VllmRealtimeTranscriptEv
                 .or_else(|| value.get("transcription"))
                 .and_then(Value::as_str)?
                 .to_string();
-            Some(VllmRealtimeTranscriptEvent::Final(text))
+            Some(VllmRealtimeTranscriptEvent::Final(
+                transcript_segment_from_value(&value, text),
+            ))
         }
         "error" => {
             let message = value
@@ -203,6 +216,31 @@ pub fn parse_vllm_realtime_message(raw: &str) -> Option<VllmRealtimeTranscriptEv
             Some(VllmRealtimeTranscriptEvent::Error(message.to_string()))
         }
         _ => None,
+    }
+}
+
+fn transcript_segment_from_value(value: &Value, text: String) -> VllmRealtimeTranscriptSegment {
+    VllmRealtimeTranscriptSegment {
+        text,
+        utterance_id: value
+            .get("utterance_id")
+            .or_else(|| value.get("utteranceId"))
+            .or_else(|| value.get("segment_id"))
+            .or_else(|| value.get("segmentId"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        revision: value
+            .get("revision")
+            .or_else(|| value.get("sequence"))
+            .and_then(Value::as_u64),
+        start_ms: value
+            .get("start_ms")
+            .or_else(|| value.get("startMs"))
+            .and_then(Value::as_u64),
+        end_ms: value
+            .get("end_ms")
+            .or_else(|| value.get("endMs"))
+            .and_then(Value::as_u64),
     }
 }
 
@@ -272,12 +310,30 @@ mod tests {
     #[test]
     fn parses_vllm_delta_and_done_events() {
         assert_eq!(
-            parse_vllm_realtime_message(r#"{"type":"transcription.delta","delta":"hel"}"#),
-            Some(VllmRealtimeTranscriptEvent::Provisional("hel".to_string()))
+            parse_vllm_realtime_message(
+                r#"{"type":"transcription.delta","delta":"hel","utterance_id":"utt-1","revision":2,"start_ms":100,"end_ms":900}"#
+            ),
+            Some(VllmRealtimeTranscriptEvent::Provisional(
+                VllmRealtimeTranscriptSegment {
+                    text: "hel".to_string(),
+                    utterance_id: Some("utt-1".to_string()),
+                    revision: Some(2),
+                    start_ms: Some(100),
+                    end_ms: Some(900),
+                }
+            ))
         );
         assert_eq!(
             parse_vllm_realtime_message(r#"{"type":"transcription.done","text":"hello"}"#),
-            Some(VllmRealtimeTranscriptEvent::Final("hello".to_string()))
+            Some(VllmRealtimeTranscriptEvent::Final(
+                VllmRealtimeTranscriptSegment {
+                    text: "hello".to_string(),
+                    utterance_id: None,
+                    revision: None,
+                    start_ms: None,
+                    end_ms: None,
+                }
+            ))
         );
     }
 

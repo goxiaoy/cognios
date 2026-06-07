@@ -110,14 +110,17 @@ def test_realtime_voice_stream_speaks_vllm_compatible_protocol(monkeypatch):
             delta = json.loads(websocket.receive_text())
             done = json.loads(websocket.receive_text())
 
-    assert delta == {
-        "type": "transcription.delta",
-        "delta": "Speaker 1: hello realtime",
-    }
-    assert done == {
-        "type": "transcription.done",
-        "text": "Speaker 1: hello realtime",
-    }
+    assert delta["type"] == "transcription.delta"
+    assert delta["delta"] == "Speaker 1: hello realtime"
+    assert delta["utterance_id"] == done["utterance_id"]
+    assert delta["revision"] == 1
+    assert delta["start_ms"] == 0
+    assert delta["end_ms"] == 2000
+    assert done["type"] == "transcription.done"
+    assert done["text"] == "Speaker 1: hello realtime"
+    assert done["revision"] == 1
+    assert done["start_ms"] == 0
+    assert done["end_ms"] == 2000
 
 
 def test_realtime_voice_status_fails_closed_for_missing_configured_runtime(

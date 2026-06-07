@@ -24,16 +24,24 @@ export interface RealtimeVoiceStatus {
 export interface RealtimeVoiceCaptionEvent {
   kind: "provisional_caption";
   sessionId: string;
+  utteranceId: string;
   text: string;
   sequence: number;
+  revision: number;
+  startMs: number;
+  endMs?: number | null;
   persisted?: boolean;
 }
 
 export interface RealtimeVoiceUtteranceEvent {
   kind: "final_utterance";
   sessionId: string;
+  utteranceId: string;
   text: string;
   sequence: number;
+  revision: number;
+  startMs: number;
+  endMs?: number | null;
   persisted?: boolean;
 }
 

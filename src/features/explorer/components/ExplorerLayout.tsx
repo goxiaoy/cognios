@@ -60,6 +60,12 @@ const MAX_TREE_WIDTH = 520;
 type ExplorerTreeSortField = "created" | "modified" | "name";
 type ExplorerTreeSortDirection = "asc" | "desc";
 
+interface LiveRealtimeCaption {
+  utteranceId: string;
+  revision: number;
+  text: string;
+}
+
 const TREE_SORT_FIELDS: Array<{
   field: ExplorerTreeSortField;
   label: string;
@@ -103,7 +109,8 @@ export function ExplorerLayout({
   const [openedVoiceNote, setOpenedVoiceNote] = useState<VoiceNote | null>(null);
   const [openedVoiceNoteId, setOpenedVoiceNoteId] = useState<string | null>(null);
   const [liveVoiceNoteTranscript, setLiveVoiceNoteTranscript] = useState("");
-  const [liveVoiceNoteProvisionalCaption, setLiveVoiceNoteProvisionalCaption] = useState("");
+  const [liveVoiceNoteProvisionalCaption, setLiveVoiceNoteProvisionalCaption] =
+    useState<LiveRealtimeCaption | null>(null);
   const [voiceNoteTranscript, setVoiceNoteTranscript] = useState("");
   const [voiceNotePlayback, setVoiceNotePlayback] = useState<VoiceNotePlaybackState>({
     currentMs: 0,
@@ -603,7 +610,7 @@ export function ExplorerLayout({
   const liveVoiceNoteSession = displayedVoiceNoteSession
     ? {
         ...displayedVoiceNoteSession,
-        transcript: [liveVoiceNoteTranscript.trim(), liveVoiceNoteProvisionalCaption.trim()]
+        transcript: [liveVoiceNoteTranscript.trim(), liveVoiceNoteProvisionalCaption?.text.trim()]
           .filter(Boolean)
           .join("\n"),
       }
@@ -651,7 +658,7 @@ export function ExplorerLayout({
   useEffect(() => {
     if (!showVoiceNoteRecording || !store.activeNoteId) {
       setLiveVoiceNoteTranscript("");
-      setLiveVoiceNoteProvisionalCaption("");
+      setLiveVoiceNoteProvisionalCaption(null);
       return;
     }
 
@@ -666,7 +673,7 @@ export function ExplorerLayout({
       } catch {
         if (!cancelled) {
           setLiveVoiceNoteTranscript("");
-          setLiveVoiceNoteProvisionalCaption("");
+          setLiveVoiceNoteProvisionalCaption(null);
         }
       }
     }
@@ -689,7 +696,11 @@ export function ExplorerLayout({
       if (cancelled || event.payload.sessionId !== noteId) return;
       const provisionalCaption = voiceNoteProvisionalCaptionFromRealtimeEvent(event.payload);
       if (provisionalCaption !== null) {
-        setLiveVoiceNoteProvisionalCaption(provisionalCaption);
+        setLiveVoiceNoteProvisionalCaption((current) =>
+          shouldAcceptRealtimeRevision(current, provisionalCaption)
+            ? provisionalCaption
+            : current
+        );
         return;
       }
       const realtimeLine = voiceNoteTranscriptLineFromRealtimeEvent(
@@ -697,7 +708,9 @@ export function ExplorerLayout({
         liveVoiceNoteElapsedRef.current
       );
       if (!realtimeLine) return;
-      setLiveVoiceNoteProvisionalCaption("");
+      setLiveVoiceNoteProvisionalCaption((current) =>
+        current?.utteranceId === event.payload.utteranceId ? null : current
+      );
       setLiveVoiceNoteTranscript((current) =>
         current.trim() ? `${current.trim()}\n${realtimeLine.text}` : realtimeLine.text
       );
@@ -1223,17 +1236,35 @@ function voiceNoteTranscriptLineFromRealtimeEvent(
   if (event.kind !== "final_utterance") return null;
   const text = event.text.trim();
   if (!text) return null;
+  const startMs = Math.max(0, event.startMs ?? elapsedMs);
+  const endMs = event.endMs ?? null;
   return {
     text,
-    startMs: Math.max(0, elapsedMs),
-    durationMs: 0,
+    startMs,
+    durationMs: endMs !== null ? Math.max(0, endMs - startMs) : 0,
   };
 }
 
-function voiceNoteProvisionalCaptionFromRealtimeEvent(event: RealtimeVoiceEvent): string | null {
+function voiceNoteProvisionalCaptionFromRealtimeEvent(
+  event: RealtimeVoiceEvent
+): LiveRealtimeCaption | null {
   if (event.kind !== "provisional_caption") return null;
   const text = event.text.trim();
-  return text || null;
+  if (!text) return null;
+  return {
+    utteranceId: event.utteranceId,
+    revision: event.revision,
+    text,
+  };
+}
+
+function shouldAcceptRealtimeRevision(
+  current: LiveRealtimeCaption | null,
+  next: LiveRealtimeCaption
+): boolean {
+  if (current === null) return true;
+  if (current.utteranceId !== next.utteranceId) return true;
+  return next.revision >= current.revision;
 }
 
 function parseTimestampedTranscript(transcript: string): TranscriptCue[] {

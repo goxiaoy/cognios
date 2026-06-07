@@ -606,27 +606,59 @@ async fn run_vllm_realtime_voice_note_transcription_job(
     ));
     let started_at = Instant::now();
     let mut sequence = 0;
+    let mut fallback_utterance_index = 1;
+    let mut active_fallback_utterance_id: Option<String> = None;
+    let mut active_fallback_start_ms: Option<u64> = None;
 
     while let Some(event) = event_rx.recv().await {
         sequence += 1;
         match event {
-            VllmRealtimeTranscriptEvent::Provisional(text) => {
+            VllmRealtimeTranscriptEvent::Provisional(segment) => {
+                let fallback_start_ms = *active_fallback_start_ms
+                    .get_or_insert_with(|| started_at.elapsed().as_millis() as u64);
+                let utterance_id = segment.utterance_id.clone().unwrap_or_else(|| {
+                    active_fallback_utterance_id
+                        .get_or_insert_with(|| {
+                            let id = format!("{note_id}:realtime:{fallback_utterance_index}");
+                            fallback_utterance_index += 1;
+                            id
+                        })
+                        .clone()
+                });
                 realtime_voice_emitter(RealtimeVoiceEventPayload::provisional_caption(
                     note_id.to_string(),
-                    text,
+                    utterance_id,
+                    segment.text,
                     sequence,
+                    segment.revision.unwrap_or(sequence),
+                    segment.start_ms.unwrap_or(fallback_start_ms),
+                    segment.end_ms,
                 ));
             }
-            VllmRealtimeTranscriptEvent::Final(text) => {
+            VllmRealtimeTranscriptEvent::Final(segment) => {
+                let fallback_start_ms = active_fallback_start_ms
+                    .take()
+                    .unwrap_or_else(|| started_at.elapsed().as_millis() as u64);
+                let utterance_id = segment.utterance_id.clone().unwrap_or_else(|| {
+                    active_fallback_utterance_id.take().unwrap_or_else(|| {
+                        let id = format!("{note_id}:realtime:{fallback_utterance_index}");
+                        fallback_utterance_index += 1;
+                        id
+                    })
+                });
+                active_fallback_utterance_id = None;
                 append_vllm_realtime_voice_note_transcript(
                     db,
                     notes_dir,
                     emitter,
                     realtime_voice_emitter,
                     note_id,
-                    started_at.elapsed().as_millis() as u64,
+                    &utterance_id,
+                    segment.start_ms.unwrap_or(fallback_start_ms),
+                    segment.end_ms,
                     sequence,
-                    text,
+                    segment.revision.unwrap_or(sequence),
+                    segment.text,
                 )?;
             }
             VllmRealtimeTranscriptEvent::Error(message) => return Err(message),
@@ -802,8 +834,12 @@ fn append_realtime_voice_note_segment_transcript(
     match append_voice_note_realtime_transcript_record(&conn, &input, notes_dir, emitter.as_ref()) {
         Ok(_) => realtime_voice_emitter(RealtimeVoiceEventPayload::final_utterance(
             note_id.to_string(),
+            format!("{note_id}:segment:{}", segment.index),
             transcript,
             segment.index,
+            1,
+            segment.start_ms,
+            Some(segment.start_ms.saturating_add(segment.duration_ms)),
             true,
         )),
         Err(error) => {
@@ -823,8 +859,11 @@ fn append_vllm_realtime_voice_note_transcript(
     emitter: &VfsEventEmitter,
     realtime_voice_emitter: &RealtimeVoiceEventEmitter,
     note_id: &str,
+    utterance_id: &str,
     start_ms: u64,
+    end_ms: Option<u64>,
     sequence: u64,
+    revision: u64,
     transcript: String,
 ) -> Result<(), String> {
     let conn = db.connect().map_err(|error| {
@@ -834,14 +873,20 @@ fn append_vllm_realtime_voice_note_transcript(
         note_id: note_id.to_string(),
         transcript: transcript.clone(),
         start_ms,
-        duration_ms: 0,
+        duration_ms: end_ms
+            .map(|end_ms| end_ms.saturating_sub(start_ms))
+            .unwrap_or(0),
         speaker_labels: Default::default(),
     };
     append_voice_note_realtime_transcript_record(&conn, &input, notes_dir, emitter.as_ref())?;
     realtime_voice_emitter(RealtimeVoiceEventPayload::final_utterance(
         note_id.to_string(),
+        utterance_id.to_string(),
         transcript,
         sequence,
+        revision,
+        start_ms,
+        end_ms,
         true,
     ));
     Ok(())
