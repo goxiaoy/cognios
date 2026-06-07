@@ -666,6 +666,21 @@ pub struct ChatModelsResponseDto {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct RealtimeVoiceStatusDto {
+    pub status: String,
+    pub available: bool,
+    pub local: bool,
+    pub provider: String,
+    pub reason: String,
+    pub packaging: String,
+    #[serde(default)]
+    pub runtime_path: Option<String>,
+    #[serde(default)]
+    pub websocket_url: Option<String>,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -889,6 +904,10 @@ impl SearchSidecarClient {
 
     pub async fn models_status(&self) -> SidecarEnvelope<ModelsStatusDto> {
         self.get_envelope("/models/status").await
+    }
+
+    pub async fn realtime_voice_status(&self) -> SidecarEnvelope<RealtimeVoiceStatusDto> {
+        self.get_envelope("/realtime-voice/status").await
     }
 
     pub async fn settings_get(&self) -> SidecarEnvelope<SearchSettingsDto> {
@@ -1650,6 +1669,35 @@ data: {"event":"final","turn":{"state":"ready","clusters":[],"answer":"hello","c
             to_ts["models"][1]["unavailableReason"],
             "This Ollama model does not support tools."
         );
+    }
+
+    #[test]
+    fn realtime_voice_status_round_trips_snake_to_camel() {
+        let from_python = r#"{
+            "status": "ready",
+            "available": true,
+            "local": true,
+            "provider": "qwen3-asr-vllm",
+            "reason": "Development realtime ASR runtime is explicitly enabled.",
+            "packaging": "supported",
+            "runtime_path": "/tmp/realtime-asr",
+            "websocket_url": "ws://127.0.0.1:9000/v1/realtime"
+        }"#;
+        let parsed: RealtimeVoiceStatusDto =
+            serde_json::from_str(from_python).expect("decode realtime voice status");
+        assert_eq!(parsed.status, "ready");
+        assert_eq!(parsed.packaging, "supported");
+        assert_eq!(parsed.runtime_path.as_deref(), Some("/tmp/realtime-asr"));
+        assert_eq!(
+            parsed.websocket_url.as_deref(),
+            Some("ws://127.0.0.1:9000/v1/realtime")
+        );
+
+        let to_ts = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(to_ts["runtimePath"], "/tmp/realtime-asr");
+        assert_eq!(to_ts["websocketUrl"], "ws://127.0.0.1:9000/v1/realtime");
+        assert!(to_ts.get("runtime_path").is_none());
+        assert!(to_ts.get("websocket_url").is_none());
     }
 
     #[test]

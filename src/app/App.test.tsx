@@ -131,6 +131,21 @@ vi.mock("../lib/tauri/ipc", () => ({
   bindChatNote: vi.fn(),
   startChatTurn: vi.fn().mockResolvedValue({ turn: { state: "initialising" } }),
   getChatModels: vi.fn().mockResolvedValue({ models: { state: "initialising" } }),
+  getRealtimeVoiceStatus: vi.fn().mockResolvedValue({
+    status: {
+      state: "ready",
+      data: {
+        status: "unavailable",
+        available: false,
+        local: true,
+        provider: "qwen3-asr-vllm",
+        reason: "Local realtime ASR runtime is not packaged with this build.",
+        packaging: "missing",
+        runtimePath: null,
+        websocketUrl: null,
+      },
+    },
+  }),
   testChatProvider: vi.fn().mockResolvedValue({
     result: { state: "initialising" },
   }),

@@ -16,6 +16,7 @@ import {
   Globe,
   HardDrive,
   MessageSquare,
+  Mic2,
   Paperclip,
   Plus,
   Search,
@@ -38,11 +39,13 @@ import type {
 import { AppSelect } from "../../../components/FormControls";
 import type { SearchSettings } from "../../../lib/contracts/search";
 import { unwrapEnvelope } from "../../../lib/contracts/search";
+import type { RealtimeVoiceStatus } from "../../../lib/contracts/realtimeVoice";
 import { MarkdownRenderer } from "../../explorer/components/MarkdownRenderer";
 import { useOptionalExplorerStoreContext } from "../../explorer/store/ExplorerStoreContext";
 import { SearchPalette, type SearchPaletteSelection } from "../../search/components/SearchPalette";
 import type { SearchClient } from "../../search/types/search";
 import type { ChatClient } from "../api/chatClient";
+import { realtimeVoiceUnavailableReason } from "../realtimeVoice";
 import {
   CHAT_PROVIDER_PRESETS,
   ChatProviderSetup,
@@ -112,6 +115,8 @@ export function ChatLayout({
   const [models, setModels] = useState<ChatModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsStatus, setModelsStatus] = useState<string | null>(null);
+  const [realtimeVoiceStatus, setRealtimeVoiceStatus] = useState<RealtimeVoiceStatus | null>(null);
+  const [realtimeVoiceStatusError, setRealtimeVoiceStatusError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState("");
   const [settings, setSettings] = useState<SearchSettings | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(true);
@@ -131,14 +136,20 @@ export function ChatLayout({
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const initializedRef = useRef(false);
   const pendingComposerFocusRef = useRef(false);
+  const realtimeVoiceRetryRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      clearRealtimeVoiceStatusRetry();
+      return;
+    }
     if (!initializedRef.current) {
       initializedRef.current = true;
       void refreshSessions();
     }
     void refreshProviderRuntimeState();
+    void refreshRealtimeVoiceStatus();
+    return () => clearRealtimeVoiceStatusRetry();
   }, [visible]);
 
   useEffect(() => {
@@ -329,6 +340,40 @@ export function ChatLayout({
   async function refreshProviderRuntimeState() {
     await refreshProviderSettings();
     await refreshModels();
+  }
+
+  async function refreshRealtimeVoiceStatus() {
+    setRealtimeVoiceStatusError(null);
+    try {
+      const result = await client.getRealtimeVoiceStatus();
+      if (result.status.state === "ready") {
+        setRealtimeVoiceStatus(result.status.data ?? null);
+        return;
+      }
+      setRealtimeVoiceStatus(null);
+      if (result.status.state === "initialising") {
+        scheduleRealtimeVoiceStatusRetry();
+        return;
+      }
+      setRealtimeVoiceStatusError(result.status.error ?? "Local realtime voice is unavailable.");
+    } catch (err) {
+      setRealtimeVoiceStatus(null);
+      setRealtimeVoiceStatusError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function scheduleRealtimeVoiceStatusRetry() {
+    if (realtimeVoiceRetryRef.current !== null) return;
+    realtimeVoiceRetryRef.current = window.setTimeout(() => {
+      realtimeVoiceRetryRef.current = null;
+      if (visible) void refreshRealtimeVoiceStatus();
+    }, 1000);
+  }
+
+  function clearRealtimeVoiceStatusRetry() {
+    if (realtimeVoiceRetryRef.current === null) return;
+    window.clearTimeout(realtimeVoiceRetryRef.current);
+    realtimeVoiceRetryRef.current = null;
   }
 
   function applyProviderSettings(next: SearchSettings) {
@@ -657,6 +702,10 @@ export function ChatLayout({
       ? modelsStatus ?? "Chat provider unavailable."
       : null;
   const composerDisabled = busy || !chatProviderReady || settingsLoading || Boolean(settingsError && !settings);
+  const realtimeVoiceReady =
+    realtimeVoiceStatus?.available === true && realtimeVoiceStatus.status === "ready";
+  const realtimeVoiceReason =
+    realtimeVoiceStatusError ?? realtimeVoiceUnavailableReason(realtimeVoiceStatus);
   const webSearchProviderId = settings?.features["web-search"]?.providerId ?? null;
   const webSearchEnabled = Boolean(
     settings?.features["web-search"]?.enabled &&
@@ -748,6 +797,16 @@ export function ChatLayout({
             <h2>{title}</h2>
           </div>
           <div className="chat-topbar-actions">
+            <button
+              className="chat-runtime-pill"
+              type="button"
+              disabled={!realtimeVoiceReady}
+              aria-label={realtimeVoiceReady ? "Start realtime voice chat" : realtimeVoiceReason}
+              title={realtimeVoiceReason}
+            >
+              <Mic2 size={14} aria-hidden="true" />
+              Voice
+            </button>
             <button
               ref={memoryButtonRef}
               className="chat-runtime-pill chat-memory-trigger"

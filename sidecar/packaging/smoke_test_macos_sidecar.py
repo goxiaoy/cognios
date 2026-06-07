@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import signal
 import subprocess
@@ -49,8 +50,10 @@ def main() -> int:
                 [str(binary), "serve", "--storage-dir", str(storage_dir)],
                 stdout=stdout,
                 stderr=stderr,
+                env=_smoke_env(),
             )
             runtime = _wait_for_runtime(storage_dir / "search" / "sidecar.runtime")
+            _assert_realtime_voice_status(runtime)
             _post_index_node(runtime, cache_path)
             _assert_url_search(runtime)
     except Exception:
@@ -62,6 +65,14 @@ def main() -> int:
         shutil.rmtree(storage_dir, ignore_errors=True)
     print("packaged sidecar smoke test passed")
     return 0
+
+
+def _smoke_env() -> dict[str, str]:
+    env = os.environ.copy()
+    for key in list(env):
+        if key.startswith("COGNIOS_REALTIME_VOICE_"):
+            env.pop(key)
+    return env
 
 
 def _parse_args() -> argparse.Namespace:
@@ -115,6 +126,26 @@ def _assert_url_search(runtime: dict) -> None:
     results = payload.get("results") or []
     if not any(result.get("node_id") == NODE_ID for result in results):
         raise RuntimeError(f"indexed URL node missing from search results: {payload}")
+
+
+def _assert_realtime_voice_status(runtime: dict) -> None:
+    payload = _get(runtime, "/realtime-voice/status")
+    if payload.get("available") is not False:
+        raise RuntimeError(f"realtime voice unexpectedly available in packaged smoke test: {payload}")
+    if payload.get("packaging") != "missing":
+        raise RuntimeError(f"realtime voice packaging status should fail closed: {payload}")
+
+
+def _get(runtime: dict, path: str) -> dict:
+    port = runtime["port"]
+    token = runtime["token"]
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        headers={"Authorization": f"Bearer {token}"},
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 
 def _request(runtime: dict, path: str, body: dict) -> dict:

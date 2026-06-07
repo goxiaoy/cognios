@@ -192,4 +192,24 @@ describe("chatClient", () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith("get_chat_models");
   });
+
+  it("loads realtime voice status through the Tauri command", async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      status: {
+        state: "ready",
+        data: {
+          status: "unavailable",
+          available: false,
+          local: true,
+          provider: "qwen3-asr-vllm",
+          reason: "Local realtime ASR runtime is not packaged with this build.",
+          packaging: "missing",
+        },
+      },
+    });
+
+    await chatClient.getRealtimeVoiceStatus();
+
+    expect(mockedInvoke).toHaveBeenCalledWith("get_realtime_voice_status");
+  });
 });

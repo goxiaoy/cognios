@@ -355,6 +355,7 @@ pub fn run() {
             commands::chat::trigger_chat_session_memory_opportunity,
             commands::chat::get_chat_models,
             commands::chat::test_chat_provider,
+            commands::realtime_voice::get_realtime_voice_status,
             commands::search::search_query,
             commands::search::get_indexing_status,
             commands::search::get_index_statistics,

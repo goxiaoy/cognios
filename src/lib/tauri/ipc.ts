@@ -40,6 +40,7 @@ import type {
   NodeStatusSnapshot,
   NodeStatusView,
 } from "../contracts/nodeStatus";
+import type { GetRealtimeVoiceStatusResult } from "../contracts/realtimeVoice";
 import type {
   AppendVoiceNoteAudioChunkInput,
   BeginVoiceNoteAudioCaptureInput,
@@ -74,6 +75,10 @@ export async function getNodeStatusSnapshot(): Promise<NodeStatusSnapshot> {
 
 export async function getNodeStatus(nodeId: string): Promise<NodeStatusView> {
   return invoke<NodeStatusView>("get_node_status", { input: { nodeId } });
+}
+
+export async function getRealtimeVoiceStatus(): Promise<GetRealtimeVoiceStatusResult> {
+  return invoke<GetRealtimeVoiceStatusResult>("get_realtime_voice_status");
 }
 
 export async function createFolder(

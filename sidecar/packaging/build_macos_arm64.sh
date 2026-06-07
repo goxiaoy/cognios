@@ -111,3 +111,4 @@ codesign --force --sign - "$OUTPUT" >/dev/null 2>&1 || true
 rm -f "$SPEC_FILE"
 
 echo "built $OUTPUT and $RESOURCE_DIR"
+echo "realtime voice runtime packaging: missing"

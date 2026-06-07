@@ -77,6 +77,21 @@ function makeClient(): ChatClient {
       snapshot: { roots: [] },
     }),
     triggerMemoryOpportunity: vi.fn().mockResolvedValue(undefined),
+    getRealtimeVoiceStatus: vi.fn().mockResolvedValue({
+      status: {
+        state: "ready",
+        data: {
+          status: "unavailable",
+          available: false,
+          local: true,
+          provider: "qwen3-asr-vllm",
+          reason: "Local realtime ASR runtime is not packaged with this build.",
+          packaging: "missing",
+          runtimePath: null,
+          websocketUrl: null,
+        },
+      },
+    }),
     appendMessage: vi.fn(),
     recordCluster: vi.fn(),
     bindNote: vi.fn(),
@@ -255,8 +270,52 @@ describe("ChatLayout", () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     eventMock.chatTurnListener = null;
     eventMock.unlisten.mockReset();
+  });
+
+  it("shows realtime voice as unavailable until the local runtime is ready", async () => {
+    render(<ChatLayout client={makeClient()} searchClient={makeSearchClient()} />);
+
+    const voiceButton = await screen.findByRole("button", { name: /local realtime asr runtime/i });
+
+    expect(voiceButton).toHaveTextContent("Voice");
+    expect(voiceButton).toBeDisabled();
+  });
+
+  it("retries realtime voice status while the sidecar is initialising", async () => {
+    vi.useFakeTimers();
+    const client = makeClient();
+    vi.mocked(client.getRealtimeVoiceStatus)
+      .mockResolvedValueOnce({ status: { state: "initialising" } })
+      .mockResolvedValueOnce({
+        status: {
+          state: "ready",
+          data: {
+            status: "unavailable",
+            available: false,
+            local: true,
+            provider: "qwen3-asr-vllm",
+            reason: "Local realtime ASR runtime is not packaged with this build.",
+            packaging: "missing",
+            runtimePath: null,
+            websocketUrl: null,
+          },
+        },
+    });
+
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(client.getRealtimeVoiceStatus).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    expect(client.getRealtimeVoiceStatus).toHaveBeenCalledTimes(2);
   });
 
   it("sends a prompt with Enter and shows the submitted prompt in the transcript", async () => {

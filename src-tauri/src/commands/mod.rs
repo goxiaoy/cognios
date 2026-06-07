@@ -4,6 +4,7 @@ pub mod mounts;
 pub mod node_status;
 pub mod nodes;
 pub mod notes;
+pub mod realtime_voice;
 pub mod search;
 pub mod search_settings;
 pub mod secrets;

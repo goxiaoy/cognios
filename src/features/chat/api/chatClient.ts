@@ -5,6 +5,7 @@ import {
   deleteChatSession,
   exportChatSessionMemory,
   getChatModels,
+  getRealtimeVoiceStatus,
   getChatSession,
   getChatSessionMemory,
   listChatSessions,
@@ -32,6 +33,7 @@ import type {
   TriggerChatSessionMemoryOpportunityInput,
   UpdateChatSessionTitleInput,
 } from "../../../lib/contracts/chat";
+import type { GetRealtimeVoiceStatusResult } from "../../../lib/contracts/realtimeVoice";
 
 export interface ChatClient {
   createSession(input?: CreateChatSessionInput): Promise<ChatSession>;
@@ -47,6 +49,7 @@ export interface ChatClient {
   bindNote(input: BindChatNoteInput): Promise<ChatSession>;
   startTurn(input: StartChatTurnInput): Promise<StartChatTurnResult>;
   getModels(): Promise<GetChatModelsResult>;
+  getRealtimeVoiceStatus(): Promise<GetRealtimeVoiceStatusResult>;
 }
 
 export const chatClient: ChatClient = {
@@ -63,4 +66,5 @@ export const chatClient: ChatClient = {
   bindNote: bindChatNote,
   startTurn: startChatTurn,
   getModels: getChatModels,
+  getRealtimeVoiceStatus,
 };

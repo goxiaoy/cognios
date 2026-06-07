@@ -28,7 +28,7 @@ pub use client::{
     ChatTurnResponseDto, ChatTurnStreamEventDto, FeatureConfigDto, IndexNodeResultDto,
     IndexStatisticsDto, IndexStatusDto, LatencyOverviewDto, LatencySummaryDto, ModelDownloadEvent,
     ModelRoleStatusDto, ModelsStatusDto, NodeContentChunkDto, NodeContentDto, NodeEvent,
-    NodeEventKind, ProviderConfigDto, RecentIndexedNodeCountDto, SearchInput,
+    NodeEventKind, ProviderConfigDto, RealtimeVoiceStatusDto, RecentIndexedNodeCountDto, SearchInput,
     SearchObservabilityDto, SearchResponseDto, SearchResultDto, SearchSettingsDto,
     SearchSidecarClient, SidecarEnvelope, SidecarEnvelopeState, TokenUsageSummaryDto,
     VoiceNoteSummaryRequestDto, VoiceNoteSummaryResponseDto, VoiceNoteTranscriptionRequestDto,
