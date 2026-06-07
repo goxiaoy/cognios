@@ -42,6 +42,7 @@ import type {
 } from "../contracts/nodeStatus";
 import type { GetRealtimeVoiceStatusResult } from "../contracts/realtimeVoice";
 import type {
+  AppendRealtimeVoiceNoteTranscriptInput,
   AppendVoiceNoteAudioChunkInput,
   BeginVoiceNoteAudioCaptureInput,
   CaptureCapability,
@@ -187,6 +188,12 @@ export async function appendVoiceNoteAudioChunk(
   input: AppendVoiceNoteAudioChunkInput
 ): Promise<void> {
   return invoke<void>("append_voice_note_audio_chunk", { input });
+}
+
+export async function appendRealtimeVoiceNoteTranscript(
+  input: AppendRealtimeVoiceNoteTranscriptInput
+): Promise<VoiceNote> {
+  return invoke<VoiceNote>("append_realtime_voice_note_transcript", { input });
 }
 
 export async function finishVoiceNoteAudioCapture(

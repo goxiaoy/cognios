@@ -1,4 +1,5 @@
 import {
+  appendRealtimeVoiceNoteTranscript,
   appendVoiceNoteAudioChunk,
   beginVoiceNoteAudioCapture,
   beginNativeVoiceNoteAudioCapture,
@@ -16,6 +17,7 @@ import {
   resumeNativeVoiceNoteAudioCapture,
 } from "../../../lib/tauri/ipc";
 import type {
+  AppendRealtimeVoiceNoteTranscriptInput,
   AppendVoiceNoteAudioChunkInput,
   BeginVoiceNoteAudioCaptureInput,
   CaptureCapability,
@@ -36,6 +38,7 @@ export interface VoiceNoteClient {
   completeTranscript(input: CompleteVoiceNoteTranscriptInput): Promise<VoiceNote>;
   beginAudioCapture(input: BeginVoiceNoteAudioCaptureInput): Promise<VoiceNote>;
   appendAudioChunk(input: AppendVoiceNoteAudioChunkInput): Promise<void>;
+  appendRealtimeTranscript(input: AppendRealtimeVoiceNoteTranscriptInput): Promise<VoiceNote>;
   finishAudioCapture(input: FinishVoiceNoteAudioCaptureInput): Promise<VoiceNote>;
   beginNativeAudioCapture(input: BeginVoiceNoteAudioCaptureInput): Promise<VoiceNote>;
   finishNativeAudioCapture(input: FinishVoiceNoteAudioCaptureInput): Promise<VoiceNote>;
@@ -54,6 +57,7 @@ export const voiceNoteClient: VoiceNoteClient = {
   completeTranscript: completeVoiceNoteTranscript,
   beginAudioCapture: beginVoiceNoteAudioCapture,
   appendAudioChunk: appendVoiceNoteAudioChunk,
+  appendRealtimeTranscript: appendRealtimeVoiceNoteTranscript,
   finishAudioCapture: finishVoiceNoteAudioCapture,
   beginNativeAudioCapture: beginNativeVoiceNoteAudioCapture,
   finishNativeAudioCapture: finishNativeVoiceNoteAudioCapture,

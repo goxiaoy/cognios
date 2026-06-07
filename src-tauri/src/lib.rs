@@ -327,6 +327,7 @@ pub fn run() {
             commands::voice_notes::complete_voice_note_transcript,
             commands::voice_notes::begin_voice_note_audio_capture,
             commands::voice_notes::append_voice_note_audio_chunk,
+            commands::voice_notes::append_realtime_voice_note_transcript,
             commands::voice_notes::finish_voice_note_audio_capture,
             commands::voice_notes::begin_native_voice_note_audio_capture,
             commands::voice_notes::finish_native_voice_note_audio_capture,

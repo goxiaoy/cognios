@@ -2,24 +2,35 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExplorerLayout } from "./ExplorerLayout";
 import { ExplorerStoreProvider } from "../store/ExplorerStoreContext";
+import type { RealtimeVoiceEvent } from "../../../lib/contracts/realtimeVoice";
+import type { VoiceNotePreviewSession } from "../../voice-notes/components/VoiceNoteRecordingPreview";
 
 const getVoiceNote = vi.fn();
 const getVoiceNoteTranscript = vi.fn();
+const appendRealtimeTranscript = vi.fn();
+type RealtimeVoiceListener = (event: { payload: RealtimeVoiceEvent }) => void;
+const eventMock = vi.hoisted(() => ({
+  realtimeVoiceListener: null as RealtimeVoiceListener | null,
+}));
 
 function renderWithProvider(
-  client: unknown
+  client: unknown,
+  props: Partial<Parameters<typeof ExplorerLayout>[0]> = {}
 ) {
   const typed = client as Parameters<typeof ExplorerStoreProvider>[0]["client"];
   return render(
     <ExplorerStoreProvider client={typed}>
-      <ExplorerLayout active={true} client={typed} />
+      <ExplorerLayout active={true} client={typed} {...props} />
     </ExplorerStoreProvider>
   );
 }
-import type { ExplorerClient } from "../types/explorer";
+import type { ExplorerClient, ExplorerNode } from "../types/explorer";
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn().mockResolvedValue(() => Promise.resolve()),
+  listen: vi.fn(async (name: string, cb: RealtimeVoiceListener) => {
+    if (name === "realtime-voice/event") eventMock.realtimeVoiceListener = cb;
+    return () => Promise.resolve();
+  }),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -41,6 +52,7 @@ vi.mock("../../voice-notes/api/voiceNoteClient", () => ({
   voiceNoteClient: {
     get: (noteId: string) => getVoiceNote(noteId),
     getTranscript: (noteId: string) => getVoiceNoteTranscript(noteId),
+    appendRealtimeTranscript: (input: unknown) => appendRealtimeTranscript(input),
   },
 }));
 
@@ -102,6 +114,24 @@ describe("ExplorerLayout", () => {
     getVoiceNote.mockResolvedValue(null);
     getVoiceNoteTranscript.mockReset();
     getVoiceNoteTranscript.mockResolvedValue("");
+    appendRealtimeTranscript.mockReset();
+    appendRealtimeTranscript.mockResolvedValue({
+      noteId: "voice-1",
+      name: "Live note",
+      status: "recording",
+      captureStatus: "recording",
+      transcriptionStatus: "transcribing",
+      summaryStatus: "unavailable",
+      sourceAudioPresent: true,
+      sourceAudioPath: "/tmp/voice-1.wav",
+      sourceAudioDeletedAt: null,
+      transcriptPath: "/tmp/voice-1/transcript.md",
+      transcriptUpdatedAt: "2026-05-14 00:30:01",
+      speakerLabels: {},
+      createdAt: "2026-05-14 00:30:00",
+      updatedAt: "2026-05-14 00:30:01",
+    });
+    eventMock.realtimeVoiceListener = null;
   });
 
   afterEach(() => {
@@ -289,10 +319,105 @@ describe("ExplorerLayout", () => {
     });
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
+
+  it("appends finalized realtime voice utterances to the active recording transcript", async () => {
+    const client = makeClient();
+    vi.mocked(client.getExplorerSnapshot).mockResolvedValue({
+      roots: [voiceNoteNode("voice-1")],
+    });
+    const voiceNoteSession = recordingSession("voice-1", 12_345);
+
+    renderWithProvider(client, { voiceNoteSession });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Live note/i }));
+    await screen.findByLabelText("Voice note recording");
+    expect(eventMock.realtimeVoiceListener).toBeTruthy();
+
+    eventMock.realtimeVoiceListener?.({
+      payload: {
+        kind: "final_utterance",
+        sessionId: "voice-1",
+        text: "  realtime transcript line  ",
+        sequence: 1,
+      },
+    });
+
+    expect(await screen.findByText("realtime transcript line")).toBeInTheDocument();
+    expect(appendRealtimeTranscript).toHaveBeenCalledWith({
+      noteId: "voice-1",
+      transcript: "realtime transcript line",
+      startMs: 12_345,
+      durationMs: 0,
+    });
+  });
+
+  it("does not append provisional realtime voice captions to voice notes", async () => {
+    const client = makeClient();
+    vi.mocked(client.getExplorerSnapshot).mockResolvedValue({
+      roots: [voiceNoteNode("voice-1")],
+    });
+
+    renderWithProvider(client, { voiceNoteSession: recordingSession("voice-1", 5_000) });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Live note/i }));
+    await screen.findByLabelText("Voice note recording");
+    eventMock.realtimeVoiceListener?.({
+      payload: {
+        kind: "provisional_caption",
+        sessionId: "voice-1",
+        text: "partial text",
+        sequence: 1,
+      },
+    });
+
+    expect(screen.queryByText("partial text")).not.toBeInTheDocument();
+    expect(appendRealtimeTranscript).not.toHaveBeenCalled();
+  });
 });
 
 function treeRowNames(container: HTMLElement): string[] {
   return Array.from(container.querySelectorAll(".node-name")).map(
     (element) => element.textContent ?? ""
   );
+}
+
+function voiceNoteNode(id: string): ExplorerNode {
+  return {
+    id,
+    parentId: null,
+    name: "Live note",
+    kind: "note",
+    isVoiceNote: true,
+    state: "ready",
+    createdAt: "2026-05-14 00:30:00",
+    modifiedAt: "2026-05-14 00:30:00",
+    sizeBytes: 0,
+    children: [],
+  };
+}
+
+function recordingSession(noteId: string, elapsedMs: number): VoiceNotePreviewSession {
+  return {
+    note: {
+      noteId,
+      name: "Live note",
+      status: "recording",
+      captureStatus: "recording",
+      transcriptionStatus: "pending",
+      summaryStatus: "unavailable",
+      sourceAudioPresent: true,
+      sourceAudioPath: "/tmp/voice-1.wav",
+      sourceAudioDeletedAt: null,
+      transcriptPath: "/tmp/voice-1/transcript.md",
+      transcriptUpdatedAt: null,
+      speakerLabels: {},
+      createdAt: "2026-05-14 00:30:00",
+      updatedAt: "2026-05-14 00:30:00",
+    },
+    elapsedMs,
+    phase: "recording",
+    error: null,
+    onTogglePause: vi.fn(),
+    onStop: vi.fn(),
+  };
 }

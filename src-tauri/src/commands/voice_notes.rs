@@ -166,6 +166,38 @@ pub fn append_voice_note_audio_chunk(
     append_voice_note_audio_chunk_record(&conn, &input)
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendRealtimeVoiceNoteTranscriptCommandInput {
+    pub note_id: String,
+    pub transcript: String,
+    #[serde(default)]
+    pub start_ms: Option<u64>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+}
+
+#[tauri::command]
+pub fn append_realtime_voice_note_transcript(
+    state: State<'_, AppState>,
+    input: AppendRealtimeVoiceNoteTranscriptCommandInput,
+) -> Result<VoiceNoteDto, String> {
+    let conn = state
+        .db
+        .connect()
+        .map_err(|error: rusqlite::Error| error.to_string())?;
+    let notes_dir = state.storage_dir.join("notes");
+    let emitter = state.emitter.as_ref();
+    let append_input = AppendRealtimeTranscriptInput {
+        note_id: input.note_id,
+        transcript: input.transcript,
+        start_ms: input.start_ms.unwrap_or_default(),
+        duration_ms: input.duration_ms.unwrap_or_default(),
+        speaker_labels: Default::default(),
+    };
+    append_voice_note_realtime_transcript_record(&conn, &append_input, &notes_dir, emitter)
+}
+
 #[tauri::command]
 pub fn finish_voice_note_audio_capture(
     state: State<'_, AppState>,
@@ -506,7 +538,9 @@ async fn drain_realtime_voice_note_segments(
         else {
             continue;
         };
-        append_realtime_voice_note_transcript(db, notes_dir, emitter, note_id, &segment, response);
+        append_realtime_voice_note_segment_transcript(
+            db, notes_dir, emitter, note_id, &segment, response,
+        );
     }
 }
 
@@ -596,7 +630,7 @@ async fn transcribe_realtime_voice_note_segment(
     }
 }
 
-fn append_realtime_voice_note_transcript(
+fn append_realtime_voice_note_segment_transcript(
     db: &Database,
     notes_dir: &Path,
     emitter: &VfsEventEmitter,

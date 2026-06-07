@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import {
@@ -49,9 +50,11 @@ import {
   type VoiceNoteRecordingPhase,
 } from "../../voice-notes/components/VoiceNoteRecordingPreview";
 import type { VoiceNote } from "../../../lib/contracts/voiceNote";
+import type { RealtimeVoiceEvent } from "../../../lib/contracts/realtimeVoice";
 import { error as logError } from "../../../lib/logger";
 
 const DEFAULT_TREE_WIDTH = 240;
+const REALTIME_VOICE_EVENT = "realtime-voice/event";
 const MIN_TREE_WIDTH = 208;
 const MAX_TREE_WIDTH = 520;
 type ExplorerTreeSortField = "created" | "modified" | "name";
@@ -109,6 +112,7 @@ export function ExplorerLayout({
   const noteEditorRef = useRef<NoteEditorHandle>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const liveVoiceNoteElapsedRef = useRef(0);
   // Anchor for shift-click range selection. Tracks the most recent
   // single-clicked node id; reset by plain or toggle clicks.
   const selectionAnchorRef = useRef<string | null>(null);
@@ -638,6 +642,10 @@ export function ExplorerLayout({
   const clampedTreeWidth = clampTreeWidth(treeWidth, workspaceRef.current);
 
   useEffect(() => {
+    liveVoiceNoteElapsedRef.current = liveVoiceNoteSession?.elapsedMs ?? 0;
+  }, [liveVoiceNoteSession?.elapsedMs]);
+
+  useEffect(() => {
     if (!showVoiceNoteRecording || !store.activeNoteId) {
       setLiveVoiceNoteTranscript("");
       return;
@@ -665,6 +673,42 @@ export function ExplorerLayout({
       window.clearInterval(timer);
     };
   }, [client, showVoiceNoteRecording, store.activeNoteId]);
+
+  useEffect(() => {
+    if (!showVoiceNoteRecording || !liveVoiceNoteSession) return;
+    let cancelled = false;
+    const noteId = liveVoiceNoteSession.note.noteId;
+    const unlistenPromise = listen<RealtimeVoiceEvent>(REALTIME_VOICE_EVENT, (event) => {
+      if (cancelled || event.payload.sessionId !== noteId) return;
+      const realtimeLine = voiceNoteTranscriptLineFromRealtimeEvent(
+        event.payload,
+        liveVoiceNoteElapsedRef.current
+      );
+      if (!realtimeLine) return;
+      setLiveVoiceNoteTranscript((current) =>
+        current.trim() ? `${current.trim()}\n${realtimeLine.text}` : realtimeLine.text
+      );
+      void voiceNoteClient
+        .appendRealtimeTranscript({
+          noteId,
+          transcript: realtimeLine.text,
+          startMs: realtimeLine.startMs,
+          durationMs: realtimeLine.durationMs,
+        })
+        .catch((cause) => {
+          void logError(
+            `[ExplorerLayout] failed to append realtime voice note transcript: ${
+              cause instanceof Error ? cause.message : String(cause)
+            }`
+          );
+        });
+    });
+
+    return () => {
+      cancelled = true;
+      void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, [showVoiceNoteRecording, liveVoiceNoteSession?.note.noteId]);
 
   useEffect(() => {
     setVoiceNotePlayback({
@@ -1156,6 +1200,20 @@ function isRecordingSurfacePhase(phase: VoiceNoteRecordingPhase): boolean {
     phase === "paused" ||
     phase === "stopping"
   );
+}
+
+function voiceNoteTranscriptLineFromRealtimeEvent(
+  event: RealtimeVoiceEvent,
+  elapsedMs: number
+): { text: string; startMs: number; durationMs: number } | null {
+  if (event.kind !== "final_utterance") return null;
+  const text = event.text.trim();
+  if (!text) return null;
+  return {
+    text,
+    startMs: Math.max(0, elapsedMs),
+    durationMs: 0,
+  };
 }
 
 function parseTimestampedTranscript(transcript: string): TranscriptCue[] {

@@ -83,6 +83,13 @@ export interface AppendVoiceNoteAudioChunkInput {
   bytes: number[];
 }
 
+export interface AppendRealtimeVoiceNoteTranscriptInput {
+  noteId: string;
+  transcript: string;
+  startMs?: number | null;
+  durationMs?: number | null;
+}
+
 export interface FinishVoiceNoteAudioCaptureInput {
   noteId: string;
   durationMs?: number | null;
