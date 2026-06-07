@@ -54,7 +54,6 @@ const TRANSCRIPTION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const TRANSCRIPTION_READY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const SUMMARY_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const SUMMARY_READY_TIMEOUT: Duration = Duration::from_secs(4 * 60);
-const REALTIME_TRANSCRIPTION_SEGMENT_POLL_INTERVAL: Duration = Duration::from_millis(200);
 static VOICE_NOTE_SUMMARY_DRAIN_RUNNING: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
@@ -258,6 +257,7 @@ pub fn finish_native_voice_note_audio_capture(
     state: State<'_, AppState>,
     input: FinishVoiceNoteAudioCaptureInput,
 ) -> Result<VoiceNoteDto, String> {
+    let note_id = input.note_id.clone();
     let elapsed_ms = state.voice_note_audio_capture.stop(&input.note_id)?;
     let conn = state
         .db
@@ -265,15 +265,26 @@ pub fn finish_native_voice_note_audio_capture(
         .map_err(|error: rusqlite::Error| error.to_string())?;
     let notes_dir = state.storage_dir.join("notes");
     let emitter = state.emitter.as_ref();
-    finish_voice_note_audio_capture_record(
+    let voice_note = finish_voice_note_audio_capture_record(
         &conn,
         &FinishVoiceNoteAudioCaptureInput {
-            note_id: input.note_id,
+            note_id,
             duration_ms: Some(elapsed_ms),
         },
         &notes_dir,
         &emitter,
-    )
+    )?;
+    if let Some(audio_path) = voice_note.source_audio_path.clone() {
+        spawn_voice_note_transcription(
+            state.db.clone(),
+            notes_dir,
+            Arc::clone(&state.emitter),
+            Arc::clone(&state.search_client),
+            voice_note.note_id.clone(),
+            audio_path,
+        );
+    }
+    Ok(voice_note)
 }
 
 #[tauri::command]
@@ -422,7 +433,7 @@ async fn run_realtime_voice_note_transcription_job(
     search_client: Arc<SearchSidecarClient>,
     audio_capture: Arc<NativeAudioCapture>,
     note_id: String,
-    audio_path: String,
+    _audio_path: String,
 ) {
     if let Some((websocket_url, model)) = realtime_voice_websocket_config(&search_client).await {
         match run_vllm_realtime_voice_note_transcription_job(
@@ -430,7 +441,6 @@ async fn run_realtime_voice_note_transcription_job(
             &notes_dir,
             &emitter,
             &realtime_voice_emitter,
-            Arc::clone(&search_client),
             &audio_capture,
             &note_id,
             websocket_url,
@@ -438,20 +448,18 @@ async fn run_realtime_voice_note_transcription_job(
         )
         .await
         {
-            Ok(()) => return,
+            Ok(()) => {
+                log::debug!(
+                    "vLLM realtime voice note transcription finished for {note_id}; final transcription is handled from saved audio"
+                );
+            }
             Err(error) => {
                 log::warn!(
-                    "vLLM realtime voice note transcription failed for {note_id}; retrying from saved audio: {error}"
+                    "vLLM realtime voice note transcription failed for {note_id}; final transcription is handled from saved audio: {error}"
                 );
             }
         }
     }
-
-    while audio_capture.is_recording_active(&note_id) {
-        tokio::time::sleep(REALTIME_TRANSCRIPTION_SEGMENT_POLL_INTERVAL).await;
-    }
-    run_voice_note_transcription_job(db, notes_dir, emitter, search_client, note_id, audio_path)
-        .await;
 }
 
 async fn realtime_voice_websocket_config(
@@ -490,7 +498,6 @@ async fn run_vllm_realtime_voice_note_transcription_job(
     notes_dir: &Path,
     emitter: &VfsEventEmitter,
     realtime_voice_emitter: &RealtimeVoiceEventEmitter,
-    search_client: Arc<SearchSidecarClient>,
     audio_capture: &NativeAudioCapture,
     note_id: &str,
     websocket_url: String,
@@ -566,16 +573,7 @@ async fn run_vllm_realtime_voice_note_transcription_job(
     }
 
     match realtime_task.await {
-        Ok(Ok(())) => {
-            complete_realtime_voice_note_transcription(
-                db,
-                notes_dir,
-                emitter,
-                &search_client,
-                note_id,
-            );
-            Ok(())
-        }
+        Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(error),
         Err(error) => Err(format!("vLLM realtime voice task failed: {error}")),
     }
@@ -618,81 +616,6 @@ fn append_vllm_realtime_voice_note_transcript(
         true,
     ));
     Ok(())
-}
-
-fn complete_realtime_voice_note_transcription(
-    db: &Database,
-    notes_dir: &Path,
-    emitter: &VfsEventEmitter,
-    search_client: &Arc<SearchSidecarClient>,
-    note_id: &str,
-) {
-    let conn = match db.connect() {
-        Ok(conn) => conn,
-        Err(error) => {
-            log::warn!("voice note realtime transcription could not open database: {error}");
-            return;
-        }
-    };
-    let transcript = match get_voice_note_transcript_record(&conn, note_id, notes_dir) {
-        Ok(transcript) => transcript,
-        Err(error) => {
-            log::warn!("voice note realtime transcription could not read transcript: {error}");
-            return;
-        }
-    };
-    let transcript = transcript.trim();
-    if is_unfinished_realtime_transcript(transcript) {
-        if let Err(error) = mark_voice_note_transcription_failed_record(
-            &conn,
-            note_id,
-            "unavailable",
-            "No realtime transcript was captured",
-            notes_dir,
-            emitter.as_ref(),
-        ) {
-            log::warn!("voice note realtime transcription unavailable update failed: {error}");
-        }
-        return;
-    }
-    let speaker_labels = match get_voice_note_record(&conn, note_id) {
-        Ok(Some(voice_note)) => voice_note.speaker_labels,
-        Ok(None) => {
-            log::warn!("voice note realtime transcription missing voice note {note_id}");
-            return;
-        }
-        Err(error) => {
-            log::warn!("voice note realtime transcription could not read voice note: {error}");
-            return;
-        }
-    };
-    let input = CompleteVoiceNoteTranscriptInput {
-        note_id: note_id.to_string(),
-        transcript: transcript.to_string(),
-        summary: None,
-        action_items: Vec::new(),
-        speaker_labels,
-    };
-    if let Err(error) =
-        complete_voice_note_transcript_record(&conn, &input, notes_dir, emitter.as_ref())
-    {
-        log::warn!("voice note realtime transcription completion failed for {note_id}: {error}");
-        return;
-    }
-    enqueue_voice_note_summary_job_async(
-        db.clone(),
-        notes_dir.to_path_buf(),
-        Arc::clone(emitter),
-        Arc::clone(search_client),
-        note_id,
-    );
-}
-
-fn is_unfinished_realtime_transcript(transcript: &str) -> bool {
-    transcript.is_empty()
-        || transcript == "Transcription pending."
-        || transcript.starts_with("Transcription failed:")
-        || transcript.starts_with("Transcription unavailable:")
 }
 
 async fn run_voice_note_transcription_job(
