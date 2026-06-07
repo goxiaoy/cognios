@@ -884,11 +884,12 @@ pub fn append_voice_note_realtime_transcript(
         format_timestamp(input.start_ms.saturating_add(input.duration_ms)),
         transcript
     );
-    let replacement = if is_transcript_placeholder(existing_transcript) {
-        segment_line
-    } else {
-        format!("{existing_transcript}\n{segment_line}")
-    };
+    let replacement = merge_realtime_transcript_line(
+        existing_transcript,
+        &segment_line,
+        input.start_ms,
+        input.start_ms.saturating_add(input.duration_ms),
+    );
     write_voice_note_transcript_file(conn, &input.note_id, notes_dir, &replacement)?;
 
     for (speaker_id, label) in &input.speaker_labels {
@@ -1455,22 +1456,77 @@ fn usable_voice_note_transcript(text: &str) -> Option<String> {
     }
 }
 
+fn merge_realtime_transcript_line(
+    existing_transcript: &str,
+    segment_line: &str,
+    start_ms: u64,
+    end_ms: u64,
+) -> String {
+    if is_transcript_placeholder(existing_transcript) {
+        return segment_line.to_string();
+    }
+    if end_ms <= start_ms {
+        return format!("{existing_transcript}\n{segment_line}");
+    }
+
+    let new_range = (start_ms, end_ms);
+    let new_duration = end_ms - start_ms;
+    let existing_lines = existing_transcript.lines().collect::<Vec<_>>();
+    let existing_range_is_preferred = existing_lines.iter().any(|line| {
+        let Some(existing_range) = transcript_line_timestamp_range_ms(line.trim()) else {
+            return false;
+        };
+        if !ranges_substantially_overlap(existing_range, new_range) {
+            return false;
+        }
+        let existing_duration = existing_range.1.saturating_sub(existing_range.0);
+        existing_duration >= new_duration
+    });
+    if existing_range_is_preferred {
+        return existing_transcript.to_string();
+    }
+
+    let mut kept_lines = Vec::new();
+    for line in existing_lines {
+        let trimmed = line.trim();
+        let Some(existing_range) = transcript_line_timestamp_range_ms(trimmed) else {
+            kept_lines.push(trimmed.to_string());
+            continue;
+        };
+        if !ranges_substantially_overlap(existing_range, new_range) {
+            kept_lines.push(trimmed.to_string());
+            continue;
+        }
+    }
+
+    kept_lines.push(segment_line.to_string());
+    kept_lines.join("\n")
+}
+
 fn transcript_has_timestamps(text: &str) -> bool {
     text.lines()
         .any(|line| transcript_line_timestamp_ms(line).is_some())
 }
 
 fn transcript_line_timestamp_ms(line: &str) -> Option<u64> {
+    transcript_line_timestamp_range_ms(line).map(|(start, _)| start)
+}
+
+fn transcript_line_timestamp_range_ms(line: &str) -> Option<(u64, u64)> {
     let line = line.trim_start();
     let rest = line.strip_prefix('[')?;
     let end = rest.find(']')?;
     let range_or_timestamp = &rest[..end];
-    let start = range_or_timestamp
+    let (start, end) = range_or_timestamp
         .split_once('-')
-        .map(|(start, _)| start)
-        .unwrap_or(range_or_timestamp)
-        .trim();
-    parse_timestamp_ms(start)
+        .map(|(start, end)| (start.trim(), end.trim()))
+        .unwrap_or_else(|| {
+            let timestamp = range_or_timestamp.trim();
+            (timestamp, timestamp)
+        });
+    let start_ms = parse_timestamp_ms(start)?;
+    let end_ms = parse_timestamp_ms(end)?;
+    Some((start_ms, end_ms))
 }
 
 fn parse_timestamp_ms(raw: &str) -> Option<u64> {
@@ -1491,6 +1547,20 @@ fn parse_timestamp_ms(raw: &str) -> Option<u64> {
         _ => millis[..3].parse::<u64>().ok()?,
     };
     Some(minutes * 60_000 + seconds * 1_000 + millis)
+}
+
+fn ranges_substantially_overlap(existing: (u64, u64), new: (u64, u64)) -> bool {
+    let overlap_start = existing.0.max(new.0);
+    let overlap_end = existing.1.min(new.1);
+    if overlap_end <= overlap_start {
+        return false;
+    }
+
+    let overlap = overlap_end - overlap_start;
+    let existing_duration = existing.1.saturating_sub(existing.0);
+    let new_duration = new.1.saturating_sub(new.0);
+    let shorter = existing_duration.min(new_duration);
+    shorter > 0 && overlap.saturating_mul(100) >= shorter.saturating_mul(45)
 }
 
 fn read_voice_note_transcript_file(

@@ -613,6 +613,133 @@ fn realtime_transcript_appends_timestamped_lines_without_completing_note() {
 }
 
 #[test]
+fn realtime_transcript_replaces_overlapping_windowed_lines_with_full_utterance() {
+    let (app_dir, db_path, notes_dir) = setup();
+    let mut conn = open_database(&db_path).expect("database");
+    let recording_emitter = |_event: VfsChangeEvent| {};
+    let created = create_voice_note(
+        &mut conn,
+        &CreateVoiceNoteInput { parent_id: None },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("create voice note");
+
+    begin_voice_note_audio_capture(
+        &conn,
+        &BeginVoiceNoteAudioCaptureInput {
+            note_id: created.voice_note.note_id.clone(),
+            mime_type: Some("audio/wav".into()),
+            file_extension: Some("wav".into()),
+        },
+        app_dir.path(),
+        &notes_dir,
+        &recording_emitter,
+    )
+    .expect("begin capture");
+
+    for (start_ms, transcript) in [
+        (0, "Speaker 1: 那我们试一下最新的这个。"),
+        (2_000, "Speaker 1: A transceiver."),
+    ] {
+        append_voice_note_realtime_transcript(
+            &conn,
+            &AppendRealtimeTranscriptInput {
+                note_id: created.voice_note.note_id.clone(),
+                transcript: transcript.into(),
+                start_ms,
+                duration_ms: 2_000,
+                speaker_labels: BTreeMap::from([("speaker_1".into(), "Speaker 1".into())]),
+            },
+            &notes_dir,
+            &recording_emitter,
+        )
+        .expect("append windowed realtime transcript");
+    }
+
+    append_voice_note_realtime_transcript(
+        &conn,
+        &AppendRealtimeTranscriptInput {
+            note_id: created.voice_note.note_id.clone(),
+            transcript: "Speaker 1: 那我们试一下最新的这个TransGrid。".into(),
+            start_ms: 579,
+            duration_ms: 2_805,
+            speaker_labels: BTreeMap::from([("speaker_1".into(), "Speaker 1".into())]),
+        },
+        &notes_dir,
+        &recording_emitter,
+    )
+    .expect("append full realtime utterance");
+
+    let transcript = get_voice_note_transcript(&conn, &created.voice_note.note_id, &notes_dir)
+        .expect("transcript");
+    assert!(!transcript.contains("[00:00.000 - 00:02.000]"));
+    assert!(!transcript.contains("[00:02.000 - 00:04.000]"));
+    assert!(
+        transcript.contains("[00:00.579 - 00:03.384] Speaker 1: 那我们试一下最新的这个TransGrid。")
+    );
+}
+
+#[test]
+fn realtime_transcript_skips_shorter_overlap_after_full_utterance() {
+    let (app_dir, db_path, notes_dir) = setup();
+    let mut conn = open_database(&db_path).expect("database");
+    let recording_emitter = |_event: VfsChangeEvent| {};
+    let created = create_voice_note(
+        &mut conn,
+        &CreateVoiceNoteInput { parent_id: None },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("create voice note");
+
+    begin_voice_note_audio_capture(
+        &conn,
+        &BeginVoiceNoteAudioCaptureInput {
+            note_id: created.voice_note.note_id.clone(),
+            mime_type: Some("audio/wav".into()),
+            file_extension: Some("wav".into()),
+        },
+        app_dir.path(),
+        &notes_dir,
+        &recording_emitter,
+    )
+    .expect("begin capture");
+
+    append_voice_note_realtime_transcript(
+        &conn,
+        &AppendRealtimeTranscriptInput {
+            note_id: created.voice_note.note_id.clone(),
+            transcript: "Speaker 1: complete utterance".into(),
+            start_ms: 579,
+            duration_ms: 2_805,
+            speaker_labels: BTreeMap::from([("speaker_1".into(), "Speaker 1".into())]),
+        },
+        &notes_dir,
+        &recording_emitter,
+    )
+    .expect("append full realtime utterance");
+    append_voice_note_realtime_transcript(
+        &conn,
+        &AppendRealtimeTranscriptInput {
+            note_id: created.voice_note.note_id.clone(),
+            transcript: "Speaker 1: partial window".into(),
+            start_ms: 0,
+            duration_ms: 2_000,
+            speaker_labels: BTreeMap::from([("speaker_1".into(), "Speaker 1".into())]),
+        },
+        &notes_dir,
+        &recording_emitter,
+    )
+    .expect("append overlapping windowed transcript");
+
+    let transcript = get_voice_note_transcript(&conn, &created.voice_note.note_id, &notes_dir)
+        .expect("transcript");
+    assert!(transcript.contains("[00:00.579 - 00:03.384] Speaker 1: complete utterance"));
+    assert!(!transcript.contains("partial window"));
+}
+
+#[test]
 fn empty_audio_capture_failure_clears_unplayable_source_audio() {
     let (app_dir, db_path, notes_dir) = setup();
     let mut conn = open_database(&db_path).expect("database");
