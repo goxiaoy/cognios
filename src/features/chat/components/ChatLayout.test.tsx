@@ -394,6 +394,29 @@ describe("ChatLayout", () => {
     });
   });
 
+  it("does not submit persisted voice note realtime utterances to chat", async () => {
+    const client = makeClient();
+    mockRealtimeVoiceReady(client);
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    await readyComposer();
+    await screen.findByRole("button", { name: /start realtime voice chat/i });
+
+    await act(async () => {
+      eventMock.realtimeVoiceListener?.({
+        payload: {
+          kind: "final_utterance",
+          sessionId: "voice-note-1",
+          text: "voice note transcript line",
+          sequence: 3,
+          persisted: true,
+        },
+      });
+    });
+
+    expect(client.startTurn).not.toHaveBeenCalled();
+  });
+
   it("sends a prompt with Enter and shows the submitted prompt in the transcript", async () => {
     const client = makeClient();
     const createdSession = {

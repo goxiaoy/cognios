@@ -6,6 +6,7 @@ import type {
 export function chatQueryFromRealtimeVoiceEvent(
   event: RealtimeVoiceEvent
 ): string | null {
+  if (event.persisted) return null;
   if (event.kind !== "final_utterance") return null;
   const text = event.text.trim();
   return text || null;
