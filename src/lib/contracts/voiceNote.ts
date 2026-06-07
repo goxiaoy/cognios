@@ -1,7 +1,5 @@
 import type { ExplorerSnapshot } from "./vfs";
 
-export const AUDIO_TRANSCRIPT_MODEL_ROLE = "audio-transcript";
-
 export type VoiceNoteStatus =
   | "pending_audio"
   | "recording"

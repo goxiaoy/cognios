@@ -14,7 +14,6 @@ const ROLE_LABEL: Record<string, string> = {
   reranker: "Local GTE Reranker",
   ocr: "Local OCR",
   captioner: "Local Gemma",
-  "audio-transcript": "Qwen ASR",
 };
 
 type DockEntry = {
@@ -252,7 +251,7 @@ function deriveDockState(
 }
 
 function sortRoles(roles: ModelRoleStatus[]): ModelRoleStatus[] {
-  const ORDER = ["embedding", "reranker", "ocr", "captioner", "audio-transcript"] as const;
+  const ORDER = ["embedding", "reranker", "ocr", "captioner"] as const;
   const rank = new Map<string, number>(ORDER.map((r, i) => [r, i]));
   return [...roles].sort((a, b) => {
     const ra = rank.get(a.role) ?? ORDER.length;

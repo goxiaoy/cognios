@@ -16,7 +16,7 @@ function readySettings(): SearchSettings {
     version: 1,
     providers: {},
     features: {
-      "voice-notes": { enabled: true, providerId: "local-qwen-asr" },
+      "voice-notes": { enabled: true, providerId: "local-vllm-asr" },
       "result-reranking": { enabled: true, providerId: "local-gte-reranker" },
       "semantic-search": { enabled: true, providerId: "local-gte" },
     },
@@ -26,25 +26,10 @@ function readySettings(): SearchSettings {
   };
 }
 
-function singleAsrStatus() {
-  return {
-    state: "ready" as const,
-    data: {
-      roles: {
-        "audio-transcript": {
-          role: "audio-transcript",
-          state: "missing",
-          repo: "Qwen/Qwen3-ASR-0.6B",
-        },
-      },
-    },
-  };
-}
-
 afterEach(() => cleanup());
 
 describe("useAutoModelDownload", () => {
-  it("starts required startup downloads in embedding then reranker then ASR order", async () => {
+  it("starts required startup downloads in embedding then reranker order", async () => {
     const startModelDownload = vi.fn().mockResolvedValue(undefined);
     const client = makeStubSearchClient({
       settings: vi.fn().mockResolvedValue({ state: "ready", data: readySettings() }),
@@ -52,11 +37,6 @@ describe("useAutoModelDownload", () => {
         state: "ready",
         data: {
           roles: {
-            "audio-transcript": {
-              role: "audio-transcript",
-              state: "missing",
-              repo: "Qwen/Qwen3-ASR-0.6B",
-            },
             reranker: {
               role: "reranker",
               state: "missing",
@@ -76,16 +56,15 @@ describe("useAutoModelDownload", () => {
     render(<HookHarness client={client} />);
 
     await waitFor(() => {
-      expect(startModelDownload).toHaveBeenCalledTimes(3);
+      expect(startModelDownload).toHaveBeenCalledTimes(2);
     });
     expect(startModelDownload.mock.calls.map(([input]) => input.role)).toEqual([
       "embedding",
       "reranker",
-      "audio-transcript",
     ]);
   });
 
-  it("still downloads required voice-note ASR when first-run was previously skipped", async () => {
+  it("does not start a ModelManager download for vLLM-backed voice notes", async () => {
     const startModelDownload = vi.fn().mockResolvedValue(undefined);
     const client = makeStubSearchClient({
       settings: vi.fn().mockResolvedValue({
@@ -93,21 +72,21 @@ describe("useAutoModelDownload", () => {
         data: {
           ...readySettings(),
           features: {
-            "voice-notes": { enabled: true, providerId: "local-qwen-asr" },
+            "voice-notes": { enabled: true, providerId: "local-vllm-asr" },
           },
           firstRunSkipped: true,
         },
       }),
-      modelsStatus: vi.fn().mockResolvedValue(singleAsrStatus()),
+      modelsStatus: vi.fn().mockResolvedValue({
+        state: "ready",
+        data: { roles: {} },
+      }),
       startModelDownload,
     });
 
     render(<HookHarness client={client} />);
 
-    await waitFor(() => {
-      expect(startModelDownload).toHaveBeenCalledWith({
-        role: "audio-transcript",
-      });
-    });
+    await waitFor(() => expect(client.modelsStatus).not.toHaveBeenCalled());
+    expect(startModelDownload).not.toHaveBeenCalled();
   });
 });

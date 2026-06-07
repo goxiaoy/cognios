@@ -9,14 +9,14 @@ use crate::commands::realtime_voice::RealtimeVoiceEventPayload;
 use crate::domain::voice_note::VoiceNoteDto;
 use crate::infrastructure::db::connection::Database;
 use crate::services::realtime_voice::vllm::{
-    run_vllm_realtime_transcription, VllmRealtimeTranscriptEvent,
+    run_vllm_audio_file_transcription, run_vllm_realtime_transcription,
+    VllmRealtimeTranscriptEvent, VllmRealtimeTranscriptSegment,
 };
 use crate::services::search::{
     SearchSidecarClient, SidecarEnvelope, SidecarEnvelopeState, VoiceNoteSummaryRequestDto,
-    VoiceNoteSummaryResponseDto, VoiceNoteTranscriptionRequestDto,
-    VoiceNoteTranscriptionResponseDto, VoiceNoteWarmTranscriberResponseDto,
+    VoiceNoteSummaryResponseDto,
 };
-use crate::services::voice_notes::native_audio::{CompletedAudioSegment, NativeAudioCapture};
+use crate::services::voice_notes::native_audio::NativeAudioCapture;
 use crate::services::voice_notes::{
     append_voice_note_audio_chunk as append_voice_note_audio_chunk_record,
     append_voice_note_realtime_transcript as append_voice_note_realtime_transcript_record,
@@ -55,10 +55,6 @@ const TRANSCRIPTION_READY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const SUMMARY_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const SUMMARY_READY_TIMEOUT: Duration = Duration::from_secs(4 * 60);
 const REALTIME_TRANSCRIPTION_SEGMENT_POLL_INTERVAL: Duration = Duration::from_millis(200);
-const REALTIME_TRANSCRIPTION_RETRY_INTERVAL: Duration = Duration::from_secs(1);
-const REALTIME_TRANSCRIPTION_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
-const TRANSCRIBER_WARMUP_RETRY_INTERVAL: Duration = Duration::from_secs(1);
-const TRANSCRIBER_WARMUP_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 static VOICE_NOTE_SUMMARY_DRAIN_RUNNING: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
@@ -244,7 +240,6 @@ pub fn begin_native_voice_note_audio_capture(
         let _ = mark_voice_note_capture_failed_record(&conn, &input.note_id);
         return Err(error);
     }
-    spawn_voice_note_transcriber_warmup(Arc::clone(&state.search_client));
     spawn_realtime_voice_note_transcription(
         state.db.clone(),
         notes_dir,
@@ -253,6 +248,7 @@ pub fn begin_native_voice_note_audio_capture(
         Arc::clone(&state.search_client),
         Arc::clone(&state.voice_note_audio_capture),
         voice_note.note_id.clone(),
+        audio_path.to_string(),
     );
     Ok(voice_note)
 }
@@ -401,6 +397,7 @@ fn spawn_realtime_voice_note_transcription(
     search_client: Arc<SearchSidecarClient>,
     audio_capture: Arc<NativeAudioCapture>,
     note_id: String,
+    audio_path: String,
 ) {
     tauri::async_runtime::spawn(async move {
         run_realtime_voice_note_transcription_job(
@@ -411,76 +408,10 @@ fn spawn_realtime_voice_note_transcription(
             search_client,
             audio_capture,
             note_id,
+            audio_path,
         )
         .await;
     });
-}
-
-fn spawn_voice_note_transcriber_warmup(search_client: Arc<SearchSidecarClient>) {
-    tauri::async_runtime::spawn(async move {
-        warm_voice_note_transcriber(search_client).await;
-    });
-}
-
-async fn warm_voice_note_transcriber(search_client: Arc<SearchSidecarClient>) {
-    let started_at = Instant::now();
-    loop {
-        match search_client.warm_voice_note_transcriber().await {
-            SidecarEnvelope {
-                state: SidecarEnvelopeState::Ready,
-                data: Some(VoiceNoteWarmTranscriberResponseDto { status, error }),
-                ..
-            } => match status.as_str() {
-                "ready" => return,
-                "pending" => {
-                    if started_at.elapsed() >= TRANSCRIBER_WARMUP_READY_TIMEOUT {
-                        log::debug!(
-                            "voice note transcriber warmup timed out waiting for ASR model: {}",
-                            error.as_deref().unwrap_or("no detail provided")
-                        );
-                        return;
-                    }
-                }
-                "unavailable" | "failed" => {
-                    log::debug!(
-                        "voice note transcriber warmup {}: {}",
-                        status,
-                        error.as_deref().unwrap_or("no detail provided")
-                    );
-                    return;
-                }
-                other => {
-                    log::debug!("voice note transcriber warmup returned unknown status: {other}");
-                    return;
-                }
-            },
-            SidecarEnvelope {
-                state: SidecarEnvelopeState::Initialising,
-                ..
-            }
-            | SidecarEnvelope {
-                state: SidecarEnvelopeState::Unavailable,
-                ..
-            } => {
-                if started_at.elapsed() >= TRANSCRIBER_WARMUP_READY_TIMEOUT {
-                    log::debug!("voice note transcriber warmup could not reach the search sidecar");
-                    return;
-                }
-            }
-            SidecarEnvelope {
-                state: SidecarEnvelopeState::Ready,
-                data: None,
-                error,
-            } => {
-                log::debug!(
-                    "voice note transcriber warmup returned no response body: {}",
-                    error.as_deref().unwrap_or("no detail provided")
-                );
-                return;
-            }
-        }
-        tokio::time::sleep(TRANSCRIBER_WARMUP_RETRY_INTERVAL).await;
-    }
 }
 
 async fn run_realtime_voice_note_transcription_job(
@@ -491,6 +422,7 @@ async fn run_realtime_voice_note_transcription_job(
     search_client: Arc<SearchSidecarClient>,
     audio_capture: Arc<NativeAudioCapture>,
     note_id: String,
+    audio_path: String,
 ) {
     if let Some((websocket_url, model)) = realtime_voice_websocket_config(&search_client).await {
         match run_vllm_realtime_voice_note_transcription_job(
@@ -509,65 +441,17 @@ async fn run_realtime_voice_note_transcription_job(
             Ok(()) => return,
             Err(error) => {
                 log::warn!(
-                    "vLLM realtime voice note transcription failed for {note_id}; falling back to segment ASR: {error}"
+                    "vLLM realtime voice note transcription failed for {note_id}; retrying from saved audio: {error}"
                 );
             }
         }
     }
-    run_segment_realtime_voice_note_transcription_job(
-        db,
-        notes_dir,
-        emitter,
-        realtime_voice_emitter,
-        search_client,
-        audio_capture,
-        note_id,
-    )
-    .await;
-}
 
-async fn run_segment_realtime_voice_note_transcription_job(
-    db: Database,
-    notes_dir: PathBuf,
-    emitter: VfsEventEmitter,
-    realtime_voice_emitter: RealtimeVoiceEventEmitter,
-    search_client: Arc<SearchSidecarClient>,
-    audio_capture: Arc<NativeAudioCapture>,
-    note_id: String,
-) {
-    loop {
+    while audio_capture.is_recording_active(&note_id) {
         tokio::time::sleep(REALTIME_TRANSCRIPTION_SEGMENT_POLL_INTERVAL).await;
-        drain_realtime_voice_note_segments(
-            &db,
-            &notes_dir,
-            &emitter,
-            &realtime_voice_emitter,
-            &search_client,
-            &audio_capture,
-            &note_id,
-        )
-        .await;
-        if !audio_capture.is_recording_active(&note_id) {
-            drain_realtime_voice_note_segments(
-                &db,
-                &notes_dir,
-                &emitter,
-                &realtime_voice_emitter,
-                &search_client,
-                &audio_capture,
-                &note_id,
-            )
-            .await;
-            complete_realtime_voice_note_transcription(
-                &db,
-                &notes_dir,
-                &emitter,
-                &search_client,
-                &note_id,
-            );
-            return;
-        }
     }
+    run_voice_note_transcription_job(db, notes_dir, emitter, search_client, note_id, audio_path)
+        .await;
 }
 
 async fn realtime_voice_websocket_config(
@@ -582,6 +466,22 @@ async fn realtime_voice_websocket_config(
             .websocket_url
             .map(|websocket_url| (websocket_url, status.model)),
         _ => None,
+    }
+}
+
+async fn wait_for_realtime_voice_websocket_config(
+    search_client: &SearchSidecarClient,
+    timeout: Duration,
+) -> Option<(String, Option<String>)> {
+    let started_at = Instant::now();
+    loop {
+        if let Some(config) = realtime_voice_websocket_config(search_client).await {
+            return Some(config);
+        }
+        if started_at.elapsed() >= timeout {
+            return None;
+        }
+        tokio::time::sleep(TRANSCRIPTION_RETRY_INTERVAL).await;
     }
 }
 
@@ -678,178 +578,6 @@ async fn run_vllm_realtime_voice_note_transcription_job(
         }
         Ok(Err(error)) => Err(error),
         Err(error) => Err(format!("vLLM realtime voice task failed: {error}")),
-    }
-}
-
-async fn drain_realtime_voice_note_segments(
-    db: &Database,
-    notes_dir: &Path,
-    emitter: &VfsEventEmitter,
-    realtime_voice_emitter: &RealtimeVoiceEventEmitter,
-    search_client: &Arc<SearchSidecarClient>,
-    audio_capture: &NativeAudioCapture,
-    note_id: &str,
-) {
-    let segments = match audio_capture.take_completed_segments(note_id) {
-        Ok(segments) => segments,
-        Err(error) => {
-            log::warn!("voice note realtime transcription could not read segments: {error}");
-            return;
-        }
-    };
-    for segment in segments {
-        let Some(response) =
-            transcribe_realtime_voice_note_segment(search_client, note_id, &segment).await
-        else {
-            continue;
-        };
-        append_realtime_voice_note_segment_transcript(
-            db,
-            notes_dir,
-            emitter,
-            realtime_voice_emitter,
-            note_id,
-            &segment,
-            response,
-        );
-    }
-}
-
-async fn transcribe_realtime_voice_note_segment(
-    search_client: &SearchSidecarClient,
-    note_id: &str,
-    segment: &CompletedAudioSegment,
-) -> Option<VoiceNoteTranscriptionResponseDto> {
-    if !audio_path_has_samples(Path::new(&segment.path)) {
-        log::debug!(
-            "voice note realtime segment {} skipped because it has no audio samples",
-            segment.index
-        );
-        return None;
-    }
-    let started_at = Instant::now();
-    loop {
-        let request = VoiceNoteTranscriptionRequestDto {
-            note_id: note_id.to_string(),
-            audio_path: segment.path.clone(),
-            language: None,
-        };
-        match search_client.transcribe_voice_note(&request).await {
-            SidecarEnvelope {
-                state: SidecarEnvelopeState::Ready,
-                data: Some(response),
-                ..
-            } => match response.status.as_str() {
-                "completed" => return Some(response),
-                "pending" => {
-                    if started_at.elapsed() >= REALTIME_TRANSCRIPTION_READY_TIMEOUT {
-                        log::warn!(
-                            "voice note realtime segment {} timed out waiting for Qwen ASR",
-                            segment.index
-                        );
-                        return None;
-                    }
-                }
-                "unavailable" | "failed" => {
-                    log::warn!(
-                        "voice note realtime segment {} transcription {}: {}",
-                        segment.index,
-                        response.status,
-                        response.error.as_deref().unwrap_or("no detail provided")
-                    );
-                    return None;
-                }
-                other => {
-                    log::warn!(
-                        "voice note realtime segment {} returned unknown transcription status: {}",
-                        segment.index,
-                        other
-                    );
-                    return None;
-                }
-            },
-            SidecarEnvelope {
-                state: SidecarEnvelopeState::Initialising,
-                ..
-            }
-            | SidecarEnvelope {
-                state: SidecarEnvelopeState::Unavailable,
-                ..
-            } => {
-                if started_at.elapsed() >= REALTIME_TRANSCRIPTION_READY_TIMEOUT {
-                    log::warn!(
-                        "voice note realtime segment {} could not reach the search sidecar",
-                        segment.index
-                    );
-                    return None;
-                }
-            }
-            SidecarEnvelope {
-                state: SidecarEnvelopeState::Ready,
-                data: None,
-                error,
-            } => {
-                log::warn!(
-                    "voice note realtime segment {} returned no response body: {}",
-                    segment.index,
-                    error.as_deref().unwrap_or("no detail provided")
-                );
-                return None;
-            }
-        }
-        tokio::time::sleep(REALTIME_TRANSCRIPTION_RETRY_INTERVAL).await;
-    }
-}
-
-fn append_realtime_voice_note_segment_transcript(
-    db: &Database,
-    notes_dir: &Path,
-    emitter: &VfsEventEmitter,
-    realtime_voice_emitter: &RealtimeVoiceEventEmitter,
-    note_id: &str,
-    segment: &CompletedAudioSegment,
-    response: VoiceNoteTranscriptionResponseDto,
-) {
-    let Some(transcript) = response.transcript else {
-        log::warn!(
-            "voice note realtime segment {} completed without transcript text",
-            segment.index
-        );
-        return;
-    };
-    let conn = match db.connect() {
-        Ok(conn) => conn,
-        Err(error) => {
-            log::warn!("voice note realtime transcription could not open database: {error}");
-            return;
-        }
-    };
-    let input = AppendRealtimeTranscriptInput {
-        note_id: note_id.to_string(),
-        transcript: transcript.clone(),
-        start_ms: segment.start_ms,
-        duration_ms: segment.duration_ms,
-        speaker_labels: response.speaker_labels,
-    };
-    match append_voice_note_realtime_transcript_record(&conn, &input, notes_dir, emitter.as_ref()) {
-        Ok(_) => realtime_voice_emitter(RealtimeVoiceEventPayload::final_utterance(
-            note_id.to_string(),
-            format!("{note_id}:segment:{}", segment.index),
-            transcript,
-            segment.index,
-            1,
-            segment.start_ms,
-            Some(segment.start_ms.saturating_add(segment.duration_ms)),
-            true,
-        )),
-        Err(error) => {
-            log::warn!(
-                "voice note realtime transcript append failed for {} segment {}: {}",
-                note_id,
-                segment.index,
-                error
-            );
-        }
     }
 }
 
@@ -986,138 +714,44 @@ async fn run_voice_note_transcription_job(
         );
         return;
     }
-    let started_at = Instant::now();
-    loop {
-        let request = VoiceNoteTranscriptionRequestDto {
-            note_id: note_id.clone(),
-            audio_path: audio_path.clone(),
-            language: None,
-        };
-        match search_client.transcribe_voice_note(&request).await {
-            SidecarEnvelope {
-                state: SidecarEnvelopeState::Ready,
-                data: Some(response),
-                ..
-            } => match response.status.as_str() {
-                "completed" => {
-                    complete_background_transcription(
-                        &db,
-                        &notes_dir,
-                        &emitter,
-                        &search_client,
-                        &note_id,
-                        response,
-                    );
-                    return;
-                }
-                "pending" => {
-                    if started_at.elapsed() >= TRANSCRIPTION_READY_TIMEOUT {
-                        fail_background_transcription(
-                            &db,
-                            &notes_dir,
-                            &emitter,
-                            &note_id,
-                            "failed",
-                            response
-                                .error
-                                .as_deref()
-                                .unwrap_or("timed out waiting for Qwen ASR to become ready"),
-                        );
-                        return;
-                    }
-                }
-                "unavailable" => {
-                    fail_background_transcription(
-                        &db,
-                        &notes_dir,
-                        &emitter,
-                        &note_id,
-                        "unavailable",
-                        response
-                            .error
-                            .as_deref()
-                            .unwrap_or("Qwen ASR runtime is unavailable"),
-                    );
-                    return;
-                }
-                "failed" => {
-                    fail_background_transcription(
-                        &db,
-                        &notes_dir,
-                        &emitter,
-                        &note_id,
-                        "failed",
-                        response
-                            .error
-                            .as_deref()
-                            .unwrap_or("Qwen ASR transcription failed"),
-                    );
-                    return;
-                }
-                other => {
-                    fail_background_transcription(
-                        &db,
-                        &notes_dir,
-                        &emitter,
-                        &note_id,
-                        "failed",
-                        &format!("Qwen ASR returned unknown status: {other}"),
-                    );
-                    return;
-                }
-            },
-            SidecarEnvelope {
-                state: SidecarEnvelopeState::Initialising,
-                ..
-            } => {
-                if started_at.elapsed() >= TRANSCRIPTION_READY_TIMEOUT {
-                    fail_background_transcription(
-                        &db,
-                        &notes_dir,
-                        &emitter,
-                        &note_id,
-                        "failed",
-                        "timed out waiting for the search sidecar to start",
-                    );
-                    return;
-                }
-            }
-            SidecarEnvelope {
-                state: SidecarEnvelopeState::Unavailable,
-                error,
-                ..
-            } => {
-                if started_at.elapsed() >= TRANSCRIPTION_READY_TIMEOUT {
-                    fail_background_transcription(
-                        &db,
-                        &notes_dir,
-                        &emitter,
-                        &note_id,
-                        "unavailable",
-                        error.as_deref().unwrap_or("search sidecar is unavailable"),
-                    );
-                    return;
-                }
-            }
-            SidecarEnvelope {
-                state: SidecarEnvelopeState::Ready,
-                data: None,
-                error,
-            } => {
-                fail_background_transcription(
-                    &db,
-                    &notes_dir,
-                    &emitter,
-                    &note_id,
-                    "failed",
-                    error
-                        .as_deref()
-                        .unwrap_or("Qwen ASR returned no response body"),
-                );
-                return;
-            }
+    let Some((websocket_url, model)) =
+        wait_for_realtime_voice_websocket_config(&search_client, TRANSCRIPTION_READY_TIMEOUT).await
+    else {
+        fail_background_transcription(
+            &db,
+            &notes_dir,
+            &emitter,
+            &note_id,
+            "unavailable",
+            "Local realtime voice runtime is unavailable",
+        );
+        return;
+    };
+
+    match transcribe_saved_audio_with_vllm(websocket_url, model, &audio_path).await {
+        Ok(segments) if !segments.is_empty() => {
+            complete_vllm_background_transcription(
+                &db,
+                &notes_dir,
+                &emitter,
+                &search_client,
+                &note_id,
+                segments,
+            );
         }
-        tokio::time::sleep(TRANSCRIPTION_RETRY_INTERVAL).await;
+        Ok(_) => {
+            fail_background_transcription(
+                &db,
+                &notes_dir,
+                &emitter,
+                &note_id,
+                "failed",
+                "vLLM ASR completed without transcript text",
+            );
+        }
+        Err(error) => {
+            fail_background_transcription(&db, &notes_dir, &emitter, &note_id, "failed", &error);
+        }
     }
 }
 
@@ -1140,22 +774,52 @@ fn audio_path_has_samples(path: &Path) -> bool {
     true
 }
 
-fn complete_background_transcription(
+async fn transcribe_saved_audio_with_vllm(
+    websocket_url: String,
+    model: Option<String>,
+    audio_path: &str,
+) -> Result<Vec<VllmRealtimeTranscriptSegment>, String> {
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
+    let audio_path = PathBuf::from(audio_path);
+    let transcription_task = tauri::async_runtime::spawn(async move {
+        run_vllm_audio_file_transcription(websocket_url, model, &audio_path, event_tx).await
+    });
+    let mut segments = Vec::new();
+
+    while let Some(event) = event_rx.recv().await {
+        match event {
+            VllmRealtimeTranscriptEvent::Final(segment) => segments.push(segment),
+            VllmRealtimeTranscriptEvent::Provisional(_) => {}
+            VllmRealtimeTranscriptEvent::Error(message) => return Err(message),
+        }
+    }
+
+    match transcription_task.await {
+        Ok(Ok(())) => Ok(segments),
+        Ok(Err(error)) => Err(error),
+        Err(error) => Err(format!(
+            "vLLM saved-audio transcription task failed: {error}"
+        )),
+    }
+}
+
+fn complete_vllm_background_transcription(
     db: &Database,
     notes_dir: &Path,
     emitter: &VfsEventEmitter,
     search_client: &Arc<SearchSidecarClient>,
     note_id: &str,
-    response: VoiceNoteTranscriptionResponseDto,
+    segments: Vec<VllmRealtimeTranscriptSegment>,
 ) {
-    let Some(transcript) = response.transcript else {
+    let transcript = vllm_segments_to_transcript(&segments);
+    if transcript.trim().is_empty() {
         fail_background_transcription(
             db,
             notes_dir,
             emitter,
             note_id,
             "failed",
-            "Qwen ASR completed without transcript text",
+            "vLLM ASR completed without transcript text",
         );
         return;
     };
@@ -1168,10 +832,10 @@ fn complete_background_transcription(
     };
     let input = CompleteVoiceNoteTranscriptInput {
         note_id: note_id.to_string(),
-        transcript: transcript.clone(),
+        transcript,
         summary: None,
         action_items: Vec::new(),
-        speaker_labels: response.speaker_labels,
+        speaker_labels: Default::default(),
     };
     if let Err(error) =
         complete_voice_note_transcript_record(&conn, &input, notes_dir, emitter.as_ref())
@@ -1186,6 +850,40 @@ fn complete_background_transcription(
         Arc::clone(search_client),
         note_id,
     );
+}
+
+fn vllm_segments_to_transcript(segments: &[VllmRealtimeTranscriptSegment]) -> String {
+    segments
+        .iter()
+        .filter_map(|segment| {
+            let text = segment.text.trim();
+            if text.is_empty() {
+                return None;
+            }
+            match (segment.start_ms, segment.end_ms) {
+                (Some(start_ms), Some(end_ms)) if end_ms > start_ms => Some(format!(
+                    "[{} - {}] {}",
+                    format_transcript_timestamp(start_ms),
+                    format_transcript_timestamp(end_ms),
+                    text
+                )),
+                (Some(start_ms), _) => Some(format!(
+                    "[{}] {}",
+                    format_transcript_timestamp(start_ms),
+                    text
+                )),
+                _ => Some(text.to_string()),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_transcript_timestamp(duration_ms: u64) -> String {
+    let minutes = duration_ms / 60_000;
+    let seconds = (duration_ms % 60_000) / 1_000;
+    let millis = duration_ms % 1_000;
+    format!("{minutes:02}:{seconds:02}.{millis:03}")
 }
 
 fn enqueue_voice_note_summary_job_async(

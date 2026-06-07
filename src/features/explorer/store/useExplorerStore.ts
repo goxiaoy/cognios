@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { error as logError } from "../../../lib/logger";
 import type {
   NodeStatusChangedEvent,
@@ -31,6 +31,7 @@ export function useExplorerStore(client: ExplorerClient) {
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [activePreviewId, setActivePreviewId] = useState<string | null>(null);
   const [activeImagePreviewId, setActiveImagePreviewId] = useState<string | null>(null);
+  const snapshotVersionRef = useRef(0);
 
   const nodeIndex = useMemo(() => indexNodes(snapshot.roots), [snapshot]);
   const activeNote = activeNoteId ? (nodeIndex.get(activeNoteId) ?? null) : null;
@@ -49,6 +50,7 @@ export function useExplorerStore(client: ExplorerClient) {
     nextSnapshot: ExplorerSnapshot,
     options?: { refreshStatuses?: boolean }
   ) => {
+    snapshotVersionRef.current += 1;
     const nextIndex = indexNodes(nextSnapshot.roots);
     setSnapshot((prev) => {
       // Auto-expand only newly-added roots (or all roots on first non-empty
@@ -117,10 +119,12 @@ export function useExplorerStore(client: ExplorerClient) {
   );
 
   const refresh = useCallback(async () => {
+    const startedAtVersion = snapshotVersionRef.current;
     const [nextSnapshot] = await Promise.all([
       client.getExplorerSnapshot(),
       refreshNodeStatuses(),
     ]);
+    if (snapshotVersionRef.current !== startedAtVersion) return;
     applySnapshot(nextSnapshot, { refreshStatuses: false });
   }, [applySnapshot, client, refreshNodeStatuses]);
 

@@ -57,13 +57,13 @@ def test_default_settings_seeds_local_gte_and_semantic_search():
     assert s.features["advanced-ocr"].provider_id is None
     assert "local-paddleocr-advanced" in s.providers
     assert s.providers["local-paddleocr-advanced"].enabled is True
-    # Voice Notes is enabled by default and bound to the local Qwen
-    # ASR provider so the shared first-run model downloader can start
-    # preparing transcription without a separate bootstrap path.
-    assert "local-qwen-asr" in s.providers
-    assert s.providers["local-qwen-asr"].enabled is True
+    # Voice Notes is enabled by default and bound to the local vLLM
+    # ASR provider. The realtime runtime is packaged separately from
+    # ModelManager downloads.
+    assert "local-vllm-asr" in s.providers
+    assert s.providers["local-vllm-asr"].enabled is True
     assert s.features["voice-notes"].enabled is True
-    assert s.features["voice-notes"].provider_id == "local-qwen-asr"
+    assert s.features["voice-notes"].provider_id == "local-vllm-asr"
     # LLM is pre-bound to local Ollama and the built-in provider row
     # exists from first launch. Runtime availability is still probed
     # separately by the chat models endpoint, so missing Ollama shows
@@ -240,7 +240,7 @@ def test_migrate_backfills_pre_mandatory_local_features():
     ``{enabled: false, providerId: null}``. Boot-time migration must
     restore the default binding so the user isn't stuck with no
     provider picker (the row is now a Required badge). Voice Notes is
-    also required now and must default back to local Qwen ASR."""
+    also required now and must default back to local vLLM ASR."""
     settings = SearchSettings(
         providers={
             "local-gte": ProviderConfig(provider_id="local-gte"),
@@ -260,9 +260,27 @@ def test_migrate_backfills_pre_mandatory_local_features():
         migrated.features["result-reranking"].provider_id == "local-gte-reranker"
     )
     assert migrated.features["voice-notes"].enabled is True
-    assert migrated.features["voice-notes"].provider_id == "local-qwen-asr"
+    assert migrated.features["voice-notes"].provider_id == "local-vllm-asr"
     assert "local-gte-reranker" in migrated.providers
-    assert "local-qwen-asr" in migrated.providers
+    assert "local-vllm-asr" in migrated.providers
+
+
+def test_migrate_rebinds_legacy_qwen_asr_provider_to_vllm():
+    settings = default_settings()
+    settings.providers["local-qwen-asr"] = ProviderConfig(
+        provider_id="local-qwen-asr",
+        enabled=True,
+    )
+    settings.features["voice-notes"] = FeatureConfig(
+        enabled=True,
+        provider_id="local-qwen-asr",
+    )
+
+    migrated, changed = migrate_mandatory_features(settings)
+
+    assert changed is True
+    assert migrated.features["voice-notes"].provider_id == "local-vllm-asr"
+    assert "local-vllm-asr" in migrated.providers
 
 
 def test_migrate_preserves_explicit_non_default_binding():

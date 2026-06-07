@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  ModelRoleStatus,
-  ModelsStatus,
-  SidecarEnvelope,
-} from "../lib/contracts/search";
-import {
-  AUDIO_TRANSCRIPT_MODEL_ROLE,
-  type VoiceNote,
-} from "../lib/contracts/voiceNote";
+import type { VoiceNote } from "../lib/contracts/voiceNote";
 import { chatClient } from "../features/chat/api/chatClient";
 import { ChatLayout } from "../features/chat/components/ChatLayout";
 import { explorerClient } from "../features/explorer/api/explorerClient";
@@ -21,11 +13,6 @@ import type { MountSetupContext } from "../features/explorer/types/explorer";
 import { HomeDashboard } from "../features/home/components/HomeDashboard";
 import { searchClient } from "../features/search/api/searchClient";
 import { SearchPalette } from "../features/search/components/SearchPalette";
-import {
-  modelRolesAtOrAbovePriority,
-  startModelDownloadsInPriorityOrder,
-  type ModelDownloadStartResult,
-} from "../features/search/modelDownloadPriority";
 import { SettingsLayout } from "../features/settings/components/SettingsLayout";
 import { voiceNoteClient } from "../features/voice-notes/api/voiceNoteClient";
 import type {
@@ -47,8 +34,7 @@ const SECTION_LABELS: Record<AppSection, string> = {
   settings: "Settings",
 };
 
-const ASR_POLL_INTERVAL_MS = 1_000;
-const ASR_READY_TIMEOUT_MS = 30 * 60 * 1_000;
+const VOICE_NOTE_COMPLETION_TIMEOUT_MS = 30 * 60 * 1_000;
 
 interface ActiveVoiceNote {
   note: VoiceNote;
@@ -207,7 +193,6 @@ function AppShell() {
 
     setVoiceNoteStarting(true);
     try {
-      await ensureAsrReadyForVoiceNote(searchClient);
       const created = await voiceNoteClient.create({});
       explorerStore.applySnapshot(created.snapshot);
       if (shouldFocusExplorer) focusExplorerNode(created.voiceNote.noteId);
@@ -461,72 +446,6 @@ function AppShell() {
   );
 }
 
-async function ensureAsrReadyForVoiceNote(client: typeof searchClient): Promise<void> {
-  const deadline = Date.now() + ASR_READY_TIMEOUT_MS;
-  let current = await client.modelsStatus();
-  let kickedDownload = false;
-
-  while (Date.now() < deadline) {
-    const role = getAsrRole(current);
-    if (role?.state === "ready") return;
-    if (current.state !== "ready" || !current.data) {
-      throw new Error(current.error ?? "Search sidecar is not ready.");
-    }
-    if (!role) {
-      throw new Error("Qwen ASR model role is not configured in this sidecar.");
-    }
-    if (role.state === "error" && kickedDownload) {
-      throw new Error(role.error ?? "Qwen ASR download failed.");
-    }
-
-    if (
-      !kickedDownload &&
-      role.state !== "downloading" &&
-      role.state !== "verifying" &&
-      role.state !== "queued"
-    ) {
-      kickedDownload = true;
-      throwIfAsrStartFailed(
-        await startModelDownloadsInPriorityOrder(
-          client,
-          modelRolesAtOrAbovePriority(current.data.roles, AUDIO_TRANSCRIPT_MODEL_ROLE)
-        )
-      );
-    } else {
-      await delay(ASR_POLL_INTERVAL_MS);
-    }
-
-    current = await client.modelsStatus();
-  }
-
-  throw new Error("Timed out waiting for Qwen ASR to finish downloading.");
-}
-
-function getAsrRole(
-  models: SidecarEnvelope<ModelsStatus> | null
-): ModelRoleStatus | null {
-  if (models?.state !== "ready" || !models.data) return null;
-  return models.data.roles[AUDIO_TRANSCRIPT_MODEL_ROLE] ?? null;
-}
-
-function throwIfAsrStartFailed(results: ModelDownloadStartResult[]): void {
-  const failedAsr = results.find(
-    (result) =>
-      result.role === AUDIO_TRANSCRIPT_MODEL_ROLE &&
-      result.status === "rejected" &&
-      !isAlreadyDownloadingError(result.reason)
-  );
-  if (!failedAsr || failedAsr.status !== "rejected") return;
-  throw failedAsr.reason instanceof Error
-    ? failedAsr.reason
-    : new Error(String(failedAsr.reason));
-}
-
-function isAlreadyDownloadingError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
-  return message.toLowerCase().includes("already downloading");
-}
-
 function isTerminalVoiceNotePhase(phase: VoiceNoteRecordingPhase): boolean {
   return phase === "complete" || phase === "failed";
 }
@@ -535,7 +454,7 @@ async function monitorVoiceNoteCompletion(
   noteId: string,
   onDone: (voiceNote: VoiceNote) => void
 ): Promise<void> {
-  const deadline = Date.now() + ASR_READY_TIMEOUT_MS;
+  const deadline = Date.now() + VOICE_NOTE_COMPLETION_TIMEOUT_MS;
   while (Date.now() < deadline) {
     await delay(2_000);
     const next = await voiceNoteClient.get(noteId);

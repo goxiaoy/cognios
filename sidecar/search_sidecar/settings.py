@@ -171,9 +171,9 @@ def default_settings() -> SearchSettings:
     state once the first-run downloads complete. PaddleOCR ships
     bundled inside the rapidocr-onnxruntime wheel, so image-ocr has
     no download cost — that's why it's mandatory rather than opt-in.
-    Voice Notes is also enabled by default so the app can prepare
-    Qwen3-ASR through the same model-download path before a recording
-    starts. Image captioning is still optional pending the local Gemma path.
+    Voice Notes is also enabled by default and uses the packaged
+    realtime voice runtime instead of a ModelManager download role.
+    Image captioning is still optional pending the local Gemma path.
     """
     return SearchSettings(
         providers={
@@ -196,8 +196,8 @@ def default_settings() -> SearchSettings:
                 provider_id="local-paddleocr-advanced",
                 enabled=True,
             ),
-            "local-qwen-asr": ProviderConfig(
-                provider_id="local-qwen-asr",
+            "local-vllm-asr": ProviderConfig(
+                provider_id="local-vllm-asr",
                 enabled=True,
             ),
             "local-ollama": ProviderConfig(
@@ -227,7 +227,7 @@ def default_settings() -> SearchSettings:
             "advanced-ocr": FeatureConfig(enabled=False, provider_id=None),
             "voice-notes": FeatureConfig(
                 enabled=True,
-                provider_id="local-qwen-asr",
+                provider_id="local-vllm-asr",
             ),
             "llm": FeatureConfig(enabled=True, provider_id="local-ollama"),
             "web-search": FeatureConfig(enabled=False, provider_id=None),
@@ -309,6 +309,18 @@ def migrate_mandatory_features(
         if default_feature is None:
             continue
         existing = settings.features.get(fid)
+        if (
+            fid == "voice-notes"
+            and existing is not None
+            and existing.provider_id == "local-qwen-asr"
+        ):
+            settings.features[fid] = default_feature.model_copy()
+            settings.providers.setdefault(
+                "local-vllm-asr",
+                defaults.providers["local-vllm-asr"].model_copy(),
+            )
+            changed = True
+            continue
         if existing is None:
             settings.features[fid] = default_feature.model_copy()
             changed = True

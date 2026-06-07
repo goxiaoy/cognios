@@ -82,23 +82,6 @@ DEFAULTS: dict[str, ModelSpec] = {
             FileSpec("config.json", "dfa5713436ecb4616eaa576795c8d3efd1f03122031a1ad4973d0b6b7e7edfd3", 1578),
         ),
     ),
-    "audio-transcript": ModelSpec(
-        role="audio-transcript",
-        repo="Daumee/Qwen3-ASR-0.6B-ONNX-CPU",
-        commit="3899991c15f9912d5e60ff5a79156d7d2253506c",
-        files=(
-            FileSpec("config.json", "6bf99722c5718e589cdd9b890aa9d40a50679706df58eed2ff8e45e322984f21", 540),
-            FileSpec("onnx_inference.py", "cff41b9365da762dc5622b981e31181ae5109f32bcd592661bfc8966de6461c9", 19763),
-            FileSpec("tokenizer.json", "bd2a97b55c8f7f9c328c73ee9b9178771037e9f566dfca8e238a063d41cbac92", 11429377),
-            FileSpec("onnx_models/decoder_init.int8.onnx", "e96bab74bb98d0a314450212b81f549b01a4f89b761a805af4434ea66085d58b", 598209770),
-            FileSpec("onnx_models/decoder_step.int8.onnx", "8defa34b3c7da14efd48b1985e61db29f7a31bc953978b089fa2c26b48188684", 598232806),
-            FileSpec("onnx_models/embed_tokens.bin", "c77cb3289031b1cb647e0134272489dfaac23c455a3f04c5b76ece7fd5bc8b04", 622329856),
-            FileSpec("onnx_models/encoder_conv.onnx", "11c1b1afba35d11a2291e48b4527a9a212755bb914652587a5f95bf63c72bfe9", 5526),
-            FileSpec("onnx_models/encoder_conv.onnx.data", "aedca0cfaa422ba79e8556173adcbe8fa896d3b11a6e423d68ba9e38594467fe", 49676288),
-            FileSpec("onnx_models/encoder_transformer.onnx", "58162cf640da0c91384ab322bb40287274ca2961799eee81a610155014202c34", 130438),
-            FileSpec("onnx_models/encoder_transformer.onnx.data", "af252ced774e9dee12923691915e1e0d1eb9a0b2bcb695f935838faef98acd24", 701431808),
-        ),
-    ),
     # OCR + captioner roles intentionally absent from the basic manifest:
     #
     # - Local OCR (basic) is served by ``rapidocr-onnxruntime`` (PP-OCRv4

@@ -23,6 +23,16 @@ function makeClient(snapshot: { roots: unknown[] }) {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("useExplorerStore", () => {
   const baseSnapshot = {
     roots: [
@@ -378,6 +388,45 @@ describe("useExplorerStore", () => {
       result.current.applySnapshot(trimmed);
     });
     expect(result.current.selectedArtifactIds).toEqual(["note-1"]);
+  });
+
+  it("does not let an older refresh overwrite a newer applied snapshot", async () => {
+    const initialSnapshot = deferred<{ roots: unknown[] }>();
+    const client = makeClient({ roots: [] });
+    client.getExplorerSnapshot.mockReturnValueOnce(initialSnapshot.promise);
+    const { result } = renderHook(() => useExplorerStore(client));
+
+    let refreshPromise!: Promise<void>;
+    await act(async () => {
+      refreshPromise = result.current.refresh();
+    });
+
+    const createdSnapshot = {
+      roots: [
+        {
+          id: "voice-1",
+          parentId: null,
+          name: "Voice Note",
+          kind: "note",
+          state: "ready",
+          createdAt: "2026-05-11 10:00:00",
+          modifiedAt: "2026-05-11 10:00:00",
+          sizeBytes: 0,
+          children: [],
+        },
+      ],
+    } as Parameters<typeof result.current.applySnapshot>[0];
+    act(() => {
+      result.current.applySnapshot(createdSnapshot);
+    });
+
+    await act(async () => {
+      initialSnapshot.resolve({ roots: [] });
+      await refreshPromise;
+    });
+
+    expect(result.current.snapshot.roots).toHaveLength(1);
+    expect(result.current.snapshot.roots[0].id).toBe("voice-1");
   });
 
   it("toggleNode flips expansion state", async () => {

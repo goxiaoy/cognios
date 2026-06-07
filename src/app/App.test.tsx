@@ -58,6 +58,7 @@ vi.mock("../lib/tauri/ipc", () => ({
   completeVoiceNoteTranscript: vi.fn(),
   beginVoiceNoteAudioCapture: vi.fn(),
   appendVoiceNoteAudioChunk: vi.fn(),
+  appendRealtimeVoiceNoteTranscript: vi.fn(),
   finishVoiceNoteAudioCapture: vi.fn(),
   beginNativeVoiceNoteAudioCapture: (input: unknown) => beginNativeVoiceNoteAudioCapture(input),
   finishNativeVoiceNoteAudioCapture: (input: unknown) => finishNativeVoiceNoteAudioCapture(input),
@@ -220,13 +221,7 @@ function readyModels() {
   return {
     state: "ready",
     data: {
-      roles: {
-        "audio-transcript": {
-          role: "audio-transcript",
-          state: "ready",
-          repo: "Qwen/Qwen3-ASR-0.6B",
-        },
-      },
+      roles: {},
     },
   };
 }

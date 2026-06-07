@@ -122,7 +122,7 @@ export function VoiceNoteRecordingPreview({
                 <p>Recording microphone audio locally. Live captions require the local realtime voice runtime; the final transcript is generated from saved audio.</p>
               ) : null}
               {session.phase === "transcribing" ? (
-                <p>Finalizing the saved audio with Qwen ASR.</p>
+                <p>Finalizing the saved audio with the local realtime voice runtime.</p>
               ) : null}
               {session.phase === "complete" ? (
                 <p>Transcript saved. Source recording remains available above.</p>

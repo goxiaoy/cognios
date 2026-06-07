@@ -37,8 +37,9 @@ from typing import Literal
 # with embedded tables and LaTeX formulas — distinct from the basic
 # ``ocr`` capability which only returns flat detected text.
 # ``audio-transcript`` powers Voice Notes transcription from captured
-# meeting audio. ``llm`` is the general text-generation slot shared by
-# Chat, memory refresh, and Voice Note summarization.
+# meeting audio via the local realtime voice runtime. ``llm`` is the
+# general text-generation slot shared by Chat, memory refresh, and
+# Voice Note summarization.
 Capability = Literal[
     "embedding",
     "reranking",
@@ -79,7 +80,7 @@ class ProviderPreset:
 #   local-gte-reranker             ✓
 #   local-paddleocr                                  ✓
 #   local-paddleocr-advanced                                ✓
-#   local-qwen-asr                                               ✓
+#   local-vllm-asr                                               ✓
 #   local-ollama                                                     ✓
 #   openai              ✓                    ✓     ✓       ✓         ✓
 #   qwen-dashscope                           ✓     ✓       ✓         ✓
@@ -150,13 +151,13 @@ PRESETS: dict[str, ProviderPreset] = {
         },
         auth_kind="none",
     ),
-    "local-qwen-asr": ProviderPreset(
-        provider_id="local-qwen-asr",
-        display_name="Local Qwen ASR",
+    "local-vllm-asr": ProviderPreset(
+        provider_id="local-vllm-asr",
+        display_name="Local vLLM ASR",
         provider_type="local",
         capabilities=frozenset({"audio-transcript"}),
         default_model_per_capability={
-            "audio-transcript": "Qwen3-ASR-0.6B-ONNX-CPU",
+            "audio-transcript": "Qwen/Qwen3-ASR-0.6B",
         },
         auth_kind="none",
     ),

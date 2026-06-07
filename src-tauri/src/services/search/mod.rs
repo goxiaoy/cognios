@@ -31,8 +31,7 @@ pub use client::{
     NodeEventKind, ProviderConfigDto, RealtimeVoiceStatusDto, RecentIndexedNodeCountDto,
     SearchInput, SearchObservabilityDto, SearchResponseDto, SearchResultDto, SearchSettingsDto,
     SearchSidecarClient, SidecarEnvelope, SidecarEnvelopeState, TokenUsageSummaryDto,
-    VoiceNoteSummaryRequestDto, VoiceNoteSummaryResponseDto, VoiceNoteTranscriptionRequestDto,
-    VoiceNoteTranscriptionResponseDto, VoiceNoteWarmTranscriberResponseDto,
+    VoiceNoteSummaryRequestDto, VoiceNoteSummaryResponseDto,
 };
 pub use index_state_sync::{apply_search_index_transitions, SearchIndexTransition};
 pub use runtime_file::{read_runtime_file, RuntimeFile, RuntimeFileError};

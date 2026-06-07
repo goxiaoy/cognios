@@ -1041,7 +1041,7 @@ fn mark_transcription_unavailable_updates_metadata_and_transcript_file() {
         &conn,
         &created.voice_note.note_id,
         "unavailable",
-        "Qwen ASR ONNX runtime script is missing\nredownload the voice-note model",
+        "Local realtime voice runtime is unavailable\ncheck realtime voice packaging",
         &notes_dir,
         &recording_emitter,
     )
@@ -1052,10 +1052,10 @@ fn mark_transcription_unavailable_updates_metadata_and_transcript_file() {
     let transcript = get_voice_note_transcript(&conn, &created.voice_note.note_id, &notes_dir)
         .expect("transcript");
     assert!(transcript.contains(
-        "Transcription unavailable: Qwen ASR ONNX runtime script is missing redownload the voice-note model"
+        "Transcription unavailable: Local realtime voice runtime is unavailable check realtime voice packaging"
     ));
     let body = get_note_content(&created.voice_note.note_id, &notes_dir).expect("body");
-    assert!(!body.contains("Qwen ASR ONNX runtime script is missing"));
+    assert!(!body.contains("Local realtime voice runtime is unavailable"));
     assert!(
         events
             .borrow()

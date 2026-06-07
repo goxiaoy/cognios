@@ -4,7 +4,6 @@ import type { SearchClient } from "./types/search";
 const MODEL_DOWNLOAD_PRIORITY = [
   "embedding",
   "reranker",
-  "audio-transcript",
 ] as const;
 
 const NON_STARTABLE_STATES = new Set(["ready", "downloading", "verifying", "queued"]);

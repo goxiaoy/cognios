@@ -43,7 +43,7 @@ def test_realtime_voice_status_fails_closed_without_packaged_runtime(monkeypatch
     assert "not packaged" in body["reason"]
 
 
-def test_realtime_voice_status_ignores_ready_onnx_model_without_vllm_runtime(monkeypatch):
+def test_realtime_voice_status_ignores_ready_model_manager_roles_without_vllm_runtime(monkeypatch):
     monkeypatch.delenv("COGNIOS_REALTIME_VOICE_RUNTIME_PATH", raising=False)
     monkeypatch.delenv("COGNIOS_REALTIME_VOICE_WS_URL", raising=False)
     monkeypatch.delenv("COGNIOS_REALTIME_VOICE_ALLOW_EXTERNAL", raising=False)
@@ -61,7 +61,7 @@ def test_realtime_voice_status_ignores_ready_onnx_model_without_vllm_runtime(mon
     assert body["websocket_url"] is None
 
 
-def test_realtime_voice_status_ignores_missing_onnx_model_without_vllm_runtime(
+def test_realtime_voice_status_ignores_missing_model_manager_roles_without_vllm_runtime(
     monkeypatch,
 ):
     monkeypatch.delenv("COGNIOS_REALTIME_VOICE_RUNTIME_PATH", raising=False)
@@ -279,14 +279,14 @@ while True:
 
 
 class _FakeReadyModelManager:
-    manifest = {"audio-transcript": object()}
+    manifest = {"embedding": object()}
 
     def is_ready(self, role: str) -> bool:
-        return role == "audio-transcript"
+        return role == "embedding"
 
 
 class _FakeMissingModelManager:
-    manifest = {"audio-transcript": object()}
+    manifest = {"embedding": object()}
 
     def is_ready(self, _role: str) -> bool:
         return False

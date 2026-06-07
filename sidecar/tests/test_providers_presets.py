@@ -24,7 +24,7 @@ def test_v1_presets_cover_known_providers():
         "local-gte-reranker",
         "local-paddleocr",
         "local-paddleocr-advanced",
-        "local-qwen-asr",
+        "local-vllm-asr",
         "local-ollama",
         "openai",
         "qwen-dashscope",
@@ -83,7 +83,7 @@ def test_capability_matrix_matches_v1_decision():
     - local-gte-reranker → reranking
     - local-paddleocr → ocr
     - local-paddleocr-advanced → advanced-ocr (PP-StructureV3 bundle)
-    - local-qwen-asr → audio-transcript (Qwen3-ASR ONNX CPU)
+    - local-vllm-asr → audio-transcript (packaged realtime voice runtime)
     - local-ollama → llm
     - openai → embedding + vision + ocr + advanced-ocr + llm
     - qwen-dashscope → vision + ocr + advanced-ocr + llm
@@ -97,7 +97,7 @@ def test_capability_matrix_matches_v1_decision():
     assert PRESETS["local-paddleocr-advanced"].capabilities == frozenset(
         {"advanced-ocr"}
     )
-    assert PRESETS["local-qwen-asr"].capabilities == frozenset(
+    assert PRESETS["local-vllm-asr"].capabilities == frozenset(
         {"audio-transcript"}
     )
     assert PRESETS["local-ollama"].capabilities == frozenset({"llm"})
@@ -149,7 +149,7 @@ def test_presets_with_capability_filters_correctly():
 
     audio_transcript_providers = presets_with_capability("audio-transcript")
     audio_transcript_ids = {p.provider_id for p in audio_transcript_providers}
-    assert audio_transcript_ids == {"local-qwen-asr"}
+    assert audio_transcript_ids == {"local-vllm-asr"}
 
     web_providers = presets_with_capability("web-search")
     web_ids = {p.provider_id for p in web_providers}

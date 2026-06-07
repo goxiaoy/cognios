@@ -72,7 +72,6 @@ UV_PROJECT_ENVIRONMENT="$PACKAGING_VENV" uv run --exact --no-default-groups --wi
   --exclude-module torchvision \
   --exclude-module torchaudio \
   --exclude-module transformers \
-  --exclude-module qwen_asr \
   --exclude-module av \
   --exclude-module openpyxl \
   --exclude-module matplotlib \

@@ -100,18 +100,18 @@ describe("FeatureRow", () => {
     expect(screen.queryByRole("switch")).toBeNull();
   });
 
-  it("hides the toggle for required voice notes and defaults to Qwen ASR", () => {
+  it("hides the toggle for required voice notes and defaults to vLLM ASR", () => {
     expect(VOICE_NOTES.mandatory).toBe(true);
     render(
       <FeatureRow
         meta={VOICE_NOTES}
-        config={{ enabled: true, providerId: "local-qwen-asr" }}
+        config={{ enabled: true, providerId: "local-vllm-asr" }}
         settings={baseSettings()}
         client={makeStubSearchClient()}
         onSettingsChange={vi.fn()}
       />
     );
-    expect(screen.getByText("Qwen ASR")).toBeInTheDocument();
+    expect(screen.getByText("vLLM ASR")).toBeInTheDocument();
     expect(screen.queryByRole("switch")).toBeNull();
   });
 

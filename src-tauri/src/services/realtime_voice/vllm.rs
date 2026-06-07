@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::time::Duration;
 
 use base64::{engine::general_purpose, Engine as _};
@@ -26,6 +27,37 @@ pub struct VllmRealtimeTranscriptSegment {
     pub revision: Option<u64>,
     pub start_ms: Option<u64>,
     pub end_ms: Option<u64>,
+}
+
+pub async fn run_vllm_audio_file_transcription(
+    websocket_url: String,
+    model: Option<String>,
+    audio_path: &Path,
+    event_tx: mpsc::Sender<VllmRealtimeTranscriptEvent>,
+) -> Result<(), String> {
+    let chunks = wav_audio_file_chunks(audio_path)?;
+    let (audio_tx, audio_rx) = mpsc::channel(32);
+    let realtime_task = tokio::spawn(run_vllm_realtime_transcription(
+        websocket_url,
+        model,
+        audio_rx,
+        event_tx,
+    ));
+
+    for chunk in chunks {
+        audio_tx
+            .send(chunk)
+            .await
+            .map_err(|_| "realtime ASR audio stream closed before file finished".to_string())?;
+    }
+    drop(audio_tx);
+
+    match realtime_task.await {
+        Ok(result) => result,
+        Err(error) => Err(format!(
+            "vLLM saved-audio transcription task failed: {error}"
+        )),
+    }
 }
 
 pub async fn run_vllm_realtime_transcription(
@@ -152,6 +184,41 @@ pub async fn run_vllm_realtime_transcription(
             }
         }
     }
+}
+
+fn wav_audio_file_chunks(audio_path: &Path) -> Result<Vec<RealtimeAudioChunk>, String> {
+    let mut reader = hound::WavReader::open(audio_path).map_err(|error| {
+        format!("vLLM saved-audio transcription only supports readable WAV files: {error}")
+    })?;
+    let spec = reader.spec();
+    if spec.sample_format != hound::SampleFormat::Int || spec.bits_per_sample != 16 {
+        return Err(
+            "vLLM saved-audio transcription only supports 16-bit PCM WAV files".to_string(),
+        );
+    }
+    if spec.channels == 0 || spec.sample_rate == 0 {
+        return Err("voice note WAV file has invalid audio format".to_string());
+    }
+
+    let samples = reader
+        .samples::<i16>()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to read voice note WAV samples: {error}"))?;
+    if samples.is_empty() {
+        return Err("voice note audio file has no audio samples".to_string());
+    }
+
+    let channels = usize::from(spec.channels);
+    let frames_per_chunk = ((spec.sample_rate / 10).max(1)) as usize;
+    let samples_per_chunk = frames_per_chunk.saturating_mul(channels).max(channels);
+    Ok(samples
+        .chunks(samples_per_chunk)
+        .map(|samples| RealtimeAudioChunk {
+            samples: samples.to_vec(),
+            sample_rate: spec.sample_rate,
+            channels: spec.channels,
+        })
+        .collect())
 }
 
 fn realtime_event_from_message(
@@ -368,5 +435,30 @@ mod tests {
         assert_eq!(i16::from_le_bytes([bytes[0], bytes[1]]), 10);
         assert_eq!(i16::from_le_bytes([bytes[2], bytes[3]]), -20);
         assert_eq!(i16::from_le_bytes([bytes[4], bytes[5]]), 30);
+    }
+
+    #[test]
+    fn reads_pcm_wav_file_into_realtime_chunks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("voice.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&path, spec).expect("wav writer");
+        for sample in 0..3_200 {
+            writer.write_sample(sample as i16).expect("sample");
+        }
+        writer.finalize().expect("finalize wav");
+
+        let chunks = wav_audio_file_chunks(&path).expect("chunks");
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].sample_rate, 16_000);
+        assert_eq!(chunks[0].channels, 1);
+        assert_eq!(chunks[0].samples.len(), 1_600);
+        assert_eq!(chunks[1].samples[0], 1_600);
     }
 }

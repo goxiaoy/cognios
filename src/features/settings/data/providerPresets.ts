@@ -97,15 +97,14 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     localRoleId: "advanced-ocr-",
   },
   {
-    providerId: "local-qwen-asr",
-    displayName: "Local Qwen ASR",
+    providerId: "local-vllm-asr",
+    displayName: "Local vLLM ASR",
     providerType: "local",
     capabilities: ["audio-transcript"],
     defaultModelPerCapability: {
-      "audio-transcript": "Qwen3-ASR-0.6B",
+      "audio-transcript": "Qwen/Qwen3-ASR-0.6B",
     },
     authKind: "none",
-    localRoleId: "audio-transcript",
   },
   {
     providerId: "local-ollama",
@@ -296,7 +295,7 @@ export const FEATURE_CATALOG: readonly FeatureMeta[] = [
     featureId: "voice-notes",
     displayName: "Voice notes",
     description:
-      "Required. Transcribes meeting audio locally with Qwen3-ASR 0.6B. The model downloads automatically on startup.",
+      "Required. Transcribes meeting audio locally with the realtime voice runtime.",
     capability: "audio-transcript",
     mandatory: true,
     comingSoon: false,

@@ -17,7 +17,7 @@
 //! `POST /models/download` (SSE) uses a Tauri-event bridge for
 //! streaming progress.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,8 +29,6 @@ use super::supervisor::{SearchSidecarSupervisor, SupervisorState};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CHAT_MEMORY_REFRESH_TIMEOUT: Duration = Duration::from_secs(4 * 60);
-const VOICE_NOTE_TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-const VOICE_NOTE_TRANSCRIBER_WARMUP_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const VOICE_NOTE_SUMMARY_TIMEOUT: Duration = Duration::from_secs(4 * 60);
 
 /// All Tauri-facing sidecar commands return one of these envelopes.
@@ -709,34 +707,11 @@ pub struct ModelDownloadEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
-pub struct VoiceNoteTranscriptionRequestDto {
-    pub note_id: String,
-    pub audio_path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub language: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
 pub struct VoiceNoteSummaryRequestDto {
     pub note_id: String,
     pub transcript: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
-pub struct VoiceNoteTranscriptionResponseDto {
-    pub status: String,
-    #[serde(default)]
-    pub transcript: Option<String>,
-    #[serde(default)]
-    pub language: Option<String>,
-    #[serde(default)]
-    pub speaker_labels: BTreeMap<String, String>,
-    #[serde(default)]
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -749,14 +724,6 @@ pub struct VoiceNoteSummaryResponseDto {
     pub action_items: Vec<String>,
     #[serde(default)]
     pub provider: Option<serde_json::Value>,
-    #[serde(default)]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
-pub struct VoiceNoteWarmTranscriberResponseDto {
-    pub status: String,
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -964,35 +931,12 @@ impl SearchSidecarClient {
             .await
     }
 
-    pub async fn transcribe_voice_note(
-        &self,
-        body: &VoiceNoteTranscriptionRequestDto,
-    ) -> SidecarEnvelope<VoiceNoteTranscriptionResponseDto> {
-        self.post_envelope_with_timeout(
-            "/voice-notes/transcribe",
-            body,
-            VOICE_NOTE_TRANSCRIPTION_TIMEOUT,
-        )
-        .await
-    }
-
     pub async fn summarize_voice_note(
         &self,
         body: &VoiceNoteSummaryRequestDto,
     ) -> SidecarEnvelope<VoiceNoteSummaryResponseDto> {
         self.post_envelope_with_timeout("/voice-notes/summarize", body, VOICE_NOTE_SUMMARY_TIMEOUT)
             .await
-    }
-
-    pub async fn warm_voice_note_transcriber(
-        &self,
-    ) -> SidecarEnvelope<VoiceNoteWarmTranscriberResponseDto> {
-        self.post_envelope_with_timeout(
-            "/voice-notes/warm-transcriber",
-            &serde_json::json!({}),
-            VOICE_NOTE_TRANSCRIBER_WARMUP_TIMEOUT,
-        )
-        .await
     }
 
     pub async fn chat_turn_stream<F>(
@@ -1447,51 +1391,6 @@ mod tests {
         }"#;
         let parsed: ModelRoleStatusDto = serde_json::from_str(legacy).expect("legacy decode");
         assert_eq!(parsed.repo, "");
-    }
-
-    #[test]
-    fn voice_note_transcription_round_trips_between_sidecar_and_tauri() {
-        let request = VoiceNoteTranscriptionRequestDto {
-            note_id: "note-1".to_string(),
-            audio_path: "/tmp/source.webm".to_string(),
-            language: None,
-        };
-        let to_python = serde_json::to_value(&request).expect("serialize request");
-        assert_eq!(to_python["note_id"], "note-1");
-        assert_eq!(to_python["audio_path"], "/tmp/source.webm");
-        assert!(to_python.get("language").is_none());
-
-        let from_python = r#"{
-            "status": "completed",
-            "transcript": "Speaker 1: hello",
-            "language": "English",
-            "speaker_labels": {"speaker_1": "Speaker 1"},
-            "error": null
-        }"#;
-        let parsed: VoiceNoteTranscriptionResponseDto =
-            serde_json::from_str(from_python).expect("decode response");
-        assert_eq!(parsed.status, "completed");
-        assert_eq!(parsed.transcript.as_deref(), Some("Speaker 1: hello"));
-        assert_eq!(parsed.speaker_labels["speaker_1"], "Speaker 1");
-
-        let to_ts = serde_json::to_value(&parsed).unwrap();
-        assert_eq!(to_ts["speakerLabels"]["speaker_1"], "Speaker 1");
-        assert!(to_ts.get("speaker_labels").is_none());
-    }
-
-    #[test]
-    fn voice_note_transcriber_warmup_round_trips_between_sidecar_and_tauri() {
-        let from_python = r#"{
-            "status": "ready",
-            "error": null
-        }"#;
-        let parsed: VoiceNoteWarmTranscriberResponseDto =
-            serde_json::from_str(from_python).expect("decode response");
-        assert_eq!(parsed.status, "ready");
-        assert!(parsed.error.is_none());
-
-        let to_ts = serde_json::to_value(&parsed).unwrap();
-        assert_eq!(to_ts["status"], "ready");
     }
 
     #[test]

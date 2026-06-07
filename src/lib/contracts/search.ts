@@ -179,8 +179,7 @@ export type ModelRoleName =
   | "embedding"
   | "reranker"
   | "ocr"
-  | "captioner"
-  | "audio-transcript";
+  | "captioner";
 
 export type ModelRoleStateName =
   | "missing"

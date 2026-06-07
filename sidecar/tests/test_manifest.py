@@ -14,13 +14,13 @@ from search_sidecar.models.manifest import (
 
 def test_manifest_covers_v1_local_roles():
     """v1 ships local model files for embedding + reranker (basic OCR
-    is served by the bundled rapidocr-onnxruntime wheel), the
-    Qwen3-ASR voice-note role, plus the PP-StructureV3 advanced-OCR
-    bundle (13 stage roles) that downloads on demand when the user
-    enables advanced OCR. Captioning stays cloud-only in v1 —
-    intentionally absent from the manifest."""
+    is served by the bundled rapidocr-onnxruntime wheel), plus the
+    PP-StructureV3 advanced-OCR bundle (13 stage roles) that downloads
+    on demand when the user enables advanced OCR. Voice Notes uses the
+    packaged realtime voice runtime rather than a ModelManager role."""
     role_ids = set(DEFAULTS.keys())
-    assert {"embedding", "reranker", "audio-transcript"}.issubset(role_ids)
+    assert {"embedding", "reranker"}.issubset(role_ids)
+    assert "audio-transcript" not in role_ids
     advanced = {r for r in role_ids if r.startswith("advanced-ocr-")}
     assert len(advanced) == 13, f"expected 13 PP-StructureV3 stages, got {advanced}"
 
@@ -29,18 +29,6 @@ def test_each_role_lists_at_least_one_file():
     for role, spec in DEFAULTS.items():
         assert spec.files, f"{role!r} has no files"
         assert all(f.name for f in spec.files), f"{role!r} has empty file names"
-
-
-def test_audio_transcript_uses_downloaded_onnx_runtime_bundle():
-    spec = DEFAULTS["audio-transcript"]
-    file_names = {file.name for file in spec.files}
-
-    assert spec.repo == "Daumee/Qwen3-ASR-0.6B-ONNX-CPU"
-    assert "onnx_inference.py" in file_names
-    assert "tokenizer.json" in file_names
-    assert "onnx_models/decoder_init.int8.onnx" in file_names
-    assert "onnx_models/embed_tokens.bin" in file_names
-    assert all(file.sha256 != PLACEHOLDER_SHA256 for file in spec.files)
 
 
 def test_is_pinned_detects_placeholder_state():
