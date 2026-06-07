@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 use crate::domain::node_status::{StageState, StageUpdate};
 use crate::domain::vfs::node::ExplorerSnapshotDto;
 use crate::domain::voice_note::VoiceNoteDto;
+use crate::infrastructure::db::background_task_repository::{
+    background_task_is_running, cancel_background_tasks, claim_next_background_task,
+    complete_background_task, enqueue_background_task, fail_background_task,
+    has_queued_background_tasks, recover_background_tasks, BackgroundTask, BackgroundTaskFailure,
+};
 use crate::infrastructure::db::node_repository::list_snapshot;
 use crate::infrastructure::db::node_status_repository::{
     ensure_default_stages_for_node, update_stage,
@@ -22,14 +27,15 @@ use crate::services::notes::save_note_content::{emit_note_saved, write_note_cont
 
 pub mod native_audio;
 
-const SOURCE_START: &str = "<!-- voice-note:source:start -->";
-const SOURCE_END: &str = "<!-- voice-note:source:end -->";
 const TRANSCRIPT_START: &str = "<!-- voice-note:transcript:start -->";
 const TRANSCRIPT_END: &str = "<!-- voice-note:transcript:end -->";
 const SUMMARY_START: &str = "<!-- voice-note:summary:start -->";
 const SUMMARY_END: &str = "<!-- voice-note:summary:end -->";
 const ACTION_ITEMS_START: &str = "<!-- voice-note:action-items:start -->";
 const ACTION_ITEMS_END: &str = "<!-- voice-note:action-items:end -->";
+const SUMMARY_HEADING: &str = "## Summary";
+const ACTION_ITEMS_HEADING: &str = "## Action Items";
+const VOICE_SUMMARY_TASK_TYPE: &str = "voice.summary";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -93,6 +99,23 @@ pub struct CompleteVoiceNoteSummaryInput {
     pub summary: String,
     pub action_items: Vec<String>,
 }
+
+pub type VoiceNoteSummaryJob = BackgroundTask;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceNoteTranscriptionJob {
+    pub note_id: String,
+    pub audio_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceNoteProcessingRecovery {
+    pub interrupted_recordings: usize,
+    pub transcription_jobs: Vec<VoiceNoteTranscriptionJob>,
+    pub failed_transcriptions: usize,
+}
+
+pub type VoiceNoteSummaryJobFailure = BackgroundTaskFailure;
 
 #[derive(Debug, Clone)]
 pub struct AppendRealtimeTranscriptInput {
@@ -214,7 +237,7 @@ pub fn create_voice_note(
     update_stage(
         conn,
         &node_id,
-        "content.index",
+        "search.index",
         &StageUpdate::pending("Waiting for transcript"),
     )
     .map_err(|error| error.to_string())?;
@@ -315,7 +338,9 @@ fn voice_note_title_for_current_time(conn: &Connection) -> Result<String, String
 }
 
 fn default_voice_note_body(_title: &str) -> String {
-    "## Source Audio\n\n<!-- voice-note:source:start -->\nRecording has not started yet.\n<!-- voice-note:source:end -->\n\n## Summary\n\n<!-- voice-note:summary:start -->\nSummary unavailable until transcript is complete.\n<!-- voice-note:summary:end -->\n\n## Action Items\n\n<!-- voice-note:action-items:start -->\nNo action items yet.\n<!-- voice-note:action-items:end -->\n".to_string()
+    format!(
+        "{SUMMARY_HEADING}\n\nSummary unavailable until transcript is complete.\n\n{ACTION_ITEMS_HEADING}\n\nNo action items yet.\n"
+    )
 }
 
 pub fn complete_voice_note_transcript(
@@ -404,7 +429,7 @@ pub fn complete_voice_note_transcript(
     update_stage(
         conn,
         &input.note_id,
-        "content.index",
+        "search.index",
         &StageUpdate::pending("Waiting to index transcript"),
     )
     .map_err(|error| error.to_string())?;
@@ -413,6 +438,304 @@ pub fn complete_voice_note_transcript(
 
     get_voice_note(conn, &input.note_id)?
         .ok_or_else(|| "voice note metadata missing after transcript update".to_string())
+}
+
+pub fn recover_interrupted_voice_note_processing(
+    conn: &Connection,
+    notes_dir: &Path,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<VoiceNoteProcessingRecovery, String> {
+    let interrupted_note_ids = {
+        let mut stmt = conn
+            .prepare(
+                "
+                SELECT note_id
+                FROM voice_notes
+                WHERE status = 'recording'
+                   OR capture_status = 'recording'
+                ORDER BY updated_at ASC, note_id ASC
+                ",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| error.to_string())?;
+        rows
+    };
+
+    let mut interrupted_recordings = 0;
+    for note_id in interrupted_note_ids {
+        recover_interrupted_recording(conn, &note_id, notes_dir, emitter)?;
+        interrupted_recordings += 1;
+    }
+
+    let pending_rows = {
+        let mut stmt = conn
+            .prepare(
+                "
+                SELECT note_id, source_audio_path
+                FROM voice_notes
+                WHERE capture_status = 'completed'
+                  AND transcription_status IN ('pending', 'transcribing')
+                ORDER BY updated_at ASC, note_id ASC
+                ",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| error.to_string())?;
+        rows
+    };
+
+    let mut transcription_jobs = Vec::new();
+    let mut failed_transcriptions = 0;
+    for (note_id, audio_path) in pending_rows {
+        let Some(audio_path) = audio_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string)
+        else {
+            mark_voice_note_transcription_failed(
+                conn,
+                &note_id,
+                "failed",
+                "Audio unavailable after restart",
+                notes_dir,
+                emitter,
+            )?;
+            failed_transcriptions += 1;
+            continue;
+        };
+        if !Path::new(&audio_path).exists() {
+            mark_voice_note_transcription_failed(
+                conn,
+                &note_id,
+                "failed",
+                "Audio unavailable after restart",
+                notes_dir,
+                emitter,
+            )?;
+            failed_transcriptions += 1;
+            continue;
+        }
+
+        conn.execute(
+            "
+            UPDATE voice_notes
+            SET status = 'transcribing',
+                transcription_status = 'pending',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE note_id = ?1
+            ",
+            [&note_id],
+        )
+        .map_err(|error| error.to_string())?;
+        update_stage(
+            conn,
+            &note_id,
+            "voice.transcribe",
+            &StageUpdate::pending("Transcription queued after restart"),
+        )
+        .map_err(|error| error.to_string())?;
+        emit_note_saved(&note_id, emitter);
+        transcription_jobs.push(VoiceNoteTranscriptionJob {
+            note_id,
+            audio_path,
+        });
+    }
+
+    Ok(VoiceNoteProcessingRecovery {
+        interrupted_recordings,
+        transcription_jobs,
+        failed_transcriptions,
+    })
+}
+
+fn recover_interrupted_recording(
+    conn: &Connection,
+    note_id: &str,
+    notes_dir: &Path,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<(), String> {
+    let voice_note =
+        get_voice_note(conn, note_id)?.ok_or_else(|| "voice note not found".to_string())?;
+    remove_file_if_exists(voice_note.source_audio_path.as_deref())?;
+    let transcript = read_voice_note_transcript_file(conn, note_id, notes_dir)?;
+    if let Some(transcript) = usable_voice_note_transcript(transcript.trim()) {
+        complete_voice_note_transcript(
+            conn,
+            &CompleteVoiceNoteTranscriptInput {
+                note_id: note_id.to_string(),
+                transcript,
+                summary: None,
+                action_items: Vec::new(),
+                speaker_labels: voice_note.speaker_labels,
+            },
+            notes_dir,
+            emitter,
+        )?;
+        conn.execute(
+            "
+            UPDATE voice_notes
+            SET capture_status = 'failed',
+                source_audio_path = NULL,
+                source_audio_deleted_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE note_id = ?1
+            ",
+            [note_id],
+        )
+        .map_err(|error| error.to_string())?;
+    } else {
+        mark_voice_note_transcription_failed(
+            conn,
+            note_id,
+            "failed",
+            "Recording was interrupted because the app quit unexpectedly",
+            notes_dir,
+            emitter,
+        )?;
+        conn.execute(
+            "
+            UPDATE voice_notes
+            SET capture_status = 'failed',
+                source_audio_path = NULL,
+                source_audio_deleted_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE note_id = ?1
+            ",
+            [note_id],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    emit_note_saved(note_id, emitter);
+    Ok(())
+}
+
+pub fn enqueue_voice_note_summary_job(
+    conn: &Connection,
+    note_id: &str,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<VoiceNoteDto, String> {
+    let voice_note =
+        get_voice_note(conn, note_id)?.ok_or_else(|| "voice note not found".to_string())?;
+    if voice_note.transcription_status != "completed" {
+        return Err("voice note transcript is not completed".to_string());
+    }
+
+    enqueue_background_task(conn, note_id, VOICE_SUMMARY_TASK_TYPE, None, 3)?;
+    mark_voice_note_summary_queued(conn, note_id, "Summary queued", emitter)?;
+    get_voice_note(conn, note_id)?
+        .ok_or_else(|| "voice note metadata missing after summary enqueue".to_string())
+}
+
+pub fn recover_voice_note_summary_jobs(
+    conn: &Connection,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<usize, String> {
+    recover_background_tasks(conn, VOICE_SUMMARY_TASK_TYPE)?;
+
+    let mut stmt = conn
+        .prepare(
+            "
+            SELECT t.node_id
+            FROM background_tasks t
+            JOIN voice_notes v ON v.note_id = t.node_id
+            WHERE t.task_type = ?1
+              AND t.status = 'queued'
+              AND v.transcription_status = 'completed'
+            ORDER BY t.updated_at ASC, t.node_id ASC
+            ",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = stmt
+        .query_map([VOICE_SUMMARY_TASK_TYPE], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?;
+    let note_ids = rows
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| error.to_string())?;
+    drop(stmt);
+
+    for note_id in &note_ids {
+        mark_voice_note_summary_queued(conn, note_id, "Summary queued", emitter)?;
+    }
+    Ok(note_ids.len())
+}
+
+pub fn has_queued_voice_note_summary_jobs(conn: &Connection) -> Result<bool, String> {
+    has_queued_background_tasks(conn, VOICE_SUMMARY_TASK_TYPE)
+}
+
+pub fn claim_next_voice_note_summary_job(
+    conn: &Connection,
+) -> Result<Option<VoiceNoteSummaryJob>, String> {
+    claim_next_background_task(conn, VOICE_SUMMARY_TASK_TYPE)
+}
+
+pub fn complete_voice_note_summary_job(
+    conn: &Connection,
+    job: &VoiceNoteSummaryJob,
+) -> Result<bool, String> {
+    complete_background_task(conn, job)
+}
+
+pub fn voice_note_summary_job_is_running(
+    conn: &Connection,
+    job: &VoiceNoteSummaryJob,
+) -> Result<bool, String> {
+    background_task_is_running(conn, job)
+}
+
+pub fn fail_voice_note_summary_job(
+    conn: &Connection,
+    job: &VoiceNoteSummaryJob,
+    message: &str,
+    retryable: bool,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<VoiceNoteSummaryJobFailure, String> {
+    let outcome = fail_background_task(conn, job, message, retryable)?;
+    if outcome == BackgroundTaskFailure::Requeued {
+        mark_voice_note_summary_queued(conn, &job.node_id, "Summary retry queued", emitter)?;
+    }
+    Ok(outcome)
+}
+
+pub fn cancel_voice_note_summary_jobs(conn: &Connection, note_id: &str) -> Result<(), String> {
+    cancel_background_tasks(conn, note_id, VOICE_SUMMARY_TASK_TYPE)
+}
+
+fn mark_voice_note_summary_queued(
+    conn: &Connection,
+    note_id: &str,
+    message: &str,
+    emitter: &dyn Fn(VfsChangeEvent),
+) -> Result<(), String> {
+    conn.execute(
+        "
+        UPDATE voice_notes
+        SET summary_status = 'pending',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE note_id = ?1
+        ",
+        [note_id],
+    )
+    .map_err(|error| error.to_string())?;
+    update_stage(
+        conn,
+        note_id,
+        "voice.summarize",
+        &StageUpdate::pending(message),
+    )
+    .map_err(|error| error.to_string())?;
+    emit_note_saved(note_id, emitter);
+    Ok(())
 }
 
 pub fn begin_voice_note_summary(
@@ -492,7 +815,7 @@ pub fn complete_voice_note_summary(
     update_stage(
         conn,
         &input.note_id,
-        "content.index",
+        "search.index",
         &StageUpdate::pending("Waiting to index summary"),
     )
     .map_err(|error| error.to_string())?;
@@ -608,7 +931,7 @@ pub fn begin_voice_note_audio_capture(
     conn: &Connection,
     input: &BeginVoiceNoteAudioCaptureInput,
     storage_dir: &Path,
-    notes_dir: &Path,
+    _notes_dir: &Path,
     emitter: &dyn Fn(VfsChangeEvent),
 ) -> Result<VoiceNoteDto, String> {
     get_voice_note(conn, &input.note_id)?.ok_or_else(|| "voice note not found".to_string())?;
@@ -619,15 +942,6 @@ pub fn begin_voice_note_audio_capture(
         audio_file_extension(input.file_extension.as_deref(), input.mime_type.as_deref());
     let audio_path = audio_dir.join(format!("source.{extension}"));
     fs::File::create(&audio_path).map_err(|error| error.to_string())?;
-
-    let existing_body = get_note_content(&input.note_id, notes_dir)?;
-    let body = replace_section(
-        &existing_body,
-        SOURCE_START,
-        SOURCE_END,
-        "Recording in progress. Source audio is being written locally.",
-    );
-    write_note_content(conn, &input.note_id, &body, notes_dir)?;
 
     conn.execute(
         "
@@ -678,7 +992,7 @@ pub fn append_voice_note_audio_chunk(
 pub fn finish_voice_note_audio_capture(
     conn: &Connection,
     input: &FinishVoiceNoteAudioCaptureInput,
-    notes_dir: &Path,
+    _notes_dir: &Path,
     emitter: &dyn Fn(VfsChangeEvent),
 ) -> Result<VoiceNoteDto, String> {
     let voice_note =
@@ -696,19 +1010,6 @@ pub fn finish_voice_note_audio_capture(
         mark_voice_note_capture_failed(conn, &input.note_id)?;
         return Err("voice note source audio is empty".to_string());
     }
-
-    let file_name = audio_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("source audio");
-    let duration = input
-        .duration_ms
-        .map(format_duration)
-        .unwrap_or_else(|| "duration unknown".to_string());
-    let source_text = format!("Source audio saved locally as `{file_name}` ({duration}).");
-    let existing_body = get_note_content(&input.note_id, notes_dir)?;
-    let body = replace_section(&existing_body, SOURCE_START, SOURCE_END, &source_text);
-    write_note_content(conn, &input.note_id, &body, notes_dir)?;
 
     conn.execute(
         "
@@ -833,6 +1134,7 @@ pub fn begin_voice_note_retranscription(
     if !Path::new(source_audio_path).exists() {
         return Err("voice note source audio file is missing".to_string());
     }
+    cancel_voice_note_summary_jobs(conn, &input.note_id)?;
 
     conn.execute(
         "
@@ -873,7 +1175,7 @@ pub fn begin_voice_note_retranscription(
     update_stage(
         conn,
         &input.note_id,
-        "content.index",
+        "search.index",
         &StageUpdate::pending("Waiting for transcript"),
     )
     .map_err(|error| error.to_string())?;
@@ -913,7 +1215,7 @@ pub fn rename_voice_note_speaker(
 pub fn delete_voice_note_source_audio(
     conn: &Connection,
     input: &VoiceNoteInput,
-    notes_dir: &Path,
+    _notes_dir: &Path,
     emitter: &dyn Fn(VfsChangeEvent),
 ) -> Result<VoiceNoteDto, String> {
     let voice_note =
@@ -927,15 +1229,6 @@ pub fn delete_voice_note_source_audio(
             std::fs::remove_file(path).map_err(|error| error.to_string())?;
         }
     }
-
-    let existing_body = get_note_content(&input.note_id, notes_dir)?;
-    let body = replace_section(
-        &existing_body,
-        SOURCE_START,
-        SOURCE_END,
-        "Source audio has been deleted.",
-    );
-    write_note_content(conn, &input.note_id, &body, notes_dir)?;
 
     conn.execute(
         "
@@ -1017,19 +1310,9 @@ fn render_completed_voice_note_body(
     };
 
     let without_transcript = remove_voice_note_transcript_section(existing_body);
-    let with_source = replace_section(
-        &without_transcript,
-        SOURCE_START,
-        SOURCE_END,
-        "Source audio retained with the voice note when recording is available.",
-    );
-    let with_summary = replace_section(&with_source, SUMMARY_START, SUMMARY_END, summary);
-    replace_section(
-        &with_summary,
-        ACTION_ITEMS_START,
-        ACTION_ITEMS_END,
-        &action_items,
-    )
+    let without_source = remove_markdown_section(&without_transcript, "## Source Audio");
+    let with_summary = replace_markdown_section(&without_source, SUMMARY_HEADING, summary);
+    replace_markdown_section(&with_summary, ACTION_ITEMS_HEADING, &action_items)
 }
 
 fn render_voice_note_summary_body(
@@ -1046,31 +1329,68 @@ fn render_voice_note_summary_body(
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let with_summary = replace_section(existing_body, SUMMARY_START, SUMMARY_END, summary);
-    replace_section(
-        &with_summary,
-        ACTION_ITEMS_START,
-        ACTION_ITEMS_END,
-        &action_items,
+    let with_summary = replace_markdown_section(existing_body, SUMMARY_HEADING, summary);
+    replace_markdown_section(&with_summary, ACTION_ITEMS_HEADING, &action_items)
+}
+
+fn replace_markdown_section(existing: &str, heading: &str, replacement: &str) -> String {
+    let existing = strip_legacy_voice_note_markers(existing);
+    let Some(start_index) = existing.find(heading) else {
+        return append_markdown_section(&existing, heading, replacement);
+    };
+    let content_start = start_index + heading.len();
+    let rest = &existing[content_start..];
+    let relative_end_index = rest.find("\n## ").unwrap_or(rest.len());
+    let end_index = content_start + relative_end_index;
+    format!(
+        "{}\n\n{}\n{}",
+        existing[..content_start].trim_end(),
+        replacement.trim(),
+        existing[end_index..].trim_start_matches('\n')
     )
 }
 
-fn replace_section(existing: &str, start: &str, end: &str, replacement: &str) -> String {
-    let Some(start_index) = existing.find(start) else {
-        return append_section(existing, start, end, replacement);
-    };
-    let content_start = start_index + start.len();
-    let Some(relative_end_index) = existing[content_start..].find(end) else {
-        return append_section(existing, start, end, replacement);
-    };
-    let end_index = content_start + relative_end_index;
+fn append_markdown_section(existing: &str, heading: &str, replacement: &str) -> String {
+    let existing = existing.trim_end();
+    if existing.is_empty() {
+        format!("{heading}\n\n{}\n", replacement.trim())
+    } else {
+        format!("{existing}\n\n{heading}\n\n{}\n", replacement.trim())
+    }
+}
 
-    format!(
-        "{}\n{}\n{}",
-        &existing[..content_start],
-        replacement,
-        &existing[end_index..]
-    )
+fn remove_markdown_section(existing: &str, heading: &str) -> String {
+    let existing = strip_legacy_voice_note_markers(existing);
+    let Some(start_index) = existing.find(heading) else {
+        return existing;
+    };
+    let content_start = start_index + heading.len();
+    let rest = &existing[content_start..];
+    let relative_end_index = rest.find("\n## ").unwrap_or(rest.len());
+    let end_index = content_start + relative_end_index;
+    let before = existing[..start_index].trim_end();
+    let after = existing[end_index..].trim_start();
+    if before.is_empty() {
+        if after.is_empty() {
+            String::new()
+        } else {
+            format!("{after}\n")
+        }
+    } else if after.is_empty() {
+        format!("{before}\n")
+    } else {
+        format!("{before}\n\n{after}")
+    }
+}
+
+fn strip_legacy_voice_note_markers(existing: &str) -> String {
+    existing
+        .replace("<!-- voice-note:source:start -->", "")
+        .replace("<!-- voice-note:source:end -->", "")
+        .replace(SUMMARY_START, "")
+        .replace(SUMMARY_END, "")
+        .replace(ACTION_ITEMS_START, "")
+        .replace(ACTION_ITEMS_END, "")
 }
 
 fn remove_voice_note_transcript_section(existing: &str) -> String {
@@ -1171,15 +1491,6 @@ fn parse_timestamp_ms(raw: &str) -> Option<u64> {
         _ => millis[..3].parse::<u64>().ok()?,
     };
     Some(minutes * 60_000 + seconds * 1_000 + millis)
-}
-
-fn append_section(existing: &str, start: &str, end: &str, replacement: &str) -> String {
-    let separator = if existing.ends_with('\n') {
-        "\n"
-    } else {
-        "\n\n"
-    };
-    format!("{existing}{separator}{start}\n{replacement}\n{end}\n")
 }
 
 fn read_voice_note_transcript_file(
@@ -1372,17 +1683,6 @@ fn remove_file_if_exists(path: Option<&str>) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.to_string()),
-    }
-}
-
-fn format_duration(duration_ms: u64) -> String {
-    let total_seconds = (duration_ms + 500) / 1000;
-    let minutes = total_seconds / 60;
-    let seconds = total_seconds % 60;
-    if minutes == 0 {
-        format!("{seconds}s")
-    } else {
-        format!("{minutes}m {seconds:02}s")
     }
 }
 

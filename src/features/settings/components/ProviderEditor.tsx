@@ -56,6 +56,8 @@ export function ProviderEditor({
   const [pendingSecretForConsent, setPendingSecretForConsent] = useState<
     string | null
   >(null);
+  const [pendingConfiguredForConsent, setPendingConfiguredForConsent] =
+    useState(false);
   const canEditConfig = preset.authKind === "none" && Boolean(preset.baseUrl);
 
   useEffect(() => {
@@ -125,6 +127,55 @@ export function ProviderEditor({
       setHasSecret(true);
       onKeyPresenceChange?.(preset.providerId, true);
       setSecret("");
+      setState({ kind: "saved" });
+      onClose();
+    } catch (err) {
+      setState({
+        kind: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  function handleUseConfiguredProvider() {
+    if (
+      preset.providerType === "cloud" &&
+      !settings.cloudConsentAcked.includes(preset.providerId)
+    ) {
+      setPendingConfiguredForConsent(true);
+      return;
+    }
+    void persistConfiguredProvider(settings.cloudConsentAcked);
+  }
+
+  async function persistConfiguredProvider(cloudConsentAcked: string[]) {
+    setState({ kind: "validating" });
+    try {
+      const nextProviders: SearchSettings["providers"] = {
+        ...settings.providers,
+        [preset.providerId]: {
+          providerId: preset.providerId,
+          enabled: true,
+          apiKeyRef: config?.apiKeyRef ?? `env-file://cogios/.env#${preset.providerId}`,
+          baseUrl: config?.baseUrl ?? null,
+          modelPerCapability: config?.modelPerCapability ?? {},
+        },
+      };
+      const env = await client.updateSettings({
+        ...settings,
+        providers: nextProviders,
+        cloudConsentAcked,
+      });
+      if (env.state !== "ready" || !env.data) {
+        setState({
+          kind: "error",
+          message: env.error ?? "Failed to persist settings.",
+        });
+        return;
+      }
+      onSettingsChange(env.data);
+      setHasSecret(true);
+      onKeyPresenceChange?.(preset.providerId, true);
       setState({ kind: "saved" });
       onClose();
     } catch (err) {
@@ -349,6 +400,18 @@ export function ProviderEditor({
             </button>
           </>
         ) : null}
+        {preset.authKind === "api-key" &&
+        hasSecret &&
+        state.kind === "idle" &&
+        !allowRemove ? (
+          <button
+            type="button"
+            className="settings-action is-primary"
+            onClick={() => handleUseConfiguredProvider()}
+          >
+            Save
+          </button>
+        ) : null}
         {allowRemove && hasSecret ? (
           <button
             type="button"
@@ -371,7 +434,7 @@ export function ProviderEditor({
         ) : null}
       </div>
 
-      {pendingSecretForConsent !== null ? (
+      {pendingSecretForConsent !== null || pendingConfiguredForConsent ? (
         <CloudEgressConsentDialog
           preset={preset}
           onAccept={() => {
@@ -379,10 +442,18 @@ export function ProviderEditor({
             const nextAcked = settings.cloudConsentAcked.includes(acked)
               ? settings.cloudConsentAcked
               : [...settings.cloudConsentAcked, acked];
-            void persistKey(pendingSecretForConsent, nextAcked);
+            if (pendingConfiguredForConsent) {
+              void persistConfiguredProvider(nextAcked);
+            } else if (pendingSecretForConsent !== null) {
+              void persistKey(pendingSecretForConsent, nextAcked);
+            }
             setPendingSecretForConsent(null);
+            setPendingConfiguredForConsent(false);
           }}
-          onCancel={() => setPendingSecretForConsent(null)}
+          onCancel={() => {
+            setPendingSecretForConsent(null);
+            setPendingConfiguredForConsent(false);
+          }}
         />
       ) : null}
     </div>

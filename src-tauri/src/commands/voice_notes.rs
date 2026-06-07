@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -18,22 +19,30 @@ use crate::services::voice_notes::{
     begin_voice_note_audio_capture as begin_voice_note_audio_capture_record,
     begin_voice_note_retranscription as begin_voice_note_retranscription_record,
     begin_voice_note_summary as begin_voice_note_summary_record, capture_capability,
+    claim_next_voice_note_summary_job as claim_next_voice_note_summary_job_record,
     complete_voice_note_summary as complete_voice_note_summary_record,
+    complete_voice_note_summary_job as complete_voice_note_summary_job_record,
     complete_voice_note_transcript as complete_voice_note_transcript_record,
     create_voice_note as create_voice_note_record,
     delete_voice_note_source_audio as delete_voice_note_source_audio_record,
+    enqueue_voice_note_summary_job as enqueue_voice_note_summary_job_record,
+    fail_voice_note_summary_job as fail_voice_note_summary_job_record,
     finish_voice_note_audio_capture as finish_voice_note_audio_capture_record,
     get_voice_note as get_voice_note_record,
     get_voice_note_transcript as get_voice_note_transcript_record,
+    has_queued_voice_note_summary_jobs as has_queued_voice_note_summary_jobs_record,
     list_voice_notes as list_voice_notes_record,
     mark_voice_note_capture_failed as mark_voice_note_capture_failed_record,
     mark_voice_note_summary_failed as mark_voice_note_summary_failed_record,
     mark_voice_note_transcription_failed as mark_voice_note_transcription_failed_record,
-    rename_voice_note_speaker as rename_voice_note_speaker_record, AppendRealtimeTranscriptInput,
-    AppendVoiceNoteAudioChunkInput, BeginVoiceNoteAudioCaptureInput, CaptureCapabilityDto,
-    CompleteVoiceNoteSummaryInput, CompleteVoiceNoteTranscriptInput, CreateVoiceNoteInput,
-    CreatedVoiceNote, FinishVoiceNoteAudioCaptureInput, RenameVoiceNoteSpeakerInput,
-    VoiceNoteInput,
+    recover_interrupted_voice_note_processing as recover_interrupted_voice_note_processing_record,
+    recover_voice_note_summary_jobs as recover_voice_note_summary_jobs_record,
+    rename_voice_note_speaker as rename_voice_note_speaker_record,
+    voice_note_summary_job_is_running as voice_note_summary_job_is_running_record,
+    AppendRealtimeTranscriptInput, AppendVoiceNoteAudioChunkInput, BeginVoiceNoteAudioCaptureInput,
+    CaptureCapabilityDto, CompleteVoiceNoteSummaryInput, CompleteVoiceNoteTranscriptInput,
+    CreateVoiceNoteInput, CreatedVoiceNote, FinishVoiceNoteAudioCaptureInput,
+    RenameVoiceNoteSpeakerInput, VoiceNoteInput, VoiceNoteSummaryJob, VoiceNoteSummaryJobFailure,
 };
 use crate::{AppState, VfsEventEmitter};
 
@@ -46,6 +55,7 @@ const REALTIME_TRANSCRIPTION_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 const REALTIME_TRANSCRIPTION_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const TRANSCRIBER_WARMUP_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 const TRANSCRIBER_WARMUP_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+static VOICE_NOTE_SUMMARY_DRAIN_RUNNING: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
 pub fn get_voice_note_capture_capability() -> CaptureCapabilityDto {
@@ -111,7 +121,7 @@ pub fn complete_voice_note_transcript(
         .map_err(|error: rusqlite::Error| error.to_string())?;
     let notes_dir = state.storage_dir.join("notes");
     let emitter = state.emitter.as_ref();
-    let updated = complete_voice_note_transcript_record(&conn, &input, &notes_dir, &emitter)?;
+    let mut updated = complete_voice_note_transcript_record(&conn, &input, &notes_dir, &emitter)?;
     if input
         .summary
         .as_deref()
@@ -119,13 +129,12 @@ pub fn complete_voice_note_transcript(
         .filter(|summary| !summary.is_empty())
         .is_none()
     {
-        spawn_voice_note_summary(
+        updated = enqueue_voice_note_summary_job_record(&conn, &input.note_id, emitter)?;
+        spawn_voice_note_summary_queue_drain(
             state.db.clone(),
             notes_dir,
             Arc::clone(&state.emitter),
             Arc::clone(&state.search_client),
-            input.note_id,
-            input.transcript,
         );
     }
     Ok(updated)
@@ -687,13 +696,12 @@ fn complete_realtime_voice_note_transcription(
         log::warn!("voice note realtime transcription completion failed for {note_id}: {error}");
         return;
     }
-    spawn_voice_note_summary(
+    enqueue_voice_note_summary_job_async(
         db.clone(),
         notes_dir.to_path_buf(),
         Arc::clone(emitter),
         Arc::clone(search_client),
-        note_id.to_string(),
-        transcript.to_string(),
+        note_id,
     );
 }
 
@@ -916,28 +924,154 @@ fn complete_background_transcription(
         log::warn!("voice note transcription completion failed for {note_id}: {error}");
         return;
     }
-    spawn_voice_note_summary(
+    enqueue_voice_note_summary_job_async(
         db.clone(),
         notes_dir.to_path_buf(),
         Arc::clone(emitter),
         Arc::clone(search_client),
-        note_id.to_string(),
-        transcript,
+        note_id,
     );
 }
 
-fn spawn_voice_note_summary(
+fn enqueue_voice_note_summary_job_async(
     db: Database,
     notes_dir: PathBuf,
     emitter: VfsEventEmitter,
     search_client: Arc<SearchSidecarClient>,
-    note_id: String,
-    transcript: String,
+    note_id: &str,
 ) {
+    let conn = match db.connect() {
+        Ok(conn) => conn,
+        Err(error) => {
+            log::warn!("voice note summary enqueue could not open database: {error}");
+            return;
+        }
+    };
+    if let Err(error) = enqueue_voice_note_summary_job_record(&conn, note_id, emitter.as_ref()) {
+        log::warn!("voice note summary enqueue failed for {note_id}: {error}");
+        return;
+    }
+    spawn_voice_note_summary_queue_drain(db, notes_dir, emitter, search_client);
+}
+
+pub fn resume_voice_note_summary_jobs(
+    db: Database,
+    notes_dir: PathBuf,
+    emitter: VfsEventEmitter,
+    search_client: Arc<SearchSidecarClient>,
+) -> Result<(), String> {
+    let conn = db.connect().map_err(|error| error.to_string())?;
+    let recovered = recover_voice_note_summary_jobs_record(&conn, emitter.as_ref())?;
+    if recovered > 0 {
+        log::info!("recovered {recovered} pending voice note summary job(s)");
+    }
+    drop(conn);
+    spawn_voice_note_summary_queue_drain(db, notes_dir, emitter, search_client);
+    Ok(())
+}
+
+pub fn resume_voice_note_processing_jobs(
+    db: Database,
+    notes_dir: PathBuf,
+    emitter: VfsEventEmitter,
+    search_client: Arc<SearchSidecarClient>,
+) -> Result<(), String> {
+    let conn = db.connect().map_err(|error| error.to_string())?;
+    let recovery =
+        recover_interrupted_voice_note_processing_record(&conn, &notes_dir, emitter.as_ref())?;
+    if recovery.interrupted_recordings > 0 {
+        log::info!(
+            "recovered {} interrupted voice note recording(s)",
+            recovery.interrupted_recordings
+        );
+    }
+    if recovery.failed_transcriptions > 0 {
+        log::info!(
+            "marked {} interrupted voice note transcription job(s) failed",
+            recovery.failed_transcriptions
+        );
+    }
+    let transcription_jobs = recovery.transcription_jobs;
+    drop(conn);
+
+    if !transcription_jobs.is_empty() {
+        log::info!(
+            "resuming {} pending voice note transcription job(s)",
+            transcription_jobs.len()
+        );
+    }
+    for job in transcription_jobs {
+        spawn_voice_note_transcription(
+            db.clone(),
+            notes_dir.clone(),
+            Arc::clone(&emitter),
+            Arc::clone(&search_client),
+            job.note_id,
+            job.audio_path,
+        );
+    }
+    Ok(())
+}
+
+fn spawn_voice_note_summary_queue_drain(
+    db: Database,
+    notes_dir: PathBuf,
+    emitter: VfsEventEmitter,
+    search_client: Arc<SearchSidecarClient>,
+) {
+    if VOICE_NOTE_SUMMARY_DRAIN_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
     tauri::async_runtime::spawn(async move {
-        run_voice_note_summary_job(db, notes_dir, emitter, search_client, note_id, transcript)
-            .await;
+        run_voice_note_summary_queue_drain(
+            db.clone(),
+            notes_dir.clone(),
+            Arc::clone(&emitter),
+            Arc::clone(&search_client),
+        )
+        .await;
+        VOICE_NOTE_SUMMARY_DRAIN_RUNNING.store(false, Ordering::SeqCst);
+
+        let should_resume = db
+            .connect()
+            .map_err(|error| error.to_string())
+            .and_then(|conn| has_queued_voice_note_summary_jobs_record(&conn))
+            .unwrap_or(false);
+        if should_resume {
+            spawn_voice_note_summary_queue_drain(db, notes_dir, emitter, search_client);
+        }
     });
+}
+
+async fn run_voice_note_summary_queue_drain(
+    db: Database,
+    notes_dir: PathBuf,
+    emitter: VfsEventEmitter,
+    search_client: Arc<SearchSidecarClient>,
+) {
+    loop {
+        let job = match db
+            .connect()
+            .map_err(|error| error.to_string())
+            .and_then(|conn| claim_next_voice_note_summary_job_record(&conn))
+        {
+            Ok(Some(job)) => job,
+            Ok(None) => return,
+            Err(error) => {
+                log::warn!("voice note summary queue claim failed: {error}");
+                return;
+            }
+        };
+        run_voice_note_summary_job(
+            db.clone(),
+            notes_dir.clone(),
+            Arc::clone(&emitter),
+            Arc::clone(&search_client),
+            job,
+        )
+        .await;
+    }
 }
 
 async fn run_voice_note_summary_job(
@@ -945,9 +1079,9 @@ async fn run_voice_note_summary_job(
     notes_dir: PathBuf,
     emitter: VfsEventEmitter,
     search_client: Arc<SearchSidecarClient>,
-    note_id: String,
-    transcript: String,
+    job: VoiceNoteSummaryJob,
 ) {
+    let note_id = job.node_id.clone();
     let conn = match db.connect() {
         Ok(conn) => conn,
         Err(error) => {
@@ -955,8 +1089,22 @@ async fn run_voice_note_summary_job(
             return;
         }
     };
+    let transcript = match get_voice_note_transcript_record(&conn, &note_id, &notes_dir) {
+        Ok(transcript) => transcript.trim().to_string(),
+        Err(error) => {
+            log::warn!("voice note summary could not read saved transcript for {note_id}: {error}");
+            fail_claimed_voice_note_summary(&db, &emitter, &job, &error, true);
+            return;
+        }
+    };
+    if transcript.is_empty() {
+        log::warn!("voice note summary skipped for {note_id}: saved transcript is empty");
+        fail_claimed_voice_note_summary(&db, &emitter, &job, "saved transcript is empty", false);
+        return;
+    }
     if let Err(error) = begin_voice_note_summary_record(&conn, &note_id, emitter.as_ref()) {
         log::warn!("voice note summary start failed for {note_id}: {error}");
+        fail_claimed_voice_note_summary(&db, &emitter, &job, &error, false);
         return;
     }
     drop(conn);
@@ -975,14 +1123,19 @@ async fn run_voice_note_summary_job(
                 ..
             } => match response.status.as_str() {
                 "completed" => {
-                    complete_background_summary(&db, &notes_dir, &emitter, &note_id, response);
+                    match complete_background_summary(&db, &notes_dir, &emitter, &job, response) {
+                        Ok(()) => mark_claimed_voice_note_summary_completed(&db, &job),
+                        Err(error) => {
+                            fail_claimed_voice_note_summary(&db, &emitter, &job, &error, true)
+                        }
+                    }
                     return;
                 }
                 "unavailable" => {
-                    fail_background_summary(
+                    fail_claimed_voice_note_summary(
                         &db,
                         &emitter,
-                        &note_id,
+                        &job,
                         response
                             .error
                             .as_deref()
@@ -992,20 +1145,20 @@ async fn run_voice_note_summary_job(
                     return;
                 }
                 "failed" => {
-                    fail_background_summary(
+                    fail_claimed_voice_note_summary(
                         &db,
                         &emitter,
-                        &note_id,
+                        &job,
                         response.error.as_deref().unwrap_or("LLM summary failed"),
                         true,
                     );
                     return;
                 }
                 other => {
-                    fail_background_summary(
+                    fail_claimed_voice_note_summary(
                         &db,
                         &emitter,
-                        &note_id,
+                        &job,
                         &format!("LLM summary returned unknown status: {other}"),
                         true,
                     );
@@ -1017,10 +1170,10 @@ async fn run_voice_note_summary_job(
                 ..
             } => {
                 if started_at.elapsed() >= SUMMARY_READY_TIMEOUT {
-                    fail_background_summary(
+                    fail_claimed_voice_note_summary(
                         &db,
                         &emitter,
-                        &note_id,
+                        &job,
                         "timed out waiting for the search sidecar to start",
                         true,
                     );
@@ -1033,10 +1186,10 @@ async fn run_voice_note_summary_job(
                 ..
             } => {
                 if started_at.elapsed() >= SUMMARY_READY_TIMEOUT {
-                    fail_background_summary(
+                    fail_claimed_voice_note_summary(
                         &db,
                         &emitter,
-                        &note_id,
+                        &job,
                         error.as_deref().unwrap_or("search sidecar is unavailable"),
                         false,
                     );
@@ -1048,10 +1201,10 @@ async fn run_voice_note_summary_job(
                 data: None,
                 error,
             } => {
-                fail_background_summary(
+                fail_claimed_voice_note_summary(
                     &db,
                     &emitter,
-                    &note_id,
+                    &job,
                     error
                         .as_deref()
                         .unwrap_or("LLM summary returned no response body"),
@@ -1068,42 +1221,59 @@ fn complete_background_summary(
     db: &Database,
     notes_dir: &Path,
     emitter: &VfsEventEmitter,
-    note_id: &str,
+    job: &VoiceNoteSummaryJob,
     response: VoiceNoteSummaryResponseDto,
-) {
+) -> Result<(), String> {
     let Some(summary) = response.summary else {
-        fail_background_summary(
-            db,
-            emitter,
-            note_id,
-            "LLM summary completed without summary text",
-            true,
-        );
-        return;
+        return Err("LLM summary completed without summary text".to_string());
     };
     let conn = match db.connect() {
         Ok(conn) => conn,
         Err(error) => {
-            log::warn!("voice note summary could not open database: {error}");
-            return;
+            return Err(format!(
+                "voice note summary could not open database: {error}"
+            ));
         }
     };
+    if !voice_note_summary_job_is_running_record(&conn, job)? {
+        log::info!(
+            "voice note summary result ignored for stale job {} generation {}",
+            job.node_id,
+            job.generation
+        );
+        return Ok(());
+    }
     let input = CompleteVoiceNoteSummaryInput {
-        note_id: note_id.to_string(),
+        note_id: job.node_id.clone(),
         summary,
         action_items: response.action_items,
     };
-    if let Err(error) =
-        complete_voice_note_summary_record(&conn, &input, notes_dir, emitter.as_ref())
-    {
-        log::warn!("voice note summary completion failed for {note_id}: {error}");
+    complete_voice_note_summary_record(&conn, &input, notes_dir, emitter.as_ref()).map(|_| ())
+}
+
+fn mark_claimed_voice_note_summary_completed(db: &Database, job: &VoiceNoteSummaryJob) {
+    let conn = match db.connect() {
+        Ok(conn) => conn,
+        Err(error) => {
+            log::warn!("voice note summary completion could not open database: {error}");
+            return;
+        }
+    };
+    match complete_voice_note_summary_job_record(&conn, job) {
+        Ok(true) => {}
+        Ok(false) => log::info!(
+            "voice note summary completion ignored for stale job {} generation {}",
+            job.node_id,
+            job.generation
+        ),
+        Err(error) => log::warn!("voice note summary job completion failed: {error}"),
     }
 }
 
-fn fail_background_summary(
+fn fail_claimed_voice_note_summary(
     db: &Database,
     emitter: &VfsEventEmitter,
-    note_id: &str,
+    job: &VoiceNoteSummaryJob,
     message: &str,
     retryable: bool,
 ) {
@@ -1114,10 +1284,24 @@ fn fail_background_summary(
             return;
         }
     };
-    if let Err(error) =
-        mark_voice_note_summary_failed_record(&conn, note_id, message, retryable, emitter.as_ref())
-    {
-        log::warn!("voice note summary failure update failed for {note_id}: {error}");
+    match fail_voice_note_summary_job_record(&conn, job, message, retryable, emitter.as_ref()) {
+        Ok(VoiceNoteSummaryJobFailure::Requeued) | Ok(VoiceNoteSummaryJobFailure::Stale) => {}
+        Ok(VoiceNoteSummaryJobFailure::Failed) => {
+            if let Err(error) = mark_voice_note_summary_failed_record(
+                &conn,
+                &job.node_id,
+                message,
+                retryable,
+                emitter.as_ref(),
+            ) {
+                log::warn!(
+                    "voice note summary failure update failed for {}: {}",
+                    job.node_id,
+                    error
+                );
+            }
+        }
+        Err(error) => log::warn!("voice note summary job failure update failed: {error}"),
     }
 }
 

@@ -6,7 +6,7 @@ result into chunks via the shared :mod:`..chunking` helper, embeds each
 chunk, and upserts into the lancedb store.
 
 Why we do the strip on the Python side rather than reading
-``url_jobs.preview_text`` from cognios.db: the preview is hard-truncated
+``urls.preview_text`` from cognios.db: the preview is hard-truncated
 at 320 chars by the existing Rust pipeline (see
 ``src-tauri/src/services/url_indexing/cache.rs``), which is the right
 shape for the Explorer inspector but far too short for full-text
@@ -27,7 +27,7 @@ from trafilatura import extract as trafilatura_extract
 from ...storage import LanceDBStore, NodeChunk
 from ..chunking import chunk_text
 from ..embedder import Embedder
-from ..queue import IndexingJob
+from ..job import IndexingJob
 
 # Tags whose content should never be indexed even when present in
 # ``<body>`` — scripts, styles, navigation chrome, social embeds, ads.

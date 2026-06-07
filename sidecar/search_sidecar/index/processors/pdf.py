@@ -45,12 +45,11 @@ from ..extract_artifacts import (
     clear_extract_artifacts,
     write_extract_artifact,
 )
-from ..queue import IndexingJob, IndexingQueue
+from ..job import IndexingJob
 from .enhancement import (
     AdvancedOcrExtract,
     ExtractAssets,
     extract_text_and_assets,
-    handle_enhancement_error,
     meaningful_chunks,
     strip_image_references,
 )
@@ -82,14 +81,14 @@ class PdfProcessor:
         embedder: Embedder,
         *,
         max_pages: int = MAX_PAGES,
-        queue: IndexingQueue | None = None,
+        queue: object | None = None,
         advanced_ocr_extract: AdvancedOcrExtract | None = None,
         extract_dir: Path | None = None,
     ) -> None:
+        _ = queue
         self._store = store
         self._embedder = embedder
         self._max_pages = max_pages
-        self._queue = queue
         self._advanced_ocr_extract = advanced_ocr_extract
         self._extract_dir = extract_dir
 
@@ -110,8 +109,7 @@ class PdfProcessor:
         chunks = chunk_text(text)
 
         if not chunks:
-            if self.has_advanced_ocr() and self._queue is not None:
-                self._queue.set_enhancement_pending(job.node_id)
+            if self.has_advanced_ocr():
                 return 0
             self._store.replace_node_chunks(job.node_id, [])
             self._clear_extract_artifacts(job)
@@ -120,8 +118,6 @@ class PdfProcessor:
         rows = self._build_rows(job, chunks)
         written = self._store.replace_node_chunks(job.node_id, rows)
         self._replace_basic_extract_artifact(job, text)
-        if self.has_advanced_ocr() and self._queue is not None:
-            self._queue.set_enhancement_pending(job.node_id)
         return written
 
     def has_advanced_ocr(self) -> bool:
@@ -132,23 +128,13 @@ class PdfProcessor:
         path = Path(job.absolute_content_path or "")
         if not path.is_file():
             raise FileNotFoundError(f"missing pdf: {path}")
-        if self._queue is None:
-            raise RuntimeError("PdfProcessor enhancement requires queue")
         extractor = self._advanced_ocr_extract
         if extractor is None:
             return
 
-        try:
-            advanced_output = extractor(path)
-        except Exception as err:
-            handle_enhancement_error(self._queue, job.node_id, err, log=LOG)
-            return
+        advanced_output = extractor(path)
         advanced_text, advanced_assets = extract_text_and_assets(advanced_output)
         advanced_text = advanced_text.strip()
-        if not self._queue.matches_content_claim(
-            job.node_id, job.content_version, claim_seq
-        ):
-            return
 
         body_chunks = meaningful_chunks(strip_image_references(advanced_text))
         if not body_chunks:
@@ -161,9 +147,6 @@ class PdfProcessor:
                 advanced_text,
                 assets=advanced_assets,
             )
-            self._queue.clear_enhancement_pending_if_transition_seq(
-                job.node_id, claim_seq
-            )
             return
 
         rows = self._build_rows(job, body_chunks)
@@ -173,9 +156,6 @@ class PdfProcessor:
             "advanced",
             advanced_text,
             assets=advanced_assets,
-        )
-        self._queue.clear_enhancement_pending_if_transition_seq(
-            job.node_id, claim_seq
         )
 
     def _build_rows(self, job: IndexingJob, chunks: list[str]) -> list[NodeChunk]:

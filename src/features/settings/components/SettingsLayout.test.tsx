@@ -24,7 +24,6 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
     indexStatus: vi.fn().mockResolvedValue({
       state: "ready",
       data: {
-        queueDepth: 2,
         inFlight: ["x"],
         enhancementInFlight: [],
         indexedChunks: 50,
@@ -33,8 +32,8 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
         enhancementTotalImages: 0,
       },
     }),
+    indexStatistics: vi.fn().mockResolvedValue({ recentIndexedNodes: [] }),
     observability: vi.fn().mockResolvedValue({ state: "initialising" }),
-    nodeIndexStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
     modelsStatus: vi.fn().mockResolvedValue({
       state: "ready",
       data: {
@@ -212,7 +211,7 @@ describe("SettingsLayout", () => {
       "OCR",
       "Advanced OCR",
       "Audio Transcript",
-      "Chat",
+      "LLM",
       "Web Search",
     ]) {
       expect(
@@ -222,7 +221,7 @@ describe("SettingsLayout", () => {
       ).toBeInTheDocument();
     }
 
-    fireEvent.click(within(filterList).getByRole("tab", { name: /Chat/i }));
+    fireEvent.click(within(filterList).getByRole("tab", { name: /LLM/i }));
     expect(within(providersCard as HTMLElement).getByText("Ollama")).toBeInTheDocument();
     expect(within(providersCard as HTMLElement).getByText("OpenAI")).toBeInTheDocument();
     expect(within(providersCard as HTMLElement).queryByText("GTE")).not.toBeInTheDocument();
@@ -298,7 +297,6 @@ describe("SettingsLayout", () => {
       indexStatus: vi.fn().mockResolvedValue({
         state: "ready",
         data: {
-          queueDepth: 0,
           inFlight: [],
           enhancementInFlight: [],
           indexedChunks: 20,

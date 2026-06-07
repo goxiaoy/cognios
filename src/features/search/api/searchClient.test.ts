@@ -9,6 +9,7 @@ import { searchClient } from "./searchClient";
 import { unwrapEnvelope } from "../../../lib/contracts/search";
 import type {
   IndexStatus,
+  IndexStatistics,
   ModelsStatus,
   SearchObservability,
   SearchResponse,
@@ -62,7 +63,6 @@ describe("searchClient.indexStatus", () => {
     const env: SidecarEnvelope<IndexStatus> = {
       state: "ready",
       data: {
-        queueDepth: 3,
         inFlight: ["abc"],
         enhancementInFlight: [],
         indexedChunks: 100,
@@ -75,7 +75,23 @@ describe("searchClient.indexStatus", () => {
 
     const result = await searchClient.indexStatus();
     expect(mockedInvoke).toHaveBeenCalledWith("get_indexing_status");
-    expect(result.data?.queueDepth).toBe(3);
+    expect(result.data?.indexedChunks).toBe(100);
+  });
+});
+
+describe("searchClient.indexStatistics", () => {
+  it("calls get_index_statistics and returns local statistics", async () => {
+    const stats: IndexStatistics = {
+      recentIndexedNodes: [{ date: "2026-05-10", count: 3 }],
+    };
+    mockedInvoke.mockResolvedValueOnce(stats);
+
+    const result = await searchClient.indexStatistics({ recentDays: 7 });
+
+    expect(mockedInvoke).toHaveBeenCalledWith("get_index_statistics", {
+      input: { recentDays: 7 },
+    });
+    expect(result.recentIndexedNodes[0].count).toBe(3);
   });
 });
 
@@ -101,25 +117,6 @@ describe("searchClient.observability", () => {
       input: { recentDays: 7 },
     });
     expect(result.data?.recentIndexedNodes[0].count).toBe(3);
-  });
-});
-
-describe("searchClient.nodeIndexStatus", () => {
-  it("forwards the node id under input.nodeId", async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      state: "ready",
-      data: {
-        nodeId: "abc",
-        state: "indexed",
-        attempts: 1,
-        indexedAt: "2026-04-27T00:00:00Z",
-        error: null,
-      },
-    });
-    await searchClient.nodeIndexStatus("abc");
-    expect(mockedInvoke).toHaveBeenCalledWith("get_node_indexing_status", {
-      input: { nodeId: "abc" },
-    });
   });
 });
 

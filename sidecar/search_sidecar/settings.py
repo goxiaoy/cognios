@@ -2,7 +2,7 @@
 which providers exist, which features are bound to which providers,
 and what the user has already consented to.
 
-Schema v1 lives in ``~/.cogios/search/settings.json`` (mode 0600).
+Schema v1 lives in ``~/.cogios/settings.json`` (mode 0600).
 The sidecar is the only writer; the frontend reads/writes via the
 ``/settings`` HTTP routes; the Rust app may also read the file
 directly when the sidecar is unreachable (degraded read-only mode).
@@ -200,6 +200,10 @@ def default_settings() -> SearchSettings:
                 provider_id="local-qwen-asr",
                 enabled=True,
             ),
+            "local-ollama": ProviderConfig(
+                provider_id="local-ollama",
+                enabled=True,
+            ),
         },
         features={
             "semantic-search": FeatureConfig(
@@ -290,8 +294,9 @@ def migrate_mandatory_features(
     persisted as ``{enabled: false, providerId: null}`` before the
     feature was promoted. Only fixes the "looks like the user never
     picked anything" case — an explicit non-default binding is left
-    alone. Also seeds any provider entries the restored bindings
-    point at so the dispatcher doesn't see a dangling ``provider_id``.
+    alone. Also seeds any provider entries the active bindings point
+    at so neither the dispatcher nor UI usability checks see a
+    dangling ``provider_id``.
 
     Returns ``(migrated_settings, changed)``. The lifecycle persists
     the result back to disk when ``changed`` is True so the migration

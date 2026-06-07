@@ -17,8 +17,8 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
   return {
     search: vi.fn(),
     indexStatus: vi.fn(),
+    indexStatistics: vi.fn().mockResolvedValue({ recentIndexedNodes: [] }),
     observability: vi.fn(),
-    nodeIndexStatus: vi.fn(),
     modelsStatus: vi.fn(),
     startModelDownload: vi.fn(),
     nodeContent: vi.fn(),

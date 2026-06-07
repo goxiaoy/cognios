@@ -30,18 +30,19 @@ export function IndexingStatusCard({
     );
   }
 
-  const { queueDepth, inFlight, enhancementInFlight, indexedChunks } =
-    envelope.data;
-  const activeCount = inFlight.length + enhancementInFlight.length;
-  const isIdle = queueDepth === 0 && activeCount === 0;
+  const { indexedChunks } = envelope.data;
+  const queuedCount = queuedJobs(envelope.data);
+  const activeCount = activeJobs(envelope.data);
+  const isIdle = queuedCount === 0 && activeCount === 0;
+  const taskRows = envelope.data.tasks?.filter((task) => task.total > 0) ?? [];
 
   return (
     <div className="settings-card">
       <h2 className="settings-card-title">Indexing</h2>
       <dl className="settings-stat-grid">
         <div className="settings-stat">
-          <dt>Queue depth</dt>
-          <dd>{queueDepth}</dd>
+          <dt>Queued jobs</dt>
+          <dd>{queuedCount}</dd>
         </div>
         <div className="settings-stat">
           <dt>In flight</dt>
@@ -56,9 +57,32 @@ export function IndexingStatusCard({
         <p className="muted-copy settings-card-hint">Indexer is idle.</p>
       ) : (
         <p className="muted-copy settings-card-hint">
-          Working through {queueDepth} pending {queueDepth === 1 ? "node" : "nodes"}.
+          Working through {queuedCount} pending {queuedCount === 1 ? "job" : "jobs"}.
         </p>
       )}
+      {taskRows.length > 0 ? (
+        <dl className="settings-stat-grid settings-stat-grid--compact">
+          {taskRows.map((task) => (
+            <div className="settings-stat" key={task.taskType}>
+              <dt>{task.taskType}</dt>
+              <dd>
+                {task.running} running / {task.queued} queued
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
     </div>
+  );
+}
+
+function queuedJobs(status: IndexStatus): number {
+  return status.taskTotals?.queued ?? 0;
+}
+
+function activeJobs(status: IndexStatus): number {
+  return (
+    status.taskTotals?.running ??
+    status.inFlight.length + status.enhancementInFlight.length
   );
 }

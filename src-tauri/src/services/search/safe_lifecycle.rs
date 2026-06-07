@@ -223,15 +223,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pending_queue_depth_does_not_block_safe_lifecycle_action() {
+    fn pending_background_tasks_do_not_block_safe_lifecycle_action() {
         let status = IndexStatusDto {
-            queue_depth: 42,
             in_flight: vec![],
             enhancement_in_flight: vec![],
             indexed_chunks: 0,
             enhancement_pending: 42,
             enhancement_failed: 0,
             enhancement_total_images: 42,
+            tasks: vec![],
+            task_totals: Default::default(),
         };
         assert!(!index_status_has_active_work(
             &status,
@@ -246,13 +247,14 @@ mod tests {
     #[test]
     fn active_basic_or_enhancement_work_blocks_safe_lifecycle_action() {
         let mut status = IndexStatusDto {
-            queue_depth: 0,
             in_flight: vec!["node-a".to_string()],
             enhancement_in_flight: vec![],
             indexed_chunks: 0,
             enhancement_pending: 0,
             enhancement_failed: 0,
             enhancement_total_images: 0,
+            tasks: vec![],
+            task_totals: Default::default(),
         };
         assert!(index_status_has_active_work(
             &status,

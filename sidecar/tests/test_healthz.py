@@ -20,7 +20,6 @@ def test_healthz_returns_initialising_payload():
     body = resp.json()
     assert body["state"] == "initialising"
     assert body["models"] == {}
-    assert body["queue_depth"] == 0
 
 
 def test_healthz_payload_shape_is_stable():
@@ -30,4 +29,4 @@ def test_healthz_payload_shape_is_stable():
     with TestClient(build_app(token=TOKEN)) as client:
         resp = client.get("/healthz", headers=auth_headers())
     body = resp.json()
-    assert set(body.keys()) == {"state", "models", "queue_depth"}
+    assert set(body.keys()) == {"state", "models"}

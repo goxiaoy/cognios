@@ -13,13 +13,15 @@ use cognios_lib::services::notes::save_note_content::save_note_content;
 use cognios_lib::services::voice_notes::{
     append_voice_note_audio_chunk, append_voice_note_realtime_transcript,
     begin_voice_note_audio_capture, begin_voice_note_retranscription, begin_voice_note_summary,
-    capture_capability, complete_voice_note_summary, complete_voice_note_transcript,
-    create_voice_note, delete_voice_note_source_audio, finish_voice_note_audio_capture,
-    get_voice_note, get_voice_note_transcript, mark_voice_note_transcription_failed,
-    rename_voice_note_speaker, AppendRealtimeTranscriptInput, AppendVoiceNoteAudioChunkInput,
-    BeginVoiceNoteAudioCaptureInput, CompleteVoiceNoteSummaryInput,
+    capture_capability, claim_next_voice_note_summary_job, complete_voice_note_summary,
+    complete_voice_note_summary_job, complete_voice_note_transcript, create_voice_note,
+    delete_voice_note_source_audio, enqueue_voice_note_summary_job, fail_voice_note_summary_job,
+    finish_voice_note_audio_capture, get_voice_note, get_voice_note_transcript,
+    mark_voice_note_transcription_failed, recover_interrupted_voice_note_processing,
+    recover_voice_note_summary_jobs, rename_voice_note_speaker, AppendRealtimeTranscriptInput,
+    AppendVoiceNoteAudioChunkInput, BeginVoiceNoteAudioCaptureInput, CompleteVoiceNoteSummaryInput,
     CompleteVoiceNoteTranscriptInput, CreateVoiceNoteInput, FinishVoiceNoteAudioCaptureInput,
-    RenameVoiceNoteSpeakerInput, VoiceNoteInput,
+    RenameVoiceNoteSpeakerInput, VoiceNoteInput, VoiceNoteSummaryJobFailure,
 };
 
 fn noop_emitter(_event: VfsChangeEvent) {}
@@ -65,7 +67,9 @@ fn create_voice_note_creates_note_file_and_metadata() {
     assert!(std::path::Path::new(transcript_path).exists());
 
     let body = get_note_content(&created.voice_note.note_id, &notes_dir).expect("body");
-    assert!(body.starts_with("## Source Audio\n\n"));
+    assert!(body.starts_with("## Summary\n\n"));
+    assert!(!body.contains("## Source Audio"));
+    assert!(!body.contains("<!-- voice-note:"));
     assert!(!body.contains("## Transcript"));
     assert!(!body.contains("Transcription pending."));
     assert_eq!(
@@ -116,6 +120,8 @@ fn complete_transcript_saves_markdown_and_marks_voice_note_completed() {
         .expect("transcript");
     assert!(transcript.contains("[00:01.250] Speaker 2: hi"));
     let body = get_note_content(&created.voice_note.note_id, &notes_dir).expect("body");
+    assert!(!body.contains("## Source Audio"));
+    assert!(!body.contains("<!-- voice-note:"));
     assert!(!body.contains("[00:01.250] Speaker 2: hi"));
     assert!(body.contains("- Follow up with Speaker 2"));
     assert!(
@@ -240,8 +246,102 @@ fn summary_completion_updates_markdown_and_status_after_transcript() {
 
     assert_eq!(summarized.summary_status, "ready");
     let body = get_note_content(&created.voice_note.note_id, &notes_dir).expect("body");
+    assert!(!body.contains("<!-- voice-note:"));
     assert!(body.contains("They discussed the launch."));
     assert!(body.contains("- Ship the build"));
+}
+
+#[test]
+fn summary_jobs_recover_running_work_after_restart() {
+    let (_app_dir, db_path, notes_dir) = setup();
+    let mut conn = open_database(&db_path).expect("database");
+    let created = create_voice_note(
+        &mut conn,
+        &CreateVoiceNoteInput { parent_id: None },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("create voice note");
+    complete_voice_note_transcript(
+        &conn,
+        &CompleteVoiceNoteTranscriptInput {
+            note_id: created.voice_note.note_id.clone(),
+            transcript: "Speaker 1: summarize this after restart".into(),
+            summary: None,
+            action_items: vec![],
+            speaker_labels: BTreeMap::new(),
+        },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("complete transcript");
+    enqueue_voice_note_summary_job(&conn, &created.voice_note.note_id, &noop_emitter)
+        .expect("enqueue summary");
+
+    let first_claim = claim_next_voice_note_summary_job(&conn)
+        .expect("claim")
+        .expect("queued job");
+    assert_eq!(first_claim.node_id, created.voice_note.note_id);
+    assert_eq!(first_claim.attempt, 1);
+
+    let recovered =
+        recover_voice_note_summary_jobs(&conn, &noop_emitter).expect("recover running job");
+    assert_eq!(recovered, 1);
+    let second_claim = claim_next_voice_note_summary_job(&conn)
+        .expect("claim after recovery")
+        .expect("recovered job");
+    assert_eq!(second_claim.node_id, first_claim.node_id);
+    assert_eq!(second_claim.generation, first_claim.generation);
+    assert_eq!(second_claim.attempt, 2);
+}
+
+#[test]
+fn summary_job_generation_ignores_stale_results() {
+    let (_app_dir, db_path, notes_dir) = setup();
+    let mut conn = open_database(&db_path).expect("database");
+    let created = create_voice_note(
+        &mut conn,
+        &CreateVoiceNoteInput { parent_id: None },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("create voice note");
+    complete_voice_note_transcript(
+        &conn,
+        &CompleteVoiceNoteTranscriptInput {
+            note_id: created.voice_note.note_id.clone(),
+            transcript: "Speaker 1: first transcript".into(),
+            summary: None,
+            action_items: vec![],
+            speaker_labels: BTreeMap::new(),
+        },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("complete transcript");
+    enqueue_voice_note_summary_job(&conn, &created.voice_note.note_id, &noop_emitter)
+        .expect("enqueue first summary");
+    let stale_job = claim_next_voice_note_summary_job(&conn)
+        .expect("claim first")
+        .expect("first job");
+
+    enqueue_voice_note_summary_job(&conn, &created.voice_note.note_id, &noop_emitter)
+        .expect("enqueue replacement summary");
+
+    assert!(
+        !complete_voice_note_summary_job(&conn, &stale_job).expect("complete stale"),
+        "old generation must not be allowed to complete"
+    );
+    assert_eq!(
+        fail_voice_note_summary_job(&conn, &stale_job, "old result", true, &noop_emitter)
+            .expect("fail stale"),
+        VoiceNoteSummaryJobFailure::Stale
+    );
+    let replacement_job = claim_next_voice_note_summary_job(&conn)
+        .expect("claim replacement")
+        .expect("replacement job");
+    assert_eq!(replacement_job.node_id, stale_job.node_id);
+    assert!(replacement_job.generation > stale_job.generation);
 }
 
 #[test]
@@ -311,7 +411,8 @@ fn audio_capture_writes_source_file_and_marks_transcription_pending() {
     assert_eq!(finished.transcription_status, "pending");
     assert!(finished.source_audio_present);
     let body = get_note_content(&created.voice_note.note_id, &notes_dir).expect("body");
-    assert!(body.contains("Source audio saved locally as `source.webm` (1s)."));
+    assert!(!body.contains("## Source Audio"));
+    assert!(!body.contains("Source audio saved locally"));
     assert!(!body.contains("Transcription pending."));
     assert!(
         events
@@ -321,6 +422,120 @@ fn audio_capture_writes_source_file_and_marks_transcription_pending() {
                 && event.reason == "node-saved"),
         "audio capture changes should refresh the note"
     );
+}
+
+#[test]
+fn startup_recovery_marks_interrupted_recordings_failed() {
+    let (app_dir, db_path, notes_dir) = setup();
+    let mut conn = open_database(&db_path).expect("database");
+    let created = create_voice_note(
+        &mut conn,
+        &CreateVoiceNoteInput { parent_id: None },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("create voice note");
+    let recording = begin_voice_note_audio_capture(
+        &conn,
+        &BeginVoiceNoteAudioCaptureInput {
+            note_id: created.voice_note.note_id.clone(),
+            mime_type: Some("audio/wav".into()),
+            file_extension: Some("wav".into()),
+        },
+        app_dir.path(),
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("begin capture");
+    let audio_path = recording.source_audio_path.as_deref().expect("source path");
+    fs::write(audio_path, b"partial audio").expect("partial audio");
+
+    let recovery = recover_interrupted_voice_note_processing(&conn, &notes_dir, &noop_emitter)
+        .expect("recover interrupted recording");
+
+    assert_eq!(recovery.interrupted_recordings, 1);
+    assert!(recovery.transcription_jobs.is_empty());
+    assert!(!std::path::Path::new(audio_path).exists());
+    let recovered = get_voice_note(&conn, &created.voice_note.note_id)
+        .expect("voice note")
+        .expect("exists");
+    assert_eq!(recovered.status, "failed");
+    assert_eq!(recovered.capture_status, "failed");
+    assert_eq!(recovered.transcription_status, "failed");
+    assert!(recovered.source_audio_path.is_none());
+}
+
+#[test]
+fn startup_recovery_requeues_completed_audio_transcription() {
+    let (app_dir, db_path, notes_dir) = setup();
+    let mut conn = open_database(&db_path).expect("database");
+    let created = create_voice_note(
+        &mut conn,
+        &CreateVoiceNoteInput { parent_id: None },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("create voice note");
+    begin_voice_note_audio_capture(
+        &conn,
+        &BeginVoiceNoteAudioCaptureInput {
+            note_id: created.voice_note.note_id.clone(),
+            mime_type: Some("audio/wav".into()),
+            file_extension: Some("wav".into()),
+        },
+        app_dir.path(),
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("begin capture");
+    append_voice_note_audio_chunk(
+        &conn,
+        &AppendVoiceNoteAudioChunkInput {
+            note_id: created.voice_note.note_id.clone(),
+            bytes: b"audio".to_vec(),
+        },
+    )
+    .expect("append audio");
+    let finished = finish_voice_note_audio_capture(
+        &conn,
+        &FinishVoiceNoteAudioCaptureInput {
+            note_id: created.voice_note.note_id.clone(),
+            duration_ms: Some(1_000),
+        },
+        &notes_dir,
+        &noop_emitter,
+    )
+    .expect("finish capture");
+    conn.execute(
+        "
+        UPDATE voice_notes
+        SET transcription_status = 'transcribing'
+        WHERE note_id = ?1
+        ",
+        [&created.voice_note.note_id],
+    )
+    .expect("simulate interrupted transcription");
+
+    let recovery = recover_interrupted_voice_note_processing(&conn, &notes_dir, &noop_emitter)
+        .expect("recover pending transcription");
+
+    assert_eq!(recovery.interrupted_recordings, 0);
+    assert_eq!(recovery.failed_transcriptions, 0);
+    assert_eq!(recovery.transcription_jobs.len(), 1);
+    assert_eq!(
+        recovery.transcription_jobs[0].note_id,
+        created.voice_note.note_id
+    );
+    assert_eq!(
+        recovery.transcription_jobs[0].audio_path,
+        finished.source_audio_path.expect("source audio")
+    );
+    let recovered = get_voice_note(&conn, &created.voice_note.note_id)
+        .expect("voice note")
+        .expect("exists");
+    assert_eq!(recovered.status, "transcribing");
+    assert_eq!(recovered.capture_status, "completed");
+    assert_eq!(recovered.transcription_status, "pending");
 }
 
 #[test]
@@ -608,7 +823,8 @@ fn delete_source_audio_preserves_transcript_content() {
     assert!(transcript.contains("Speaker 1: source can be deleted"));
     let body = get_note_content(&created.voice_note.note_id, &notes_dir).expect("body");
     assert!(!body.contains("Speaker 1: source can be deleted"));
-    assert!(body.contains("Source audio has been deleted."));
+    assert!(!body.contains("## Source Audio"));
+    assert!(!body.contains("Source audio has been deleted."));
     assert!(
         events
             .borrow()

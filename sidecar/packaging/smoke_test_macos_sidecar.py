@@ -12,7 +12,6 @@ import argparse
 import json
 import shutil
 import signal
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -52,8 +51,7 @@ def main() -> int:
                 stderr=stderr,
             )
             runtime = _wait_for_runtime(storage_dir / "search" / "sidecar.runtime")
-            _post_node_event(runtime, cache_path)
-            _wait_for_indexed(storage_dir / "search" / "queue.db")
+            _post_index_node(runtime, cache_path)
             _assert_url_search(runtime)
     except Exception:
         _dump_process_logs(stdout_path, stderr_path)
@@ -95,7 +93,7 @@ def _wait_for_runtime(runtime_path: Path) -> dict:
     raise TimeoutError(f"sidecar runtime file not produced: {runtime_path}")
 
 
-def _post_node_event(runtime: dict, cache_path: Path) -> None:
+def _post_index_node(runtime: dict, cache_path: Path) -> None:
     body = {
         "event": "node_changed",
         "node_id": NODE_ID,
@@ -107,30 +105,9 @@ def _post_node_event(runtime: dict, cache_path: Path) -> None:
         "updated_at": "2026-01-01T00:00:00Z",
         "force": True,
     }
-    _request(runtime, "/events/node", body)
-
-
-def _wait_for_indexed(queue_path: Path) -> None:
-    deadline = time.monotonic() + 60
-    last_state = None
-    last_error = None
-    while time.monotonic() < deadline:
-        if queue_path.is_file():
-            with sqlite3.connect(queue_path) as conn:
-                row = conn.execute(
-                    "select state, last_error from jobs where node_id = ?",
-                    (NODE_ID,),
-                ).fetchone()
-            if row is not None:
-                last_state, last_error = row
-                if last_state == "indexed":
-                    return
-                if last_state == "error":
-                    raise RuntimeError(f"url node indexing failed: {last_error}")
-        time.sleep(0.5)
-    raise TimeoutError(
-        f"url node was not indexed; state={last_state!r} error={last_error!r}"
-    )
+    payload = _request(runtime, "/index/node", body)
+    if payload.get("status") != "indexed":
+        raise RuntimeError(f"url node indexing failed: {payload}")
 
 
 def _assert_url_search(runtime: dict) -> None:

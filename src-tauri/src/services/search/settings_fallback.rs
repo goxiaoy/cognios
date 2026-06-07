@@ -3,7 +3,7 @@
 //! When the Python sidecar fails to start (lock contention, port
 //! issue, broken provider config crashing init), the Settings UI
 //! still needs to load *something* so the user can see what's
-//! configured and manually edit ``~/.cogios/search/settings.json``
+//! configured and manually edit ``~/.cogios/settings.json``
 //! to recover. This module reads the same file the sidecar reads,
 //! parsed into the same DTO shape, but without going through the
 //! sidecar's HTTP layer.

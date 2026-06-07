@@ -43,12 +43,48 @@ pub async fn update_search_settings(
 pub fn read_search_settings_fallback(
     state: State<'_, AppState>,
 ) -> Result<SearchSettingsDto, String> {
-    let path = state.storage_dir.join("search").join("settings.json");
+    let path = settings_fallback_path(&state.storage_dir);
     read_settings_file_fallback(&path)
+}
+
+fn settings_fallback_path(storage_dir: &std::path::Path) -> std::path::PathBuf {
+    let path = storage_dir.join("settings.json");
+    if path.exists() {
+        return path;
+    }
+    storage_dir.join("search").join("settings.json")
 }
 
 #[tauri::command]
 pub fn restart_sidecar(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     state.search_sidecar.restart(&app)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::settings_fallback_path;
+
+    #[test]
+    fn settings_fallback_prefers_root_settings_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("settings.json"), "{}").unwrap();
+        std::fs::create_dir(dir.path().join("search")).unwrap();
+        std::fs::write(dir.path().join("search").join("settings.json"), "{}").unwrap();
+
+        assert_eq!(
+            settings_fallback_path(dir.path()),
+            dir.path().join("settings.json")
+        );
+    }
+
+    #[test]
+    fn settings_fallback_uses_legacy_search_file_when_root_missing() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert_eq!(
+            settings_fallback_path(dir.path()),
+            dir.path().join("search").join("settings.json")
+        );
+    }
 }

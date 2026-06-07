@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HomeDashboard } from "./HomeDashboard";
 import type {
   IndexStatus,
+  IndexStatistics,
   ModelsStatus,
   SearchObservability,
   SearchSettings,
@@ -34,7 +35,6 @@ function makeClient(settings = makeSettings()): SearchClient {
     indexStatus: vi.fn().mockResolvedValue({
       state: "ready",
       data: {
-        queueDepth: 2,
         inFlight: ["n1"],
         enhancementInFlight: ["n2"],
         indexedChunks: 1234,
@@ -42,6 +42,12 @@ function makeClient(settings = makeSettings()): SearchClient {
         enhancementFailed: 0,
         enhancementTotalImages: 4,
       },
+    }),
+    indexStatistics: vi.fn().mockResolvedValue({
+      recentIndexedNodes: [
+        { date: "2026-05-09", count: 1 },
+        { date: "2026-05-10", count: 3 },
+      ],
     }),
     observability: vi.fn().mockResolvedValue({
       state: "ready",
@@ -97,7 +103,6 @@ function makeClient(settings = makeSettings()): SearchClient {
         ],
       },
     }),
-    nodeIndexStatus: vi.fn(),
     nodeContent: vi.fn(),
     modelsStatus: vi.fn().mockResolvedValue({
       state: "ready",
@@ -173,6 +178,7 @@ function makeLoadingClient(): SearchClient {
   return {
     ...makeClient(),
     indexStatus: vi.fn(() => pending<SidecarEnvelope<IndexStatus>>()),
+    indexStatistics: vi.fn(() => pending<IndexStatistics>()),
     modelsStatus: vi.fn(() => pending<SidecarEnvelope<ModelsStatus>>()),
     observability: vi.fn(() => pending<SidecarEnvelope<SearchObservability>>()),
   };
@@ -185,6 +191,12 @@ function pending<T>(): Promise<T> {
 function observabilityWindows(client: SearchClient): number[] {
   return vi
     .mocked(client.observability)
+    .mock.calls.map(([input]) => input.recentDays);
+}
+
+function indexStatisticsWindows(client: SearchClient): number[] {
+  return vi
+    .mocked(client.indexStatistics)
     .mock.calls.map(([input]) => input.recentDays);
 }
 
@@ -244,7 +256,7 @@ describe("HomeDashboard", () => {
     expect(await screen.findByLabelText("Indexed items loading")).toBeInTheDocument();
     expect(screen.getByLabelText("In flight loading")).toBeInTheDocument();
     expect(screen.getByLabelText("OCR enhancement loading")).toBeInTheDocument();
-    expect(screen.getByLabelText("Recent indexing loading")).toBeInTheDocument();
+    expect(screen.getByLabelText("Recent indexed nodes bar chart")).toBeInTheDocument();
     expect(screen.getByLabelText("Latency loading")).toBeInTheDocument();
     expect(screen.getByLabelText("Token usage loading")).toBeInTheDocument();
   });
@@ -267,27 +279,30 @@ describe("HomeDashboard", () => {
     });
     expect(screen.getByText("llama3 · local-ollama")).toBeInTheDocument();
     expect(screen.queryByText("Downloads")).not.toBeInTheDocument();
+    expect(client.indexStatistics).toHaveBeenCalledWith({ recentDays: 30 });
     expect(client.observability).toHaveBeenCalledWith({ recentDays: 30 });
+    expect(indexStatisticsWindows(client)).toEqual([30]);
     expect(observabilityWindows(client)).toEqual([30]);
     expect(client.settings).not.toHaveBeenCalled();
   });
 
-  it("reloads only recent indexing when the range changes", async () => {
+  it("reloads recent indexing statistics when the range changes", async () => {
     const client = makeClient();
     render(<HomeDashboard client={client} />);
 
     await waitFor(() => {
-      expect(client.observability).toHaveBeenCalledWith({ recentDays: 30 });
+      expect(client.indexStatistics).toHaveBeenCalledWith({ recentDays: 30 });
     });
 
     fireEvent.click(screen.getByRole("button", { name: "7d" }));
 
     await waitFor(() => {
-      expect(client.observability).toHaveBeenCalledWith({ recentDays: 7 });
+      expect(client.indexStatistics).toHaveBeenCalledWith({ recentDays: 7 });
     });
     await waitFor(() => {
-      expect(observabilityWindows(client)).toEqual([30, 7, 30]);
+      expect(indexStatisticsWindows(client)).toEqual([30, 7]);
     });
+    expect(observabilityWindows(client)).toEqual([30, 30]);
     expect(screen.getByRole("button", { name: "7d" })).toHaveAttribute(
       "aria-pressed",
       "true"
@@ -296,11 +311,12 @@ describe("HomeDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "90d" }));
 
     await waitFor(() => {
-      expect(client.observability).toHaveBeenCalledWith({ recentDays: 90 });
+      expect(client.indexStatistics).toHaveBeenCalledWith({ recentDays: 90 });
     });
     await waitFor(() => {
-      expect(observabilityWindows(client)).toEqual([30, 7, 30, 90, 30]);
+      expect(indexStatisticsWindows(client)).toEqual([30, 7, 90]);
     });
+    expect(observabilityWindows(client)).toEqual([30, 30, 30]);
     expect(screen.getByRole("button", { name: "90d" })).toHaveAttribute(
       "aria-pressed",
       "true"

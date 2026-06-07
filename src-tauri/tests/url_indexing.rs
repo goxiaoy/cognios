@@ -86,7 +86,7 @@ fn url_node_appears_immediately_and_is_indexed_in_background() {
                 conn.query_row(
                     "
                     SELECT title, description, preview_text, canonical_url, html_cache_path
-                    FROM url_jobs
+                    FROM urls
                     WHERE node_id = ?1
                     ",
                     [&created_url.node_id],

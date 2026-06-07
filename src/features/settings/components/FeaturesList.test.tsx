@@ -33,7 +33,7 @@ describe("FeaturesList", () => {
     ).toEqual([
       "Image captioning",
       "Advanced OCR",
-      "Chat",
+      "LLM",
       "Web search",
       "Semantic search",
       "Result reranking",

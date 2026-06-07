@@ -62,11 +62,8 @@ pub fn show_node_extract_artifacts(
         .connect()
         .map_err(|_| "extracted files unavailable".to_string())?;
     ensure_extractable_node(&conn, &input.node_id)?;
-    let path = state
-        .storage_dir
-        .join("search")
-        .join("extract")
-        .join(safe_extract_path_segment(&input.node_id));
+    let path =
+        extract_artifacts_dir(&state.storage_dir).join(safe_extract_path_segment(&input.node_id));
     if !path.is_dir() {
         return Err("Extracted files are not available yet.".into());
     }
@@ -145,6 +142,10 @@ fn has_extract_artifacts_extension(name: &str) -> bool {
         extension.as_str(),
         "png" | "jpg" | "jpeg" | "webp" | "bmp" | "tif" | "tiff" | "gif" | "pdf"
     )
+}
+
+fn extract_artifacts_dir(storage_dir: &Path) -> PathBuf {
+    storage_dir.join("extract")
 }
 
 fn safe_extract_path_segment(value: &str) -> String {
@@ -234,7 +235,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{has_extract_artifacts_extension, safe_extract_path_segment};
+    use std::path::Path;
+
+    use super::{
+        extract_artifacts_dir, has_extract_artifacts_extension, safe_extract_path_segment,
+    };
 
     #[test]
     fn extract_artifact_path_segment_matches_node_id_storage_contract() {
@@ -250,6 +255,14 @@ mod tests {
         assert!(has_extract_artifacts_extension("receipt.PNG"));
         assert!(has_extract_artifacts_extension("scan.pdf"));
         assert!(!has_extract_artifacts_extension("note.md"));
+    }
+
+    #[test]
+    fn extract_artifacts_live_next_to_search_dir() {
+        assert_eq!(
+            extract_artifacts_dir(Path::new("/tmp/cognios")),
+            Path::new("/tmp/cognios").join("extract")
+        );
     }
 }
 

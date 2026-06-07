@@ -10,7 +10,7 @@ import pytest
 from search_sidecar.index.chunking import chunk_text as _chunk
 from search_sidecar.index.embedder import StubEmbedder
 from search_sidecar.index.processors.text import TextProcessor
-from search_sidecar.index.queue import IndexingJob, JobState
+from search_sidecar.index.job import IndexingJob, JobState
 from search_sidecar.storage import open_store, role_or_default
 
 

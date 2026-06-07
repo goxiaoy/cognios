@@ -10,8 +10,7 @@ use cognios_lib::infrastructure::db::mount_repository::{
     NestedMountDirection,
 };
 use cognios_lib::services::mounts::scanner::normalize_mount_path;
-use cognios_lib::services::search::client::IndexChangeDto;
-use cognios_lib::services::search::index_state_sync::apply_index_changes;
+use cognios_lib::services::search::{apply_search_index_transitions, SearchIndexTransition};
 
 #[test]
 fn creates_a_mount_and_mirrors_non_ignored_entries() {
@@ -91,14 +90,13 @@ fn reconcile_ignores_index_derived_container_state_when_mount_contents_are_uncha
         .expect("mounted child")
     };
 
-    apply_index_changes(
+    apply_search_index_transitions(
         &Database::new(db_path.clone()),
-        &[IndexChangeDto {
+        &[SearchIndexTransition {
             node_id: child_id,
             state: "indexed".to_string(),
             indexed_at: None,
             error: None,
-            transition_seq: 1,
         }],
     )
     .expect("index transition applied");

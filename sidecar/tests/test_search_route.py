@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from search_sidecar.app import build_app
 from search_sidecar.index.embedder import StubEmbedder
 from search_sidecar.index.processors.text import TextProcessor
-from search_sidecar.index.queue import IndexingJob, JobState
+from search_sidecar.index.job import IndexingJob, JobState
 from search_sidecar.retrieval import SearchOrchestrator
 from search_sidecar.storage import open_store
 

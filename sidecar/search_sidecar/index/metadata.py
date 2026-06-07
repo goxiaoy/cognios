@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ..storage import EMBEDDING_DIMENSION, LanceDBStore, NodeChunk
 from .embedder import Embedder
-from .queue import IndexingJob
+from .job import IndexingJob
 
 LOG = logging.getLogger("search_sidecar.index.metadata")
 METADATA_ROLE = "metadata"

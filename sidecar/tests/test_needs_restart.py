@@ -13,7 +13,6 @@ from search_sidecar.chat.retrieval import ChatRetrieval
 from search_sidecar.chat.types import ChatModel, ChatModelList
 from search_sidecar.index.dispatch import Dispatcher
 from search_sidecar.index.embedder import StubEmbedder
-from search_sidecar.index.queue import open_queue
 from search_sidecar.index.runner import IndexingRunner
 from search_sidecar.settings import (
     FeatureConfig,
@@ -37,19 +36,16 @@ def stack(tmp_path: Path):
     save_settings(settings_path, default_settings())
     boot_sig = boot_signature(default_settings())
     store = open_store(tmp_path / "index.lance")
-    queue = open_queue(tmp_path / "queue.db")
     dispatcher = Dispatcher(store=store, embedder=StubEmbedder())
-    runner = IndexingRunner(queue=queue, dispatcher=dispatcher)
+    runner = IndexingRunner(dispatcher=dispatcher)
     app = build_app(
         token=TOKEN,
-        indexing_queue=queue,
         indexing_runner=runner,
         lancedb_store=store,
         settings_path=settings_path,
         boot_settings_signature=boot_sig,
     )
     yield app, settings_path, runner
-    queue.close()
 
 
 def test_boot_signature_is_deterministic():
@@ -248,19 +244,21 @@ def test_runner_pause_state_resyncs_on_get(stack):
     assert runner.paused is False
 
 
-def test_paused_runner_skips_job_claims(tmp_path: Path):
-    """Direct test on the runner, not the route — pause means
-    process_one returns False without touching the queue."""
+def test_paused_runner_skips_direct_processing(tmp_path: Path):
+    """Direct test on the runner pause gate."""
     store = open_store(tmp_path / "index.lance")
-    queue = open_queue(tmp_path / "queue.db")
     dispatcher = Dispatcher(store=store, embedder=StubEmbedder())
-    runner = IndexingRunner(queue=queue, dispatcher=dispatcher)
+    runner = IndexingRunner(dispatcher=dispatcher)
 
-    # Enqueue a job that would otherwise be claimed.
-    queue.enqueue(node_id="11111111-1111-1111-1111-111111111111", kind="note", name="x")
     runner.set_paused(True)
-    assert runner.process_one() is False
+    assert runner.process_direct(
+        node_id="11111111-1111-1111-1111-111111111111",
+        kind="folder",
+        name="x",
+    ) == {"status": "paused", "error": "indexing runner is paused"}
     runner.set_paused(False)
-    # After unpause, the same job is claimable.
-    # (Not asserting it processes successfully — just that the gate lifts.)
-    queue.close()
+    assert runner.process_direct(
+        node_id="11111111-1111-1111-1111-111111111111",
+        kind="folder",
+        name="x",
+    )["status"] == "indexed"

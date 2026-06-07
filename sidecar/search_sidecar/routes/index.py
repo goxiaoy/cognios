@@ -1,44 +1,56 @@
-"""``/index/*`` — read-only views into the queue + lancedb state.
+"""``/index/*`` — direct indexing endpoints and lancedb status views.
 
-Used by Rust's ``/healthz`` polling and by future UI surfaces (the
-sidebar-footer queue indicator, the inspector's per-node ``indexed_at``
-field). All endpoints are bearer-authenticated by the global
-middleware.
+Rust owns durable task state in ``cognios.db`` and calls these endpoints
+when a worker claims a ``search.index`` or ``image.enhance`` task. The
+sidecar writes LanceDB data and returns the processor result; it no
+longer owns runtime queue state.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
+import re
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ..index.content import NodeContentReader
-from ..index.processors.image import SUPPORTED_EXTENSIONS as IMAGE_EXTENSIONS
-from ..index.processors.pdf import SUPPORTED_EXTENSIONS as PDF_EXTENSIONS
-from ..index.queue import IndexingQueue, JobState
+from ..index.embedder import Embedder
+from ..index.metadata import replace_metadata_chunk
 from ..storage import LanceDBStore
 
 router = APIRouter(prefix="/index", tags=["index"])
-ENHANCEMENT_EXTENSIONS = IMAGE_EXTENSIONS + PDF_EXTENSIONS
+UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+KIND_VALUES = {"note", "file", "url", "folder", "mount"}
 
 
 class RunnerPauseRequest(BaseModel):
     paused: bool
 
 
-def _get_queue(request: Request) -> IndexingQueue:
-    queue = getattr(request.app.state, "indexing_queue", None)
-    if queue is None:
-        raise HTTPException(
-            status_code=500,
-            detail="indexing_queue not configured on app.state",
-        )
-    return queue
+class IndexNodeRequest(BaseModel):
+    node_id: str
+    kind: str
+    name: str
+    absolute_content_path: str | None = None
+    mount_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    force: bool = True
+
+
+class DeleteNodeRequest(BaseModel):
+    node_id: str
 
 
 def _get_store(request: Request) -> LanceDBStore | None:
     return getattr(request.app.state, "lancedb_store", None)
+
+
+def _get_embedder(request: Request) -> Embedder | None:
+    return getattr(request.app.state, "embedder", None)
 
 
 def _get_extract_dir(request: Request) -> Path | None:
@@ -49,37 +61,110 @@ def _get_runner(request: Request):
     return getattr(request.app.state, "indexing_runner", None)
 
 
-def _get_enhancement_extensions(request: Request) -> tuple[str, ...]:
-    return getattr(request.app.state, "enhancement_extensions", ENHANCEMENT_EXTENSIONS)
+def _validate_index_node(body: IndexNodeRequest) -> None:
+    if not UUID_RE.match(body.node_id):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_node_id", "message": "node_id must be UUID"},
+        )
+    if body.kind not in KIND_VALUES:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_kind", "message": f"kind {body.kind!r} not allowed"},
+        )
 
 
 @router.get("/status")
 def get_index_status(request: Request) -> dict:
-    """Aggregate queue + index health for the sidebar footer."""
-    queue = _get_queue(request)
+    """Aggregate sidecar index health for the sidebar footer."""
     store = _get_store(request)
     runner = _get_runner(request)
     return {
-        "queue_depth": queue.queue_depth(),
-        "in_flight": queue.in_flight_node_ids(),
+        "in_flight": [],
         "enhancement_in_flight": (
             runner.enhancement_in_flight_node_ids if runner is not None else []
         ),
         "indexed_chunks": store.count() if store is not None else 0,
-        "enhancement_pending": queue.count_enhancement_pending(),
-        "enhancement_failed": queue.count_enhancement_failed(),
-        "enhancement_total_images": queue.count_enhancement_eligible_total(
-            _get_enhancement_extensions(request)
-        ),
+        "enhancement_pending": 0,
+        "enhancement_failed": 0,
+        "enhancement_total_images": 0,
     }
 
 
-@router.post("/backfill-enhancement")
-def post_backfill_enhancement(request: Request) -> dict:
-    """Flag indexed image/PDF rows for advanced-OCR enhancement."""
-    queue = _get_queue(request)
-    flagged = queue.backfill_enhancement_pending(_get_enhancement_extensions(request))
-    return {"flagged": flagged}
+@router.post("/node")
+def post_index_node(body: IndexNodeRequest, request: Request) -> dict:
+    _validate_index_node(body)
+    store = _get_store(request)
+    runner = _get_runner(request)
+    if runner is None:
+        raise HTTPException(
+            status_code=500,
+            detail="indexing_runner not configured on app.state",
+        )
+
+    if store is not None:
+        store.update_node_metadata(
+            body.node_id,
+            kind=body.kind,
+            name=body.name,
+            mount_id=body.mount_id,
+            modified_at=body.updated_at,
+        )
+        replace_metadata_chunk(
+            store,
+            _get_embedder(request),
+            node_id=body.node_id,
+            kind=body.kind,
+            name=body.name,
+            absolute_content_path=body.absolute_content_path,
+            mount_id=body.mount_id,
+            created_at=body.created_at,
+            modified_at=body.updated_at,
+        )
+
+    result = runner.process_direct(
+        node_id=body.node_id,
+        kind=body.kind,
+        name=body.name,
+        absolute_content_path=body.absolute_content_path,
+        mount_id=body.mount_id,
+        created_at=body.created_at,
+        modified_at=body.updated_at,
+    )
+    return {"node_id": body.node_id, **result}
+
+
+@router.post("/enhance")
+def post_enhance_node(body: IndexNodeRequest, request: Request) -> dict:
+    _validate_index_node(body)
+    runner = _get_runner(request)
+    if runner is None:
+        raise HTTPException(
+            status_code=500,
+            detail="indexing_runner not configured on app.state",
+        )
+    return runner.process_direct_enhancement(
+        node_id=body.node_id,
+        kind=body.kind,
+        name=body.name,
+        absolute_content_path=body.absolute_content_path,
+        mount_id=body.mount_id,
+        created_at=body.created_at,
+        modified_at=body.updated_at,
+    )
+
+
+@router.post("/delete")
+def post_delete_node(body: DeleteNodeRequest, request: Request) -> dict:
+    if not UUID_RE.match(body.node_id):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_node_id", "message": "node_id must be UUID"},
+        )
+    store = _get_store(request)
+    if store is not None:
+        store.delete_by_node_id(body.node_id)
+    return {"node_id": body.node_id, "status": "deleted", "error": None}
 
 
 @router.post("/pause")
@@ -93,28 +178,6 @@ def post_runner_pause(body: RunnerPauseRequest, request: Request) -> dict:
         )
     runner.set_paused(body.paused)
     return {"paused": runner.paused}
-
-
-@router.get("/status/{node_id}")
-def get_node_status(node_id: str, request: Request) -> dict:
-    """Per-node status — used by the Inspector panel."""
-    queue = _get_queue(request)
-    job = queue.get(node_id)
-    if job is None:
-        return {
-            "node_id": node_id,
-            "state": "unknown",
-            "indexed_at": None,
-            "error": None,
-            "attempts": 0,
-        }
-    return {
-        "node_id": job.node_id,
-        "state": job.state.value,
-        "indexed_at": job.indexed_at.isoformat() if job.indexed_at else None,
-        "error": job.last_error,
-        "attempts": job.attempts,
-    }
 
 
 @router.get("/node/{node_id}/content")
@@ -152,55 +215,3 @@ def get_node_content(node_id: str, request: Request) -> dict:
         store=_get_store(request),
         extract_dir=_get_extract_dir(request),
     ).read(node_id).to_dict()
-
-
-@router.get("/changes")
-def get_index_changes(
-    request: Request, since: int = 0, limit: int = 1000
-) -> dict:
-    """Per-node state transitions newer than ``since``, oldest first.
-
-    Used by Rust to mirror the sidecar's ``state`` field into the
-    ``cognios.db`` ``nodes.state`` column without polling the full
-    snapshot. Cost is proportional to the change rate, not the corpus
-    size — a 100k-file workspace at idle returns an empty list every
-    poll, while the snapshot endpoint returns 100k entries each time.
-
-    Response shape::
-
-        {
-          "transitions": [
-            {"node_id": "...", "state": "indexed",
-             "indexed_at": "2026-05-03T...", "error": null,
-             "transition_seq": 42},
-            ...
-          ],
-          "next_seq": 42
-        }
-
-    ``next_seq`` is the largest ``transition_seq`` returned. The
-    caller advances its cursor to this value so the next poll picks
-    up from the next transition. ``next_seq=0`` (alongside an empty
-    ``transitions`` list) means no new transitions since ``since``;
-    the cursor stays put.
-
-    ``limit`` defaults to 1000 and is capped server-side at 10k.
-    """
-    queue = _get_queue(request)
-    transitions, next_seq = queue.changes_since(since=since, limit=limit)
-    return {"transitions": transitions, "next_seq": next_seq}
-
-
-@router.get("/snapshot")
-def get_index_snapshot(request: Request) -> dict:
-    """Per-node ``(state, modified_at)`` summary the Rust resync uses
-    to compute the diff against ``cognios.db``.
-
-    Returns one entry per node currently tracked by the queue. The
-    payload is intentionally lean — no paths, no error strings, no
-    indexed_at. Rust's diff only needs ``state`` (to detect "not
-    indexed yet") and ``modified_at`` (to detect "cognios has newer
-    content").
-    """
-    queue = _get_queue(request)
-    return {"nodes": queue.snapshot()}

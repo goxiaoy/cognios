@@ -169,6 +169,7 @@ describe("useExplorerStore", () => {
       await result.current.refresh();
     });
 
+    expect(client.getNodeStatusSnapshot).toHaveBeenCalledTimes(1);
     expect(result.current.nodeStatusFor("url-1")?.overall).toBe("queued");
 
     act(() => {

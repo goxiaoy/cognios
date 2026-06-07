@@ -16,7 +16,7 @@ const URL_STAGES: &[StageDefinition] = &[
         importance: StageImportance::Required,
     },
     StageDefinition {
-        id: "content.index",
+        id: "search.index",
         label: "Indexing",
         order: 20,
         importance: StageImportance::Required,
@@ -24,7 +24,7 @@ const URL_STAGES: &[StageDefinition] = &[
 ];
 
 const FILE_STAGES: &[StageDefinition] = &[StageDefinition {
-    id: "content.index",
+    id: "search.index",
     label: "Indexing",
     order: 10,
     importance: StageImportance::Required,
@@ -32,7 +32,7 @@ const FILE_STAGES: &[StageDefinition] = &[StageDefinition {
 
 const ENHANCEABLE_FILE_STAGES: &[StageDefinition] = &[
     StageDefinition {
-        id: "content.index",
+        id: "search.index",
         label: "Indexing",
         order: 10,
         importance: StageImportance::Required,
@@ -46,7 +46,7 @@ const ENHANCEABLE_FILE_STAGES: &[StageDefinition] = &[
 ];
 
 const NOTE_STAGES: &[StageDefinition] = &[StageDefinition {
-    id: "content.index",
+    id: "search.index",
     label: "Indexing",
     order: 10,
     importance: StageImportance::Required,
@@ -66,7 +66,7 @@ const VOICE_NOTE_STAGES: &[StageDefinition] = &[
         importance: StageImportance::Optional,
     },
     StageDefinition {
-        id: "content.index",
+        id: "search.index",
         label: "Indexing",
         order: 30,
         importance: StageImportance::Required,
@@ -193,15 +193,43 @@ pub fn get_node_status(
 pub fn get_node_status_snapshot(conn: &Connection) -> rusqlite::Result<NodeStatusSnapshotDto> {
     ensure_default_stages_for_all_nodes(conn)?;
     let revision = current_revision(conn)?;
-    let mut stmt = conn.prepare("SELECT id FROM nodes ORDER BY id")?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-    let mut nodes = BTreeMap::new();
-    for row in rows {
-        let node_id = row?;
-        if let Some(status) = get_node_status(conn, &node_id)? {
-            nodes.insert(node_id, status);
+    let mut stmt = conn.prepare(
+        "
+        SELECT
+          n.id,
+          s.stage_id,
+          s.label,
+          s.state,
+          s.importance,
+          s.message,
+          s.detail_json,
+          s.error_message,
+          s.retryable,
+          s.attempt,
+          s.started_at,
+          s.finished_at,
+          s.updated_at
+        FROM nodes n
+        LEFT JOIN node_statuses s ON s.node_id = n.id
+        ORDER BY n.id ASC, s.stage_order ASC, s.stage_id ASC
+        ",
+    )?;
+    let mut rows = stmt.query([])?;
+    let mut grouped: BTreeMap<String, Vec<NodeStageStatusDto>> = BTreeMap::new();
+    while let Some(row) = rows.next()? {
+        let node_id: String = row.get(0)?;
+        let stages = grouped.entry(node_id).or_default();
+        if row.get::<_, Option<String>>(1)?.is_some() {
+            stages.push(stage_from_snapshot_row(row)?);
         }
     }
+    let nodes = grouped
+        .into_iter()
+        .map(|(node_id, stages)| {
+            let status = derive_node_status_view(node_id.clone(), stages);
+            (node_id, status)
+        })
+        .collect();
     Ok(NodeStatusSnapshotDto { revision, nodes })
 }
 
@@ -328,7 +356,7 @@ fn reconcile_url_stages(
         .query_row(
             "
             SELECT title, description, preview_text, canonical_url, html_cache_path, last_error
-            FROM url_jobs
+            FROM urls
             WHERE node_id = ?1
             ",
             [node_id],
@@ -483,7 +511,7 @@ fn reconcile_index_stage_from_node_state(
         _ => None,
     };
     match update {
-        Some(update) => update_stage_row(conn, node_id, "content.index", &update),
+        Some(update) => update_stage_row(conn, node_id, "search.index", &update),
         None => Ok(0),
     }
 }
@@ -643,6 +671,34 @@ fn list_stages_for_node(
         })
     })?;
     rows.collect()
+}
+
+fn stage_from_snapshot_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeStageStatusDto> {
+    let detail_json: Option<String> = row.get(6)?;
+    let detail = detail_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str(value).ok());
+    let error_message: Option<String> = row.get(7)?;
+    Ok(NodeStageStatusDto {
+        id: row.get(1)?,
+        label: row.get(2)?,
+        state: StageState::from_db(&row.get::<_, String>(3)?)
+            .as_str()
+            .to_string(),
+        importance: StageImportance::from_db(&row.get::<_, String>(4)?)
+            .as_str()
+            .to_string(),
+        message: row.get(5)?,
+        detail,
+        error: error_message.map(|message| NodeStageErrorDto {
+            message,
+            retryable: row.get::<_, i64>(8).unwrap_or_default() != 0,
+        }),
+        attempt: row.get::<_, i64>(9).unwrap_or_default().max(0) as u32,
+        started_at: row.get(10)?,
+        finished_at: row.get(11)?,
+        updated_at: row.get(12)?,
+    })
 }
 
 fn derive_node_status_view(node_id: String, stages: Vec<NodeStageStatusDto>) -> NodeStatusViewDto {

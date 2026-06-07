@@ -13,7 +13,7 @@ from search_sidecar.index.processors.url_cache import (
     extract_markdown,
     extract_readable_text,
 )
-from search_sidecar.index.queue import IndexingJob, JobState
+from search_sidecar.index.job import IndexingJob, JobState
 from search_sidecar.storage import open_store, role_or_default
 
 

@@ -42,14 +42,11 @@ from ..extract_artifacts import (
     clear_extract_artifacts,
     write_extract_artifact,
 )
-from ..queue import IndexingJob, IndexingQueue
+from ..job import IndexingJob
 from .enhancement import (
     AdvancedOcrExtract,
-    EnhancementTransientError,
     ExtractAssets,
-    classify_enhancement_error as _classify_enhancement_error,
     extract_text_and_assets as _extract_text_and_assets,
-    handle_enhancement_error,
     meaningful_chunks as _meaningful_chunks,
     strip_image_references as _strip_image_references,
 )
@@ -91,15 +88,15 @@ class ImageProcessor:
         store: LanceDBStore,
         embedder: Embedder,
         *,
-        queue: IndexingQueue | None = None,
+        queue: object | None = None,
         ocr_extract: OcrExtract | None = None,
         caption_extract: CaptionExtract | None = None,
         advanced_ocr_extract: AdvancedOcrExtract | None = None,
         extract_dir: Path | None = None,
     ) -> None:
+        _ = queue
         self._store = store
         self._embedder = embedder
-        self._queue = queue
         self._ocr_extract = ocr_extract
         self._caption_extract = caption_extract
         self._advanced_ocr_extract = advanced_ocr_extract
@@ -137,8 +134,6 @@ class ImageProcessor:
         rows = self._build_rows(job, body_chunks, summary_chunks)
         written = self._store.replace_node_chunks(job.node_id, rows)
         self._replace_basic_extract_artifacts(job, body_text, summary_text)
-        if body_chunks and self.has_advanced_ocr() and self._queue is not None:
-            self._queue.set_enhancement_pending(job.node_id)
         return written
 
     def has_advanced_ocr(self) -> bool:
@@ -149,23 +144,13 @@ class ImageProcessor:
         path = Path(job.absolute_content_path or "")
         if not path.is_file():
             raise FileNotFoundError(f"missing image: {path}")
-        if self._queue is None:
-            raise RuntimeError("ImageProcessor enhancement requires queue")
         extractor = self._advanced_ocr_extract
         if extractor is None:
             return
 
-        try:
-            advanced_output = extractor(path)
-        except Exception as err:
-            self._handle_enhancement_error(job.node_id, err)
-            return
+        advanced_output = extractor(path)
         advanced_text, advanced_assets = _extract_text_and_assets(advanced_output)
         advanced_text = advanced_text.strip()
-        if not self._queue.matches_content_claim(
-            job.node_id, job.content_version, claim_seq
-        ):
-            return
         body_chunks = _meaningful_chunks(_strip_image_references(advanced_text))
         if not body_chunks:
             self._write_extract_artifact(
@@ -174,7 +159,6 @@ class ImageProcessor:
                 advanced_text,
                 assets=advanced_assets,
             )
-            self._queue.clear_enhancement_pending(job.node_id)
             return
 
         rows = self._build_rows(job, body_chunks, [])
@@ -184,18 +168,6 @@ class ImageProcessor:
             "advanced",
             advanced_text,
             assets=advanced_assets,
-        )
-
-        self._queue.clear_enhancement_pending_if_transition_seq(
-            job.node_id, claim_seq
-        )
-
-    def _handle_enhancement_error(self, node_id: str, err: Exception) -> None:
-        handle_enhancement_error(
-            self._queue,
-            node_id,
-            err,
-            log=LOG,
         )
 
     def _build_rows(

@@ -50,6 +50,11 @@ vi.mock("../lib/tauri/ipc", () => ({
   listVoiceNotes: vi.fn().mockResolvedValue([]),
   getVoiceNote: (input: unknown) => getVoiceNote(input),
   getVoiceNoteTranscript: (input: unknown) => getVoiceNoteTranscript(input),
+  retranscribeVoiceNote: vi.fn().mockResolvedValue({
+    noteId: "voice-note-1",
+    nodeId: "note-1",
+    status: "pending",
+  }),
   completeVoiceNoteTranscript: vi.fn(),
   beginVoiceNoteAudioCapture: vi.fn(),
   appendVoiceNoteAudioChunk: vi.fn(),
@@ -66,6 +71,7 @@ vi.mock("../lib/tauri/ipc", () => ({
   // Phase 2 / Unit 7 search-sidecar bridge — stubbed for the App test.
   searchQuery: vi.fn().mockResolvedValue({ state: "initialising" }),
   getIndexingStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
+  getIndexStatistics: vi.fn().mockResolvedValue({ recentIndexedNodes: [] }),
   getSearchObservability: vi.fn().mockResolvedValue({
     state: "ready",
     data: {
@@ -79,7 +85,6 @@ vi.mock("../lib/tauri/ipc", () => ({
       tokenUsage: [],
     },
   }),
-  getNodeIndexingStatus: vi.fn().mockResolvedValue({ state: "initialising" }),
   getModelsStatus: () => getModelsStatus(),
   startModelDownload: (input: unknown) => startModelDownload(input),
   getNodeContent: vi.fn().mockResolvedValue({ state: "initialising" }),

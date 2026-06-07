@@ -17,22 +17,24 @@ pub mod index_state_sync;
 pub mod python_dev_watcher;
 pub mod runtime_file;
 pub mod safe_lifecycle;
+pub mod search_indexer;
 pub mod settings_fallback;
 pub mod supervisor;
 
 pub use client::{
-    ChatContextNodeDto, ChatMemoryContextDto, ChatMemoryRefreshMessageDto,
-    ChatMemoryRefreshRequestDto, ChatMemoryRefreshResponseDto, ChatModelsResponseDto,
-    ChatProviderTestRequestDto, ChatTurnMessageDto, ChatTurnRequestDto, ChatTurnResponseDto,
-    ChatTurnStreamEventDto, FeatureConfigDto, IndexSnapshotDto, IndexSnapshotEntry, IndexStatusDto,
-    LatencyOverviewDto, LatencySummaryDto, ModelDownloadEvent, ModelRoleStatusDto, ModelsStatusDto,
-    NodeContentChunkDto, NodeContentDto, NodeEvent, NodeEventAck, NodeEventKind,
-    NodeIndexStatusDto, ProviderConfigDto, RecentIndexedNodeCountDto, SearchInput,
+    BackgroundTaskStatusDto, BackgroundTaskTotalsDto, ChatContextNodeDto, ChatMemoryContextDto,
+    ChatMemoryRefreshMessageDto, ChatMemoryRefreshRequestDto, ChatMemoryRefreshResponseDto,
+    ChatModelsResponseDto, ChatProviderTestRequestDto, ChatTurnMessageDto, ChatTurnRequestDto,
+    ChatTurnResponseDto, ChatTurnStreamEventDto, FeatureConfigDto, IndexNodeResultDto,
+    IndexStatisticsDto, IndexStatusDto, LatencyOverviewDto, LatencySummaryDto, ModelDownloadEvent,
+    ModelRoleStatusDto, ModelsStatusDto, NodeContentChunkDto, NodeContentDto, NodeEvent,
+    NodeEventKind, ProviderConfigDto, RecentIndexedNodeCountDto, SearchInput,
     SearchObservabilityDto, SearchResponseDto, SearchResultDto, SearchSettingsDto,
     SearchSidecarClient, SidecarEnvelope, SidecarEnvelopeState, TokenUsageSummaryDto,
     VoiceNoteSummaryRequestDto, VoiceNoteSummaryResponseDto, VoiceNoteTranscriptionRequestDto,
     VoiceNoteTranscriptionResponseDto, VoiceNoteWarmTranscriberResponseDto,
 };
+pub use index_state_sync::{apply_search_index_transitions, SearchIndexTransition};
 pub use runtime_file::{read_runtime_file, RuntimeFile, RuntimeFileError};
 pub use settings_fallback::read_settings_file_fallback;
 pub use supervisor::{SearchSidecarSupervisor, SupervisorState};

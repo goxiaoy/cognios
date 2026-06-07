@@ -11,14 +11,11 @@
 //!
 //! - `POST /search`
 //! - `GET  /index/status`
-//! - `GET  /index/status/{node_id}`
 //! - `GET  /models/status`
 //! - `POST /models/accept-license/{role}`
 //!
-//! `POST /events/node` (mutation forwarding) and `POST /models/download`
-//! (SSE) are deferred — the former needs a synchronous DB query to
-//! materialise the absolute_content_path, the latter needs a Tauri-event
-//! bridge for streaming progress.
+//! `POST /models/download` (SSE) uses a Tauri-event bridge for
+//! streaming progress.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -88,7 +85,7 @@ impl<T> SidecarEnvelope<T> {
     }
 }
 
-// ----- mutation forwarding payload (Rust → sidecar /events/node) ----------
+// ----- direct indexing payload (Rust → sidecar /index/*) ------------------
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -97,9 +94,8 @@ pub enum NodeEventKind {
     NodeDeleted,
 }
 
-/// Payload Rust posts to ``POST /events/node`` after a node mutation.
-/// Mirrors the sidecar's :class:`NodeEvent` Pydantic model — Python
-/// expects snake_case keys, so we serialize as snake_case here.
+/// Payload Rust posts to the sidecar's direct index/enhance endpoints.
+/// Python expects snake_case keys, so we serialize as snake_case here.
 #[derive(Debug, Clone, Serialize)]
 pub struct NodeEvent {
     pub event: NodeEventKind,
@@ -119,9 +115,14 @@ pub struct NodeEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NodeEventAck {
-    pub accepted: bool,
-    pub action: String,
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct IndexNodeResultDto {
+    pub node_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub indexed_at: Option<String>,
 }
 
 // ----- DTOs (mirror the sidecar's JSON shapes) ----------------------------
@@ -190,7 +191,6 @@ pub struct SearchResponseDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct IndexStatusDto {
-    pub queue_depth: u64,
     pub in_flight: Vec<String>,
     #[serde(default)]
     pub enhancement_in_flight: Vec<String>,
@@ -201,6 +201,35 @@ pub struct IndexStatusDto {
     pub enhancement_failed: u64,
     #[serde(default)]
     pub enhancement_total_images: u64,
+    #[serde(default)]
+    pub tasks: Vec<BackgroundTaskStatusDto>,
+    #[serde(default)]
+    pub task_totals: BackgroundTaskTotalsDto,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct BackgroundTaskTotalsDto {
+    pub queued: u64,
+    pub running: u64,
+    pub succeeded: u64,
+    pub failed: u64,
+    pub cancelled: u64,
+    pub total: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct BackgroundTaskStatusDto {
+    pub task_type: String,
+    pub queued: u64,
+    pub running: u64,
+    pub succeeded: u64,
+    pub failed: u64,
+    pub cancelled: u64,
+    pub total: u64,
+    #[serde(default)]
+    pub running_node_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -304,70 +333,21 @@ pub struct SearchObservabilityDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BackfillResultDto {
-    pub flagged: u64,
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct IndexStatisticsDto {
+    pub recent_indexed_nodes: Vec<RecentIndexedNodeCountDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnhanceNodeResultDto {
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunnerPauseResultDto {
     pub paused: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
-pub struct NodeIndexStatusDto {
-    pub node_id: String,
-    pub state: String,
-    #[serde(default)]
-    pub indexed_at: Option<String>,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub attempts: u32,
-}
-
-/// Lean per-node summary the resync flow uses to compute the diff
-/// against ``cognios.db``. Mirrors the sidecar's ``GET /index/snapshot``
-/// response shape — Python keeps it lightweight on purpose.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
-pub struct IndexSnapshotEntry {
-    pub state: String,
-    #[serde(default)]
-    pub modified_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct IndexSnapshotDto {
-    pub nodes: HashMap<String, IndexSnapshotEntry>,
-}
-
-/// One transition row from ``GET /index/changes?since=<seq>``.
-/// Used by the live-state mirror task to mirror sidecar transitions
-/// into ``cognios.db.nodes.state`` without polling the full snapshot
-/// (which is O(corpus); this is O(change rate)).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
-pub struct IndexChangeDto {
-    pub node_id: String,
-    pub state: String,
-    #[serde(default)]
-    pub indexed_at: Option<String>,
-    #[serde(default)]
-    pub error: Option<String>,
-    pub transition_seq: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
-pub struct IndexChangesDto {
-    #[serde(default)]
-    pub transitions: Vec<IndexChangeDto>,
-    /// Largest ``transition_seq`` among ``transitions``. ``0`` means
-    /// no new transitions since the requested cursor — caller keeps
-    /// its cursor unchanged.
-    #[serde(default)]
-    pub next_seq: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -877,40 +857,6 @@ impl SearchSidecarClient {
         self.post_envelope("/search", body).await
     }
 
-    /// Fire-and-forget forward of a node mutation to the sidecar's
-    /// ``POST /events/node`` route. Errors are logged but never bubble
-    /// up — the resync ping is the safety net for missed events.
-    pub async fn forward_node_event(&self, event: &NodeEvent) {
-        if matches!(
-            self.supervisor.state(),
-            SupervisorState::NotStarted | SupervisorState::Spawning
-        ) {
-            log::debug!(
-                "dropping node event for {} (sidecar not yet running)",
-                event.node_id
-            );
-            return;
-        }
-        let envelope: SidecarEnvelope<NodeEventAck> =
-            self.post_envelope("/events/node", event).await;
-        match envelope.state {
-            SidecarEnvelopeState::Ready => {}
-            SidecarEnvelopeState::Initialising => {
-                log::debug!(
-                    "sidecar still initialising; node event for {} will be picked up by next resync",
-                    event.node_id
-                );
-            }
-            SidecarEnvelopeState::Unavailable => {
-                log::warn!(
-                    "sidecar unavailable while forwarding event for {}: {}",
-                    event.node_id,
-                    envelope.error.as_deref().unwrap_or("(no detail)")
-                );
-            }
-        }
-    }
-
     pub async fn index_status(&self) -> SidecarEnvelope<IndexStatusDto> {
         self.get_envelope("/index/status").await
     }
@@ -928,23 +874,17 @@ impl SearchSidecarClient {
             .await
     }
 
-    pub async fn backfill_advanced_ocr_enhancement(&self) -> SidecarEnvelope<BackfillResultDto> {
-        self.post_envelope("/index/backfill-enhancement", &serde_json::json!({}))
+    pub async fn enhance_node(&self, event: &NodeEvent) -> SidecarEnvelope<EnhanceNodeResultDto> {
+        self.post_envelope("/index/enhance", event).await
+    }
+
+    pub async fn index_node(&self, event: &NodeEvent) -> SidecarEnvelope<IndexNodeResultDto> {
+        self.post_envelope("/index/node", event).await
+    }
+
+    pub async fn delete_index_node(&self, node_id: &str) -> SidecarEnvelope<IndexNodeResultDto> {
+        self.post_envelope("/index/delete", &serde_json::json!({ "node_id": node_id }))
             .await
-    }
-
-    pub async fn index_snapshot(&self) -> SidecarEnvelope<IndexSnapshotDto> {
-        self.get_envelope("/index/snapshot").await
-    }
-
-    pub async fn index_changes(&self, since: u64, limit: u32) -> SidecarEnvelope<IndexChangesDto> {
-        let path = format!("/index/changes?since={since}&limit={limit}");
-        self.get_envelope(&path).await
-    }
-
-    pub async fn node_index_status(&self, node_id: &str) -> SidecarEnvelope<NodeIndexStatusDto> {
-        let path = format!("/index/status/{}", urlencoded(node_id));
-        self.get_envelope(&path).await
     }
 
     pub async fn models_status(&self) -> SidecarEnvelope<ModelsStatusDto> {
@@ -1357,24 +1297,47 @@ mod tests {
     #[test]
     fn index_status_round_trips_snake_to_camel() {
         let from_python = r#"{
-            "queue_depth": 3,
             "in_flight": ["a"],
             "enhancement_in_flight": ["img-1"],
             "indexed_chunks": 100,
             "enhancement_pending": 4,
             "enhancement_failed": 1,
-            "enhancement_total_images": 10
+            "enhancement_total_images": 10,
+            "tasks": [{
+                "task_type": "search.index",
+                "queued": 2,
+                "running": 1,
+                "succeeded": 7,
+                "failed": 0,
+                "cancelled": 0,
+                "total": 10,
+                "running_node_ids": ["node-1"]
+            }],
+            "task_totals": {
+                "queued": 2,
+                "running": 1,
+                "succeeded": 7,
+                "failed": 0,
+                "cancelled": 0,
+                "total": 10
+            }
         }"#;
         let parsed: IndexStatusDto = serde_json::from_str(from_python).expect("decode");
-        assert_eq!(parsed.queue_depth, 3);
         assert_eq!(parsed.enhancement_in_flight, vec!["img-1"]);
         assert_eq!(parsed.enhancement_pending, 4);
+        assert_eq!(parsed.tasks[0].task_type, "search.index");
+        assert_eq!(parsed.tasks[0].running_node_ids, vec!["node-1"]);
         let to_ts = serde_json::to_value(&parsed).unwrap();
-        assert_eq!(to_ts["queueDepth"], 3);
         assert_eq!(to_ts["enhancementInFlight"], serde_json::json!(["img-1"]));
         assert_eq!(to_ts["indexedChunks"], 100);
         assert_eq!(to_ts["enhancementPending"], 4);
         assert_eq!(to_ts["enhancementTotalImages"], 10);
+        assert_eq!(to_ts["tasks"][0]["taskType"], "search.index");
+        assert_eq!(
+            to_ts["tasks"][0]["runningNodeIds"],
+            serde_json::json!(["node-1"])
+        );
+        assert_eq!(to_ts["taskTotals"]["queued"], 2);
     }
 
     #[test]
@@ -1429,22 +1392,6 @@ mod tests {
             "local-ollama"
         );
         assert!(to_ts.get("recent_indexed_nodes").is_none());
-    }
-
-    #[test]
-    fn node_index_status_round_trips_snake_to_camel() {
-        let from_python = r#"{
-            "node_id": "abc",
-            "state": "indexed",
-            "indexed_at": "2026-04-27T00:00:00Z",
-            "error": null,
-            "attempts": 1
-        }"#;
-        let parsed: NodeIndexStatusDto = serde_json::from_str(from_python).expect("decode");
-        assert_eq!(parsed.node_id, "abc");
-        let to_ts = serde_json::to_value(&parsed).unwrap();
-        assert_eq!(to_ts["nodeId"], "abc");
-        assert_eq!(to_ts["indexedAt"], "2026-04-27T00:00:00Z");
     }
 
     #[test]

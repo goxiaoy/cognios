@@ -25,8 +25,8 @@ function makeClient(overrides: Partial<SearchClient> = {}): SearchClient {
   return {
     search: vi.fn(),
     indexStatus: vi.fn(),
+    indexStatistics: vi.fn().mockResolvedValue({ recentIndexedNodes: [] }),
     observability: vi.fn(),
-    nodeIndexStatus: vi.fn(),
     nodeContent: vi.fn().mockResolvedValue({
       state: "ready",
       data: { nodeId: "x", kind: "file", chunks: [], joined: "" },
@@ -287,7 +287,7 @@ describe("ImagePreview", () => {
   it("rewrites advanced OCR jpg references to extracted png assets", async () => {
     const source = "imgs/img_in_chart_box_50_39_1204_423.jpg";
     const assetPath =
-      "/Users/test/.cogios/search/extract/1bf3e220-234d-4e0f-a59d-0595e2d17f2e/assets/advanced/imgs/img_in_chart_box_50_39_1204_423.png";
+      "/Users/test/.cogios/extract/1bf3e220-234d-4e0f-a59d-0595e2d17f2e/assets/advanced/imgs/img_in_chart_box_50_39_1204_423.png";
     const client = clientWithChunks(
       [
         {

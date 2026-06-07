@@ -10,7 +10,7 @@ from search_sidecar.embeddings.reembed import (
 )
 from search_sidecar.index.processors.text import TextProcessor
 from search_sidecar.index.embedder import StubEmbedder
-from search_sidecar.index.queue import IndexingJob, JobState
+from search_sidecar.index.job import IndexingJob, JobState
 from search_sidecar.storage import EMBEDDING_DIMENSION, open_store
 
 UUID_A = "11111111-1111-1111-1111-111111111111"

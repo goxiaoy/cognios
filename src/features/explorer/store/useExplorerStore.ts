@@ -45,7 +45,10 @@ export function useExplorerStore(client: ExplorerClient) {
   const inspectorNode = selectionCount === 1 ? selectedArtifacts[0] : null;
   const nodeStatuses = nodeStatusSnapshot.nodes;
 
-  const applySnapshot = useCallback((nextSnapshot: ExplorerSnapshot) => {
+  const applySnapshot = useCallback((
+    nextSnapshot: ExplorerSnapshot,
+    options?: { refreshStatuses?: boolean }
+  ) => {
     const nextIndex = indexNodes(nextSnapshot.roots);
     setSnapshot((prev) => {
       // Auto-expand only newly-added roots (or all roots on first non-empty
@@ -67,7 +70,7 @@ export function useExplorerStore(client: ExplorerClient) {
     // Drop any selected ids whose nodes no longer exist after the snapshot
     // (covers external delete / mount unmount). Keep all others regardless of parent.
     setSelectedArtifactIds((current) => current.filter((id) => nextIndex.has(id)));
-    if (client.getNodeStatusSnapshot) {
+    if (options?.refreshStatuses !== false && client.getNodeStatusSnapshot) {
       void client
         .getNodeStatusSnapshot()
         .then(setNodeStatusSnapshot)
@@ -118,7 +121,7 @@ export function useExplorerStore(client: ExplorerClient) {
       client.getExplorerSnapshot(),
       refreshNodeStatuses(),
     ]);
-    applySnapshot(nextSnapshot);
+    applySnapshot(nextSnapshot, { refreshStatuses: false });
   }, [applySnapshot, client, refreshNodeStatuses]);
 
   const toggleNode = useCallback((nodeId: string) => {

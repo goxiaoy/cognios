@@ -369,9 +369,8 @@ class LanceDBStore:
     def list_node_ids(self) -> set[str]:
         """The distinct ``node_id`` values currently in the table.
 
-        Used by the resync flow (``POST /events/resync``) to compute
-        the diff between Rust's authoritative node-id set and the
-        sidecar's index.
+        Used by retrieval/bootstrap code that needs a cheap view of
+        which nodes currently have indexed rows.
         """
         # to_arrow with column projection is the lancedb-version-stable
         # accessor for one column across the whole table; to_pandas's

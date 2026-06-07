@@ -32,7 +32,7 @@ pub struct CreatedUrl {
 }
 
 #[derive(Clone, Debug)]
-pub struct UrlJobRecord {
+pub struct UrlRecord {
     pub node_id: String,
     pub url: String,
 }
@@ -72,7 +72,7 @@ pub fn create_url(conn: &mut Connection, input: &CreateUrlInput) -> rusqlite::Re
     )?;
     tx.execute(
         "
-        INSERT INTO url_jobs (node_id, url)
+        INSERT INTO urls (node_id, url)
         VALUES (?1, ?2)
         ",
         params![node_id, trimmed_url],
@@ -88,7 +88,7 @@ pub fn create_url(conn: &mut Connection, input: &CreateUrlInput) -> rusqlite::Re
     let _ = update_stage(
         conn,
         &node_id,
-        "content.index",
+        "search.index",
         &StageUpdate::pending("Waiting to index"),
     )?;
     touch_node_modified_at(conn, input.parent_id.as_deref())?;
@@ -130,56 +130,22 @@ pub fn retry_url(conn: &Connection, input: &RetryUrlInput) -> rusqlite::Result<(
     let _ = update_stage(
         conn,
         &input.node_id,
-        "content.index",
+        "search.index",
         &StageUpdate::pending("Waiting to index"),
     )?;
     Ok(())
 }
 
-pub fn requeue_stale_jobs(conn: &Connection) -> rusqlite::Result<Vec<String>> {
-    conn.execute(
-        "
-        UPDATE nodes
-        SET state = ?1
-        WHERE kind = ?2 AND state IN (?3, ?4)
-        ",
-        params![
-            NodeState::Pending.as_str(),
-            NodeKind::Url.as_str(),
-            NodeState::Indexing.as_str(),
-            NodeState::Error.as_str()
-        ],
-    )?;
-
-    list_pending_job_ids(conn)
-}
-
-pub fn list_pending_job_ids(conn: &Connection) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "
-        SELECT id
-        FROM nodes
-        WHERE kind = ?1 AND state = ?2
-        ORDER BY id
-        ",
-    )?;
-    let rows = stmt.query_map(
-        params![NodeKind::Url.as_str(), NodeState::Pending.as_str()],
-        |row| row.get(0),
-    )?;
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-}
-
-pub fn load_url_job(conn: &Connection, node_id: &str) -> rusqlite::Result<Option<UrlJobRecord>> {
+pub fn load_url(conn: &Connection, node_id: &str) -> rusqlite::Result<Option<UrlRecord>> {
     conn.query_row(
         "
         SELECT node_id, url
-        FROM url_jobs
+        FROM urls
         WHERE node_id = ?1
         ",
         [node_id],
         |row| {
-            Ok(UrlJobRecord {
+            Ok(UrlRecord {
                 node_id: row.get(0)?,
                 url: row.get(1)?,
             })
@@ -233,7 +199,7 @@ pub fn mark_url_indexed(
     )?;
     conn.execute(
         "
-        UPDATE url_jobs
+        UPDATE urls
         SET title = ?2,
             description = ?3,
             preview_text = ?4,
@@ -281,7 +247,7 @@ pub fn mark_url_error(conn: &Connection, node_id: &str, message: &str) -> rusqli
         params![node_id, NodeState::Error.as_str()],
     )?;
     conn.execute(
-        "UPDATE url_jobs SET last_error = ?2 WHERE node_id = ?1",
+        "UPDATE urls SET last_error = ?2 WHERE node_id = ?1",
         params![node_id, message],
     )?;
     let _ = update_stage(
@@ -296,7 +262,7 @@ pub fn mark_url_error(conn: &Connection, node_id: &str, message: &str) -> rusqli
 pub fn delete_url_artifacts(conn: &Connection, node_id: &str) -> rusqlite::Result<()> {
     let html_cache_path: Option<String> = conn
         .query_row(
-            "SELECT html_cache_path FROM url_jobs WHERE node_id = ?1",
+            "SELECT html_cache_path FROM urls WHERE node_id = ?1",
             [node_id],
             |row| row.get(0),
         )

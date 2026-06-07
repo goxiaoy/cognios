@@ -44,9 +44,6 @@ from .extract import (
 from .index import IndexingRunner
 from .index.content import NodeContentReader
 from .index.dispatch import Dispatcher
-from .index.processors.image import SUPPORTED_EXTENSIONS as IMAGE_EXTENSIONS
-from .index.processors.pdf import SUPPORTED_EXTENSIONS as PDF_EXTENSIONS
-from .index.queue import open_queue
 from .models import DEFAULTS, ModelManager
 from .observability import open_observability_store
 from .rerank import select_reranker
@@ -71,7 +68,6 @@ STARTUP_DEADLINE_SECONDS = 30.0
 STARTUP_POLL_INTERVAL_SECONDS = 0.05
 ADVANCED_OCR_AUTORUN_ENV = "COGNIOS_ADVANCED_OCR_AUTORUN"
 _FALSE_ENV_VALUES = {"0", "false", "no", "off"}
-ENHANCEMENT_EXTENSIONS = IMAGE_EXTENSIONS + PDF_EXTENSIONS
 
 
 def prepare_search_dir(storage_dir: Path) -> Path:
@@ -82,6 +78,25 @@ def prepare_search_dir(storage_dir: Path) -> Path:
     return search_dir
 
 
+def prepare_settings_path(storage_dir: Path, search_dir: Path) -> Path:
+    """Return ``<storage_dir>/settings.json``, migrating the old search path."""
+    settings_path = storage_dir / "settings.json"
+    legacy_path = search_dir / "settings.json"
+    if not settings_path.exists() and legacy_path.exists():
+        legacy_path.replace(settings_path)
+        settings_path.chmod(0o600)
+        LOG.info("migrated settings.json from %s to %s", legacy_path, settings_path)
+    return settings_path
+
+
+def prepare_extract_dir(storage_dir: Path) -> Path:
+    """Ensure ``<storage_dir>/extract/`` exists with mode 0700."""
+    extract_dir = storage_dir / "extract"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    extract_dir.chmod(0o700)
+    return extract_dir
+
+
 def serve(storage_dir: Path) -> int:
     """Start the sidecar, write the runtime file, block until shutdown.
 
@@ -89,6 +104,7 @@ def serve(storage_dir: Path) -> int:
     contention or startup timeout).
     """
     search_dir = prepare_search_dir(storage_dir)
+    extract_dir = prepare_extract_dir(storage_dir)
     lock_path = search_dir / "sidecar.lock"
     runtime_path = search_dir / "sidecar.runtime"
 
@@ -99,7 +115,7 @@ def serve(storage_dir: Path) -> int:
         return 1
 
     token = generate_token()
-    settings_path = search_dir / "settings.json"
+    settings_path = prepare_settings_path(storage_dir, search_dir)
     # Materialize defaults on first launch so the file mode is fixed
     # at 0600 from the start; subsequent runs no-op via the load path.
     if not settings_path.exists():
@@ -111,7 +127,6 @@ def serve(storage_dir: Path) -> int:
         save_settings(settings_path, settings)
     model_manager = ModelManager(storage_dir=storage_dir, manifest=DEFAULTS)
     lancedb_store = open_store(search_dir / "index.lance")
-    indexing_queue = open_queue(search_dir / "queue.db")
     embedder = select_embedder(
         model_manager=model_manager,
         settings=settings,
@@ -149,26 +164,17 @@ def serve(storage_dir: Path) -> int:
     dispatcher = Dispatcher(
         store=lancedb_store,
         embedder=embedder,
-        queue=indexing_queue,
         ocr_extract=ocr_extract,
         caption_extract=caption_extract,
         advanced_ocr_extract=advanced_ocr_extract,
-        extract_dir=search_dir / "extract",
+        extract_dir=extract_dir,
     )
-    advanced_ocr_autorun = advanced_ocr_autorun_enabled()
     observability_store = open_observability_store(search_dir / "observability.db")
-    _run_advanced_ocr_backfill_on_boot(
-        indexing_queue,
-        dispatcher,
-        enabled=advanced_ocr_autorun,
-    )
     indexing_runner = IndexingRunner(
-        queue=indexing_queue,
         dispatcher=dispatcher,
-        enable_enhancement=advanced_ocr_autorun,
+        enable_enhancement=True,
         observability_store=observability_store,
     )
-    indexing_runner.start()
     reranker = select_reranker(model_manager=model_manager, settings=settings)
     if reranker is not None:
         LOG.info("cross-encoder reranker loaded: %s", type(reranker).__name__)
@@ -176,7 +182,7 @@ def serve(storage_dir: Path) -> int:
         store=lancedb_store,
         embedder=embedder,
         reranker=reranker,
-        active_node_ids=indexing_queue.list_node_ids,
+        active_node_ids=lancedb_store.list_node_ids,
     )
     chat_orchestrator = ChatOrchestrator(
         retrieval=ChatRetrieval(
@@ -189,7 +195,7 @@ def serve(storage_dir: Path) -> int:
             search_orchestrator=search_orchestrator,
             content_reader=NodeContentReader(
                 store=lancedb_store,
-                extract_dir=search_dir / "extract",
+                extract_dir=extract_dir,
             ),
         ),
     )
@@ -197,7 +203,6 @@ def serve(storage_dir: Path) -> int:
     app = build_app(
         token=token,
         model_manager=model_manager,
-        indexing_queue=indexing_queue,
         indexing_runner=indexing_runner,
         embedder=embedder,
         lancedb_store=lancedb_store,
@@ -206,7 +211,7 @@ def serve(storage_dir: Path) -> int:
         observability_store=observability_store,
         settings_path=settings_path,
         boot_settings_signature=boot_signature(settings),
-        extract_dir=search_dir / "extract",
+        extract_dir=extract_dir,
         enhancement_extensions=dispatcher.enhancement_extensions(),
     )
     config = uvicorn.Config(
@@ -274,7 +279,6 @@ def serve(storage_dir: Path) -> int:
             )
             dispatcher.close()
             indexing_runner.stop(timeout=2.0)
-        indexing_queue.close()
         remove_runtime_file(runtime_path)
         lock_handle.close()
 
@@ -298,28 +302,6 @@ def advanced_ocr_autorun_enabled() -> bool:
     """Whether the background runner may auto-drain advanced OCR work."""
     value = os.environ.get(ADVANCED_OCR_AUTORUN_ENV, "1").strip().lower()
     return value not in _FALSE_ENV_VALUES
-
-
-def _run_advanced_ocr_backfill_on_boot(
-    queue,
-    dispatcher,
-    *,
-    enabled: bool = True,
-) -> None:  # type: ignore[no-untyped-def]
-    """Flag indexed OCR targets when advanced OCR is already available at boot."""
-    if not enabled:
-        LOG.info("advanced-OCR boot backfill skipped: autorun disabled")
-        return
-    try:
-        if not dispatcher.has_advanced_ocr():
-            return
-        flagged = queue.backfill_enhancement_pending(dispatcher.enhancement_extensions())
-        LOG.info(
-            "advanced-OCR boot backfill flagged %d indexed document(s)",
-            flagged,
-        )
-    except Exception as err:
-        LOG.warning("advanced-OCR boot backfill failed: %s", err)
 
 
 def _read_bound_port(server: uvicorn.Server) -> int | None:

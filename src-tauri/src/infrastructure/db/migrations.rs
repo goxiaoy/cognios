@@ -10,6 +10,8 @@ const VOICE_NOTES_SCHEMA: &str = include_str!("../../../migrations/0007_voice_no
 const VOICE_NOTE_TRANSCRIPTS_SCHEMA: &str =
     include_str!("../../../migrations/0008_voice_note_transcripts.sql");
 const NODE_STATUSES_SCHEMA: &str = include_str!("../../../migrations/0009_node_statuses.sql");
+const BACKGROUND_TASKS_SCHEMA: &str = include_str!("../../../migrations/0010_background_tasks.sql");
+const STATISTICS_SCHEMA: &str = include_str!("../../../migrations/0011_statistics.sql");
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     let current_version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -57,6 +59,16 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     if current_version < 9 {
         conn.execute_batch(NODE_STATUSES_SCHEMA)?;
         conn.pragma_update(None, "user_version", 9)?;
+    }
+
+    if current_version < 10 {
+        conn.execute_batch(BACKGROUND_TASKS_SCHEMA)?;
+        conn.pragma_update(None, "user_version", 10)?;
+    }
+
+    if current_version < 11 {
+        conn.execute_batch(STATISTICS_SCHEMA)?;
+        conn.pragma_update(None, "user_version", 11)?;
     }
 
     Ok(())

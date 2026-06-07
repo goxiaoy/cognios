@@ -14,7 +14,7 @@ Persist Home observability data in a privacy-safe sidecar SQLite database so 7/3
 
 ## Problem Frame
 
-The Home statistics dashboard currently has useful UI and a sidecar summary route, but `token_usage` and latency percentiles are process-local rolling memory. `recent_indexed_nodes` is durable because it is derived from `queue.db`, while token usage, search latency, indexing latency, OCR enhancement latency, and model-download latency disappear on restart and cannot support meaningful 7/30 day trends.
+The Home statistics dashboard currently has useful UI and a sidecar summary route, but `token_usage` and latency percentiles were originally process-local rolling memory. Search/index task state is now owned by Rust background tasks; sidecar observability remains focused on privacy-safe sidecar runtime metrics such as search latency, OCR enhancement latency, model-download latency, and token usage.
 
 The goal is local operational observability, not telemetry export or analytics collection. The design must preserve CogniOS's trust boundary: store only aggregate metadata such as timestamps, metric names, durations, counts, provider IDs, model IDs, and success/failure flags. Do not store prompts, queries, source text, file paths, node names, or retrieved context.
 
@@ -39,11 +39,8 @@ The goal is local operational observability, not telemetry export or analytics c
 
 ## Existing Patterns To Follow
 
-- `sidecar/search_sidecar/index/queue.py` owns SQLite connection setup, WAL pragmas, Python-side locking, and corruption recovery patterns.
-- `sidecar/search_sidecar/index/migrations.py` demonstrates versioned `PRAGMA user_version` migrations.
-- `sidecar/search_sidecar/lifecycle.py` creates `queue.db` under `search_dir`; persistent observability should live alongside it as `observability.db`.
-- `sidecar/search_sidecar/observability.py` already defines duration summaries, token normalization, and privacy constraints.
-- `sidecar/search_sidecar/routes/observability.py` already validates `recent_days=7|30` and combines queue-backed recent indexing with observability summary data.
+- `sidecar/search_sidecar/observability.py` owns SQLite connection setup, WAL pragmas, migrations, duration summaries, token normalization, and privacy constraints.
+- `sidecar/search_sidecar/routes/observability.py` already validates `recent_days=7|30|90` and exposes the observability summary payload.
 - `src/lib/contracts/search.ts` and `src-tauri/src/services/search/client.rs` already mirror the sidecar observability payload.
 
 ## Key Technical Decisions
@@ -52,7 +49,7 @@ The goal is local operational observability, not telemetry export or analytics c
 - **Record events/samples, not raw payloads.** A compact sample table is enough for v1: timestamp, kind, ok, duration, provider, model, token counts. This keeps the model generic without introducing a full metrics platform.
 - **Compute exact window percentiles from retained samples.** For local 7/30 day windows, retained raw samples are simpler and more accurate than approximating from rollups. Histogram rollups can be added if the database grows too large.
 - **Use daily token aggregation at query time first.** Token usage data volume is low; summing retained rows by provider/model for 7/30 days is simpler than maintaining rollups during writes. A rollup table remains a future optimization.
-- **Keep index counts queue-backed.** Indexed node counts already exist durably in `queue.db`; duplicating them into observability risks drift.
+- **Keep index counts out of sidecar observability.** Rust-owned task and node status tables are the durable source for indexing progress; sidecar observability should not recreate an indexing queue view.
 - **Extend the summary contract additively.** Add `latency_trends` to the sidecar/Rust/TS contract while keeping current `latency` fields for existing UI.
 
 ## Data Model

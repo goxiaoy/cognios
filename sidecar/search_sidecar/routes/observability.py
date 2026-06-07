@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-from ..index.queue import IndexingQueue
 from ..observability import ObservabilityStore
 
 router = APIRouter(prefix="/observability", tags=["observability"])
@@ -21,19 +20,11 @@ def _get_observability(request: Request) -> ObservabilityStore:
     return store
 
 
-def _get_queue(request: Request) -> IndexingQueue | None:
-    return getattr(request.app.state, "indexing_queue", None)
-
-
 @router.get("/summary")
 def get_observability_summary(request: Request, recent_days: int = 30) -> dict:
     if recent_days not in RECENT_INDEX_DAYS:
         raise HTTPException(status_code=422, detail="recent_days must be 7, 30, or 90")
-    queue = _get_queue(request)
-    recent_indexed_nodes = (
-        queue.recent_indexed_counts(days=recent_days) if queue is not None else []
-    )
     return _get_observability(request).summary(
-        recent_indexed_nodes=recent_indexed_nodes,
+        recent_indexed_nodes=[],
         recent_days=recent_days,
     )

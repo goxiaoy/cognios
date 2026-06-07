@@ -109,7 +109,7 @@ pub fn run() {
 
             // Search sidecar (Phase 1 / Unit 2). Construct before the
             // emitter so the wrapped emitter can capture the client and
-            // forward node mutations to the sidecar's `/events/node`.
+            // enqueue Rust-owned search.index tasks.
             let search_dir = app_data_dir.join("search");
             fs::create_dir_all(&search_dir).map_err(|error| error.to_string())?;
             let search_sidecar = Arc::new(SearchSidecarSupervisor::new(
@@ -166,9 +166,8 @@ pub fn run() {
             // URL jobs, and the note/folder mutation paths). It does
             // two things: (1) emits the existing Tauri webview event
             // for the React explorer to refresh; (2) translates
-            // node-* and url-indexed reasons into a `/events/node`
-            // payload and fire-and-forget posts it to the search
-            // sidecar so the indexer picks the change up.
+            // node-* and url-indexed reasons into durable Rust
+            // background tasks that call the sidecar direct processor.
             let emit_app_handle = app.handle().clone();
             let forwarder_client = Arc::clone(&search_client);
             let forwarder_db = db.clone();
@@ -178,10 +177,7 @@ pub fn run() {
                 if !event.mount_id.is_empty() {
                     if let Ok(conn) = forwarder_db.connect() {
                         if let Ok(Some(status_event)) =
-                            services::node_status::current_node_status_event(
-                                &conn,
-                                &event.mount_id,
-                            )
+                            services::node_status::current_node_status_event(&conn, &event.mount_id)
                         {
                             let _ = emit_app_handle.emit(
                                 services::node_status::NODE_STATUS_CHANGED_EVENT_NAME,
@@ -194,12 +190,16 @@ pub fn run() {
                 let client = Arc::clone(&forwarder_client);
                 let db = forwarder_db.clone();
                 let storage_dir = forwarder_storage_dir.clone();
+                let search_index_app_handle = emit_app_handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Some(payload) =
-                        services::search::forwarder::build_payload(&event, &db, &storage_dir)
-                    {
-                        client.forward_node_event(&payload).await;
-                    }
+                    services::search::search_indexer::handle_vfs_event(
+                        db.clone(),
+                        Arc::clone(&client),
+                        storage_dir.clone(),
+                        search_index_app_handle,
+                        event.clone(),
+                    )
+                    .await;
                     // Cascading deletes (Mount or Folder with children)
                     // also need every descendant id cleaned up in
                     // lancedb. The forwarder above sends the parent's
@@ -233,78 +233,24 @@ pub fn run() {
                 ))
             };
             url_jobs.resume_pending_jobs()?;
-
-            // Startup resync: once the sidecar reaches Running, diff
-            // its index against cognios.db and forward only the stale
-            // entries. For an unchanged workspace this is one HTTP
-            // call (the snapshot fetch) plus an in-memory diff;
-            // first-launch / post-crash workspaces forward exactly the
-            // nodes that need indexing. Backgrounded so it never
-            // blocks setup().
-            {
-                let resync_db = db.clone();
-                let resync_client = Arc::clone(&search_client);
-                let resync_storage = app_data_dir.clone();
-                let resync_supervisor = Arc::clone(&search_sidecar);
-                tauri::async_runtime::spawn(async move {
-                    use crate::services::search::SupervisorState;
-                    use std::time::Duration;
-                    // Wait for the sidecar to be Running. Local OCR
-                    // model initialisation can exceed a fixed timeout
-                    // in dev, and skipping this task leaves existing
-                    // nodes un-forwarded until another mutation happens.
-                    let step = Duration::from_millis(500);
-                    loop {
-                        match resync_supervisor.state() {
-                            SupervisorState::Running { .. } => break,
-                            SupervisorState::Failed {
-                                retryable: false, ..
-                            } => {
-                                log::info!(
-                                    "startup resync skipped: sidecar failed terminally before Running"
-                                );
-                                return;
-                            }
-                            _ => {
-                                tokio::time::sleep(step).await;
-                            }
-                        }
-                    }
-                    let summary = services::search::forwarder::resync_all_nodes(
-                        &resync_db,
-                        &resync_client,
-                        &resync_storage,
-                    )
-                    .await;
-                    log::info!(
-                        "startup resync complete: forwarded={} deleted={} skipped={}",
-                        summary.forwarded,
-                        summary.deleted,
-                        summary.skipped
-                    );
-                });
-            }
-
-            // Live state mirror: poll ``GET /index/changes`` and write
-            // sidecar transitions back into ``nodes.state`` so the
-            // explorer's index-state dot follows the actual queue
-            // state. Cost is proportional to the change rate, not
-            // the corpus size — see services::search::index_state_sync.
-            {
-                let sync_db = db.clone();
-                let sync_client = Arc::clone(&search_client);
-                let sync_supervisor = Arc::clone(&search_sidecar);
-                let sync_app_handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    services::search::index_state_sync::run_index_state_sync(
-                        sync_supervisor,
-                        sync_client,
-                        sync_db,
-                        sync_app_handle,
-                    )
-                    .await;
-                });
-            }
+            commands::voice_notes::resume_voice_note_processing_jobs(
+                db.clone(),
+                app_data_dir.join("notes"),
+                Arc::clone(&emitter),
+                Arc::clone(&search_client),
+            )?;
+            commands::voice_notes::resume_voice_note_summary_jobs(
+                db.clone(),
+                app_data_dir.join("notes"),
+                Arc::clone(&emitter),
+                Arc::clone(&search_client),
+            )?;
+            services::search::search_indexer::resume_search_index_tasks(
+                db.clone(),
+                Arc::clone(&search_client),
+                app_data_dir.clone(),
+                app.handle().clone(),
+            )?;
 
             // Advanced-OCR watcher: when the 13-stage PP-StructureV3
             // bundle finishes downloading, ask the sidecar to backfill
@@ -315,10 +261,16 @@ pub fn run() {
             {
                 let watch_client = Arc::clone(&search_client);
                 let watch_supervisor = Arc::clone(&search_sidecar);
+                let watch_db = db.clone();
+                let watch_storage_dir = app_data_dir.clone();
+                let watch_emitter = Arc::clone(&emitter);
                 tauri::async_runtime::spawn(async move {
                     services::search::advanced_ocr_watcher::run_advanced_ocr_watcher(
                         watch_supervisor,
                         watch_client,
+                        watch_db,
+                        watch_storage_dir,
+                        watch_emitter,
                     )
                     .await;
                 });
@@ -405,8 +357,8 @@ pub fn run() {
             commands::chat::test_chat_provider,
             commands::search::search_query,
             commands::search::get_indexing_status,
+            commands::search::get_index_statistics,
             commands::search::get_search_observability,
-            commands::search::get_node_indexing_status,
             commands::search::get_node_content,
             commands::search::get_models_status,
             commands::search::start_model_download,

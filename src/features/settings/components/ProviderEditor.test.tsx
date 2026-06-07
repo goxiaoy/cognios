@@ -17,6 +17,7 @@ afterEach(() => cleanup());
 const OPENAI = presetById("openai")!;
 const LOCAL_GTE = presetById("local-gte")!;
 const LOCAL_OLLAMA = presetById("local-ollama")!;
+const DEEPSEEK = presetById("deepseek")!;
 
 function baseSettings(): SearchSettings {
   return {
@@ -321,6 +322,69 @@ describe("ProviderEditor", () => {
       expect(screen.getByText(/configured ✓/i)).toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: /^edit$/i })).toBeInTheDocument();
+  });
+
+  it("can bind an existing API key provider from setup mode without re-entering the key", async () => {
+    const settings: SearchSettings = {
+      ...baseSettings(),
+      features: {
+        llm: { enabled: true, providerId: "deepseek" },
+      },
+      cloudConsentAcked: ["deepseek"],
+    };
+    const updateSettings = vi.fn().mockResolvedValue({
+      state: "ready",
+      data: {
+        ...settings,
+        providers: {
+          deepseek: {
+            providerId: "deepseek",
+            enabled: true,
+            apiKeyRef: "env-file://cogios/.env#deepseek",
+            baseUrl: null,
+            modelPerCapability: {},
+          },
+        },
+      },
+    });
+    const onSettingsChange = vi.fn();
+    render(
+      <ProviderEditor
+        preset={DEEPSEEK}
+        config={null}
+        settings={settings}
+        client={makeStubSearchClient({
+          hasProviderSecret: vi.fn().mockResolvedValue(true),
+          updateSettings,
+        })}
+        onSettingsChange={onSettingsChange}
+        onClose={vi.fn()}
+        allowRemove={false}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/configured ✓/i)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providers: expect.objectContaining({
+            deepseek: expect.objectContaining({
+              providerId: "deepseek",
+              enabled: true,
+              apiKeyRef: "env-file://cogios/.env#deepseek",
+            }),
+          }),
+          features: expect.objectContaining({
+            llm: { enabled: true, providerId: "deepseek" },
+          }),
+        })
+      );
+    });
+    expect(onSettingsChange).toHaveBeenCalled();
   });
 
   it("Remove key calls deleteProviderSecret + closes editor", async () => {

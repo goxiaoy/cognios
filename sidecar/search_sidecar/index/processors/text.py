@@ -15,7 +15,7 @@ from pathlib import Path
 from ...storage import LanceDBStore, NodeChunk
 from ..chunking import chunk_text
 from ..embedder import Embedder
-from ..queue import IndexingJob
+from ..job import IndexingJob
 
 VOICE_TRANSCRIPT_ROLE = "voice_transcript"
 TRANSCRIPT_START = "<!-- voice-note:transcript:start -->"

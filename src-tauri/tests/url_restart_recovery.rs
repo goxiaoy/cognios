@@ -5,13 +5,14 @@ use std::time::{Duration, Instant};
 
 use tempfile::tempdir;
 
+use cognios_lib::infrastructure::db::background_task_repository::enqueue_background_task;
 use cognios_lib::infrastructure::db::connection::{open_database, Database};
 use cognios_lib::infrastructure::db::url_repository::create_url;
 use cognios_lib::infrastructure::db::url_repository::CreateUrlInput;
 use cognios_lib::services::url_indexing::queue::UrlJobRunner;
 
 #[test]
-fn restart_requeues_failed_or_inflight_url_jobs() {
+fn restart_requeues_failed_or_inflight_urls() {
     let app_tempdir = tempdir().expect("app tempdir");
     let db_path = app_tempdir.path().join("cognios.db");
     let cache_dir = app_tempdir.path().join("url-cache");
@@ -37,11 +38,17 @@ fn restart_requeues_failed_or_inflight_url_jobs() {
 
     {
         let conn = open_database(&db_path).expect("database reopen");
+        let task = enqueue_background_task(&conn, &created_url.node_id, "url.crawl", None, 3)
+            .expect("enqueue url crawl");
         conn.execute(
-            "UPDATE nodes SET state = ?2 WHERE id = ?1",
-            [&created_url.node_id, "error"],
+            "
+            UPDATE background_tasks
+            SET status = 'running'
+            WHERE id = ?1
+            ",
+            [&task.id],
         )
-        .expect("mark error");
+        .expect("mark task running");
     }
 
     let runner = UrlJobRunner::new(Database::new(db_path.clone()), cache_dir, |_| {});
@@ -57,7 +64,7 @@ fn restart_requeues_failed_or_inflight_url_jobs() {
                 "
                 SELECT n.state, j.title
                 FROM nodes n
-                INNER JOIN url_jobs j ON j.node_id = n.id
+                INNER JOIN urls j ON j.node_id = n.id
                 WHERE n.id = ?1
                 ",
                 [&created_url.node_id],

@@ -4,11 +4,12 @@ import type {
 } from "../../../lib/contracts/chat";
 import type {
   IndexStatus,
+  IndexStatistics,
+  IndexStatisticsInput,
   ModelDownloadEvent,
   ModelsStatus,
   NodeContent,
   NodeContentChunk,
-  NodeIndexStatus,
   ProviderSecretLookupInput,
   SearchObservability,
   SearchObservabilityInput,
@@ -24,11 +25,12 @@ import type {
 
 export type {
   IndexStatus,
+  IndexStatistics,
+  IndexStatisticsInput,
   ModelDownloadEvent,
   ModelsStatus,
   NodeContent,
   NodeContentChunk,
-  NodeIndexStatus,
   ProviderSecretLookupInput,
   SearchObservability,
   SearchObservabilityInput,
@@ -50,10 +52,10 @@ export type {
 export interface SearchClient {
   search(input: SearchQueryInput): Promise<SidecarEnvelope<SearchResponse>>;
   indexStatus(): Promise<SidecarEnvelope<IndexStatus>>;
+  indexStatistics(input: IndexStatisticsInput): Promise<IndexStatistics>;
   observability(
     input: SearchObservabilityInput
   ): Promise<SidecarEnvelope<SearchObservability>>;
-  nodeIndexStatus(nodeId: string): Promise<SidecarEnvelope<NodeIndexStatus>>;
   nodeContent(nodeId: string): Promise<SidecarEnvelope<NodeContent>>;
   modelsStatus(): Promise<SidecarEnvelope<ModelsStatus>>;
   startModelDownload(input: StartModelDownloadInput): Promise<void>;

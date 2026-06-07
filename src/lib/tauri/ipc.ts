@@ -22,9 +22,10 @@ import type {
 } from "../contracts/chat";
 import type {
   IndexStatus,
+  IndexStatistics,
+  IndexStatisticsInput,
   ModelsStatus,
   NodeContent,
-  NodeIndexStatus,
   ProviderSecretLookupInput,
   SearchObservability,
   SearchObservabilityInput,
@@ -335,6 +336,12 @@ export async function getIndexingStatus(): Promise<SidecarEnvelope<IndexStatus>>
   return invoke<SidecarEnvelope<IndexStatus>>("get_indexing_status");
 }
 
+export async function getIndexStatistics(
+  input: IndexStatisticsInput
+): Promise<IndexStatistics> {
+  return invoke<IndexStatistics>("get_index_statistics", { input });
+}
+
 export async function getSearchObservability(
   input: SearchObservabilityInput
 ): Promise<
@@ -342,14 +349,6 @@ export async function getSearchObservability(
 > {
   return invoke<SidecarEnvelope<SearchObservability>>("get_search_observability", {
     input,
-  });
-}
-
-export async function getNodeIndexingStatus(
-  nodeId: string
-): Promise<SidecarEnvelope<NodeIndexStatus>> {
-  return invoke<SidecarEnvelope<NodeIndexStatus>>("get_node_indexing_status", {
-    input: { nodeId },
   });
 }
 

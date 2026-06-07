@@ -35,11 +35,7 @@ export function SettingsDiagnostics({
     indexing && indexing.state === "ready" && indexing.data
       ? indexing.data
       : null;
-  const hasAdvancedOcrReady = modelData
-    ? Object.values(modelData.roles).some(
-        (role) => role.role.startsWith("advanced-ocr-") && role.state === "ready",
-      )
-    : false;
+  const hasAdvancedOcrReady = areAdvancedOcrRolesReady(modelData);
   const enhancement = getEnhancementDisplay(indexData, hasAdvancedOcrReady);
 
   return (
@@ -85,14 +81,14 @@ export function SettingsDiagnostics({
           </div>
           <div className="sub">
             {indexData
-              ? `${indexData.queueDepth} queued`
+              ? `${queuedJobs(indexData)} queued`
               : "loading…"}
           </div>
         </div>
 
         <div className="settings-diag-cell">
           <div className="k">In flight</div>
-          <div className="v">{indexData ? indexData.inFlight.length : "—"}</div>
+          <div className="v">{indexData ? activeJobs(indexData) : "—"}</div>
           <div className="sub">jobs running</div>
         </div>
 
@@ -125,6 +121,29 @@ function countConfigured(settings: SearchSettings): number {
   }, 0);
 }
 
+function queuedJobs(indexData: IndexStatus): number {
+  return indexData.taskTotals?.queued ?? 0;
+}
+
+function activeJobs(indexData: IndexStatus): number {
+  return (
+    indexData.taskTotals?.running ??
+    indexData.inFlight.length + indexData.enhancementInFlight.length
+  );
+}
+
+function taskStatus(indexData: IndexStatus, taskType: string) {
+  return indexData.tasks?.find((task) => task.taskType === taskType) ?? null;
+}
+
+function areAdvancedOcrRolesReady(models: ModelsStatus | null): boolean {
+  if (!models) return false;
+  const roles = Object.values(models.roles).filter((role) =>
+    role.role.startsWith("advanced-ocr-"),
+  );
+  return roles.length > 0 && roles.every((role) => role.state === "ready");
+}
+
 function getEnhancementDisplay(
   indexData: IndexStatus | null,
   hasAdvancedOcrReady: boolean,
@@ -145,10 +164,13 @@ function getEnhancementDisplay(
       percent: null,
     };
   }
-  const total = indexData.enhancementTotalImages;
+  const imageEnhance = taskStatus(indexData, "image.enhance");
+  const total = imageEnhance?.total ?? indexData.enhancementTotalImages;
   if (total === 0) return null;
-  const pending = indexData.enhancementPending;
-  const failed = indexData.enhancementFailed;
+  const pending = imageEnhance
+    ? imageEnhance.queued + imageEnhance.running
+    : indexData.enhancementPending;
+  const failed = imageEnhance?.failed ?? indexData.enhancementFailed;
   const completed = Math.max(total - pending - failed, 0);
   const percent = total > 0 ? (completed / total) * 100 : 0;
   if (pending > 0) {

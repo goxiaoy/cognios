@@ -2,12 +2,9 @@
 //! for a fresh sidecar indexing pass.
 //!
 //! Mechanism: emit a ``node-saved`` :class:`VfsChangeEvent` for each
-//! target node. The forwarder turns that into a ``POST /events/node``
-//! whose handler calls ``IndexingQueue.enqueue`` — which resets the
-//! queue row to ``pending`` (and clears ``last_error``) regardless
-//! of its prior state. The state mirror task then propagates the
-//! transition into ``cognios.db.nodes.state`` so the explorer's dot
-//! reflects the re-queue.
+//! target node. The search indexer turns that into a durable
+//! ``search.index`` background task and writes local node status as
+//! the task runs.
 //!
 //! For containers (folder / mount) we walk every
 //! descendant and emit one event per leaf; container kinds are

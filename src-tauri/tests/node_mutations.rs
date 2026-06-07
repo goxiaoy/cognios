@@ -58,7 +58,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
         fs::write(&cache_path, "<html></html>").expect("cache file");
         let cache_path_string = cache_path.to_string_lossy().into_owned();
         conn.execute(
-            "UPDATE url_jobs SET html_cache_path = ?2 WHERE node_id = ?1",
+            "UPDATE urls SET html_cache_path = ?2 WHERE node_id = ?1",
             [&created_url.node_id, &cache_path_string],
         )
         .expect("cache path saved");
@@ -130,7 +130,7 @@ fn renames_folder_and_deletes_folder_url_and_mount_nodes() {
         assert!(!snapshot.roots.iter().any(|node| node.id == url_node_id));
         let remaining_jobs: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM url_jobs WHERE node_id = ?1",
+                "SELECT COUNT(*) FROM urls WHERE node_id = ?1",
                 [&url_node_id],
                 |row| row.get(0),
             )

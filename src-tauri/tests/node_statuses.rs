@@ -38,7 +38,7 @@ fn url_nodes_get_static_crawl_and_index_stages() {
             .iter()
             .map(|stage| stage.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["url.crawl", "content.index"]
+        vec!["url.crawl", "search.index"]
     );
 }
 
@@ -62,9 +62,9 @@ fn stage_support_is_limited_to_node_kind_defaults() {
     .expect("folder node");
 
     assert!(
-        node_supports_stage(&conn, &created.node_id, "content.index").expect("url stage support")
+        node_supports_stage(&conn, &created.node_id, "search.index").expect("url stage support")
     );
-    assert!(!node_supports_stage(&conn, "folder-1", "content.index").expect("folder stage support"));
+    assert!(!node_supports_stage(&conn, "folder-1", "search.index").expect("folder stage support"));
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn voice_notes_get_transcribe_summarize_and_index_stages() {
         vec![
             ("voice.transcribe", "required"),
             ("voice.summarize", "optional"),
-            ("content.index", "required")
+            ("search.index", "required")
         ]
     );
 }
@@ -126,7 +126,7 @@ fn optional_stage_failure_produces_partial_when_required_work_succeeded() {
     update_stage(
         &conn,
         &node_id,
-        "content.index",
+        "search.index",
         &StageUpdate::succeeded("Indexed"),
     )
     .expect("index update");
@@ -208,7 +208,7 @@ fn snapshot_contains_revision_and_all_nodes() {
             .iter()
             .map(|stage| stage.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["content.index", "image.enhance"]
+        vec!["search.index", "image.enhance"]
     );
 }
 
@@ -224,7 +224,7 @@ fn indexed_url_backfills_crawl_and_index_stages_from_persisted_data() {
     .expect("url node");
     conn.execute(
         "
-        INSERT INTO url_jobs (
+        INSERT INTO urls (
           node_id, url, title, description, preview_text, canonical_url, html_cache_path
         )
         VALUES (
@@ -247,7 +247,7 @@ fn indexed_url_backfills_crawl_and_index_stages_from_persisted_data() {
             .iter()
             .map(|stage| (stage.id.as_str(), stage.state.as_str()))
             .collect::<Vec<_>>(),
-        vec![("url.crawl", "succeeded"), ("content.index", "succeeded")]
+        vec![("url.crawl", "succeeded"), ("search.index", "succeeded")]
     );
 }
 
@@ -287,7 +287,7 @@ fn completed_voice_note_backfills_transcribe_summary_and_index_stages() {
         vec![
             ("voice.transcribe", "succeeded"),
             ("voice.summarize", "succeeded"),
-            ("content.index", "succeeded")
+            ("search.index", "succeeded")
         ]
     );
 }
@@ -350,7 +350,7 @@ fn indexed_image_is_ready_when_optional_enhancement_has_not_run() {
             .iter()
             .map(|stage| (stage.id.as_str(), stage.state.as_str()))
             .collect::<Vec<_>>(),
-        vec![("content.index", "succeeded"), ("image.enhance", "skipped")]
+        vec![("search.index", "succeeded"), ("image.enhance", "skipped")]
     );
 }
 
@@ -371,7 +371,7 @@ fn running_stage_becomes_primary_even_when_required_stage_failed() {
     update_stage(
         &conn,
         &created.node_id,
-        "content.index",
+        "search.index",
         &StageUpdate::failed("Embedding failed", true),
     )
     .expect("index failure");

@@ -163,8 +163,8 @@ function makeSearchClient(settings = makeSearchSettings()): SearchClient {
       },
     }),
     indexStatus: vi.fn(),
+    indexStatistics: vi.fn().mockResolvedValue({ recentIndexedNodes: [] }),
     observability: vi.fn(),
-    nodeIndexStatus: vi.fn(),
     nodeContent: vi.fn().mockResolvedValue({
       state: "ready",
       data: {
@@ -1428,6 +1428,30 @@ describe("ChatLayout", () => {
     await waitFor(() => {
       expect(client.getModels).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it("does not ask to set up LLM when built-in Ollama config exists but runtime is unavailable", async () => {
+    const client = makeClient();
+    vi.mocked(client.getModels).mockResolvedValue({
+      models: {
+        state: "ready",
+        data: {
+          state: "provider_unavailable",
+          providerId: "local-ollama",
+          models: [],
+          cached: false,
+          warnings: ["local-ollama: local runtime unreachable"],
+        },
+      },
+    });
+
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    const composer = await screen.findByLabelText("Chat message");
+    expect(composer).toBeDisabled();
+    expect(composer).toHaveAttribute("placeholder", "Waiting for chat provider...");
+    expect(screen.getByText("local-ollama: local runtime unreachable")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Set up LLM before sending/i })).not.toBeInTheDocument();
   });
 
   it("keeps a configured chat provider out of setup while startup model refresh recovers", async () => {

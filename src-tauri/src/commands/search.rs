@@ -10,9 +10,12 @@
 use serde::Deserialize;
 use tauri::{Emitter, State};
 
+use crate::infrastructure::db::background_task_repository::background_task_status_counts;
+use crate::infrastructure::db::statistics_repository::{recent_daily_stats, INDEXED_NODES_METRIC};
 use crate::services::search::{
-    IndexStatusDto, ModelDownloadEvent, ModelsStatusDto, NodeContentDto, NodeIndexStatusDto,
-    SearchInput, SearchObservabilityDto, SearchResponseDto, SidecarEnvelope,
+    BackgroundTaskStatusDto, BackgroundTaskTotalsDto, IndexStatisticsDto, IndexStatusDto,
+    ModelDownloadEvent, ModelsStatusDto, NodeContentDto, SearchInput, SearchObservabilityDto,
+    SearchResponseDto, SidecarEnvelope, SidecarEnvelopeState,
 };
 use crate::AppState;
 
@@ -30,7 +33,7 @@ pub struct SearchQueryInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetNodeIndexingStatusInput {
+pub struct NodeContentInput {
     pub node_id: String,
 }
 
@@ -43,6 +46,12 @@ pub struct StartModelDownloadInput {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchObservabilityInput {
+    pub recent_days: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexStatisticsInput {
     pub recent_days: u32,
 }
 
@@ -73,7 +82,53 @@ pub async fn search_query(
 
 #[tauri::command]
 pub async fn get_indexing_status(state: State<'_, AppState>) -> EnvelopeResult<IndexStatusDto> {
-    Ok(state.search_client.index_status().await)
+    let mut envelope = state.search_client.index_status().await;
+    if matches!(envelope.state, SidecarEnvelopeState::Ready) {
+        match state
+            .db
+            .connect()
+            .map_err(|error| error.to_string())
+            .and_then(|conn| background_task_status_counts(&conn))
+        {
+            Ok(counts) => {
+                let tasks = counts
+                    .into_iter()
+                    .map(|count| BackgroundTaskStatusDto {
+                        task_type: count.task_type,
+                        queued: count.queued,
+                        running: count.running,
+                        succeeded: count.succeeded,
+                        failed: count.failed,
+                        cancelled: count.cancelled,
+                        total: count.total,
+                        running_node_ids: count.running_node_ids,
+                    })
+                    .collect::<Vec<_>>();
+                if let Some(data) = envelope.data.as_mut() {
+                    data.task_totals = task_totals(&tasks);
+                    data.tasks = tasks;
+                }
+            }
+            Err(error) => {
+                log::warn!("failed to read background task status: {error}");
+            }
+        }
+    }
+    Ok(envelope)
+}
+
+fn task_totals(tasks: &[BackgroundTaskStatusDto]) -> BackgroundTaskTotalsDto {
+    tasks
+        .iter()
+        .fold(BackgroundTaskTotalsDto::default(), |mut totals, task| {
+            totals.queued += task.queued;
+            totals.running += task.running;
+            totals.succeeded += task.succeeded;
+            totals.failed += task.failed;
+            totals.cancelled += task.cancelled;
+            totals.total += task.total;
+            totals
+        })
 }
 
 #[tauri::command]
@@ -81,24 +136,56 @@ pub async fn get_search_observability(
     state: State<'_, AppState>,
     input: SearchObservabilityInput,
 ) -> EnvelopeResult<SearchObservabilityDto> {
-    Ok(state
+    let mut envelope = state
         .search_client
         .observability_summary(input.recent_days)
-        .await)
+        .await;
+    if let Some(data) = envelope.data.as_mut() {
+        match state
+            .db
+            .connect()
+            .map_err(|error| error.to_string())
+            .and_then(|conn| recent_daily_stats(&conn, INDEXED_NODES_METRIC, input.recent_days))
+        {
+            Ok(rows) => {
+                data.recent_indexed_nodes = rows
+                    .into_iter()
+                    .map(|row| crate::services::search::RecentIndexedNodeCountDto {
+                        date: row.date,
+                        count: row.count,
+                    })
+                    .collect();
+            }
+            Err(error) => {
+                log::warn!("failed to read index statistics: {error}");
+            }
+        }
+    }
+    Ok(envelope)
 }
 
 #[tauri::command]
-pub async fn get_node_indexing_status(
+pub async fn get_index_statistics(
     state: State<'_, AppState>,
-    input: GetNodeIndexingStatusInput,
-) -> EnvelopeResult<NodeIndexStatusDto> {
-    Ok(state.search_client.node_index_status(&input.node_id).await)
+    input: IndexStatisticsInput,
+) -> Result<IndexStatisticsDto, String> {
+    let conn = state.db.connect().map_err(|error| error.to_string())?;
+    let rows = recent_daily_stats(&conn, INDEXED_NODES_METRIC, input.recent_days)?;
+    Ok(IndexStatisticsDto {
+        recent_indexed_nodes: rows
+            .into_iter()
+            .map(|row| crate::services::search::RecentIndexedNodeCountDto {
+                date: row.date,
+                count: row.count,
+            })
+            .collect(),
+    })
 }
 
 #[tauri::command]
 pub async fn get_node_content(
     state: State<'_, AppState>,
-    input: GetNodeIndexingStatusInput,
+    input: NodeContentInput,
 ) -> EnvelopeResult<NodeContentDto> {
     Ok(state.search_client.node_content(&input.node_id).await)
 }

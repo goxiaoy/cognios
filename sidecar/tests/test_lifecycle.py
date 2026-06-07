@@ -2,135 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from search_sidecar.index.dispatch import Dispatcher
-from search_sidecar.index.embedder import StubEmbedder
-from search_sidecar.index.queue import open_queue
 from search_sidecar.lifecycle import (
-    _run_advanced_ocr_backfill_on_boot,
     advanced_ocr_autorun_enabled,
+    prepare_extract_dir,
+    prepare_search_dir,
+    prepare_settings_path,
 )
-from search_sidecar.storage import open_store
-
-UUID_A = "11111111-1111-1111-1111-111111111111"
-
-
-def _index_image(queue, node_id: str = UUID_A) -> None:
-    queue.enqueue(node_id=node_id, kind="file", name="x.png")
-    queue.claim_next()
-    queue.mark_indexed(node_id)
-
-
-def _pdf_advanced(_path: Path) -> str:
-    return "advanced"
-
-
-_pdf_advanced.supports_pdf = True
-
-
-def test_advanced_ocr_backfill_on_boot_flags_when_available(tmp_path: Path):
-    store = open_store(tmp_path / "index.lance")
-    queue = open_queue(tmp_path / "queue.db")
-    try:
-        _index_image(queue)
-        dispatcher = Dispatcher(
-            store=store,
-            embedder=StubEmbedder(),
-            queue=queue,
-            advanced_ocr_extract=lambda _p: "advanced",
-        )
-        _run_advanced_ocr_backfill_on_boot(queue, dispatcher)
-        assert queue.claim_next_enhancement() is not None
-    finally:
-        queue.close()
-
-
-def test_advanced_ocr_backfill_on_boot_includes_pdf_when_supported(
-    tmp_path: Path,
-):
-    store = open_store(tmp_path / "index.lance")
-    queue = open_queue(tmp_path / "queue.db")
-    try:
-        queue.enqueue(node_id=UUID_A, kind="file", name="scan.pdf")
-        queue.claim_next()
-        queue.mark_indexed(UUID_A)
-        dispatcher = Dispatcher(
-            store=store,
-            embedder=StubEmbedder(),
-            queue=queue,
-            advanced_ocr_extract=_pdf_advanced,
-        )
-        _run_advanced_ocr_backfill_on_boot(queue, dispatcher)
-        assert queue.claim_next_enhancement() is not None
-    finally:
-        queue.close()
-
-
-def test_advanced_ocr_backfill_on_boot_skips_completed_images(tmp_path: Path):
-    store = open_store(tmp_path / "index.lance")
-    queue = open_queue(tmp_path / "queue.db")
-    try:
-        _index_image(queue)
-        queue.set_enhancement_pending(UUID_A)
-        queue.clear_enhancement_pending(UUID_A)
-        dispatcher = Dispatcher(
-            store=store,
-            embedder=StubEmbedder(),
-            queue=queue,
-            advanced_ocr_extract=lambda _p: "advanced",
-        )
-        _run_advanced_ocr_backfill_on_boot(queue, dispatcher)
-        assert queue.claim_next_enhancement() is None
-    finally:
-        queue.close()
-
-
-def test_advanced_ocr_backfill_on_boot_skips_when_autorun_disabled(tmp_path: Path):
-    store = open_store(tmp_path / "index.lance")
-    queue = open_queue(tmp_path / "queue.db")
-    try:
-        _index_image(queue)
-        dispatcher = Dispatcher(
-            store=store,
-            embedder=StubEmbedder(),
-            queue=queue,
-            advanced_ocr_extract=lambda _p: "advanced",
-        )
-        _run_advanced_ocr_backfill_on_boot(queue, dispatcher, enabled=False)
-        assert queue.claim_next_enhancement() is None
-    finally:
-        queue.close()
-
-
-def test_advanced_ocr_backfill_on_boot_skips_when_unavailable(tmp_path: Path):
-    store = open_store(tmp_path / "index.lance")
-    queue = open_queue(tmp_path / "queue.db")
-    try:
-        _index_image(queue)
-        dispatcher = Dispatcher(store=store, embedder=StubEmbedder(), queue=queue)
-        _run_advanced_ocr_backfill_on_boot(queue, dispatcher)
-        assert queue.claim_next_enhancement() is None
-    finally:
-        queue.close()
-
-
-def test_advanced_ocr_backfill_on_boot_logs_and_continues(caplog):
-    class RaisingQueue:
-        def backfill_enhancement_pending(self, _extensions):
-            raise RuntimeError("db locked")
-
-    class DispatcherWithAdvanced:
-        @staticmethod
-        def has_advanced_ocr() -> bool:
-            return True
-
-        @staticmethod
-        def enhancement_extensions() -> tuple[str, ...]:
-            return ("png",)
-
-    _run_advanced_ocr_backfill_on_boot(RaisingQueue(), DispatcherWithAdvanced())
-    assert "advanced-OCR boot backfill failed" in caplog.text
 
 
 def test_advanced_ocr_autorun_env_defaults_enabled(monkeypatch):
@@ -138,7 +15,35 @@ def test_advanced_ocr_autorun_env_defaults_enabled(monkeypatch):
     assert advanced_ocr_autorun_enabled() is True
 
 
-def test_advanced_ocr_autorun_env_accepts_false_values(monkeypatch):
+def test_advanced_ocr_autorun_env_can_disable(monkeypatch):
     for value in ("0", "false", "no", "off"):
         monkeypatch.setenv("COGNIOS_ADVANCED_OCR_AUTORUN", value)
         assert advanced_ocr_autorun_enabled() is False
+
+
+def test_prepare_extract_dir_uses_storage_root_sibling(tmp_path):
+    extract_dir = prepare_extract_dir(tmp_path)
+
+    assert extract_dir == tmp_path / "extract"
+    assert extract_dir.is_dir()
+    assert not (tmp_path / "search" / "extract").exists()
+
+
+def test_prepare_settings_path_uses_storage_root(tmp_path):
+    search_dir = prepare_search_dir(tmp_path)
+
+    settings_path = prepare_settings_path(tmp_path, search_dir)
+
+    assert settings_path == tmp_path / "settings.json"
+
+
+def test_prepare_settings_path_migrates_legacy_search_file(tmp_path):
+    search_dir = prepare_search_dir(tmp_path)
+    legacy_path = search_dir / "settings.json"
+    legacy_path.write_text('{"version": 1}')
+
+    settings_path = prepare_settings_path(tmp_path, search_dir)
+
+    assert settings_path == tmp_path / "settings.json"
+    assert settings_path.read_text() == '{"version": 1}'
+    assert not legacy_path.exists()

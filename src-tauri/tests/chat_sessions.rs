@@ -167,7 +167,7 @@ fn chat_migration_preserves_existing_workspace_rows() {
               relative_path TEXT,
               size_bytes INTEGER NOT NULL DEFAULT 0
             );
-            CREATE TABLE url_jobs (
+            CREATE TABLE urls (
               node_id TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
               url TEXT NOT NULL,
               title TEXT,
@@ -178,7 +178,7 @@ fn chat_migration_preserves_existing_workspace_rows() {
               last_error TEXT
             );
             INSERT INTO nodes (id, kind, name, state) VALUES ('n1', 'note', 'Existing', 'ready');
-            INSERT INTO url_jobs (node_id, url) VALUES ('n1', 'https://example.test');
+            INSERT INTO urls (node_id, url) VALUES ('n1', 'https://example.test');
             ",
         )
         .expect("seed v4 database");
@@ -191,7 +191,7 @@ fn chat_migration_preserves_existing_workspace_rows() {
         })
         .expect("existing node");
     let url: String = conn
-        .query_row("SELECT url FROM url_jobs WHERE node_id = 'n1'", [], |row| {
+        .query_row("SELECT url FROM urls WHERE node_id = 'n1'", [], |row| {
             row.get(0)
         })
         .expect("existing url job");
@@ -210,5 +210,5 @@ fn chat_migration_preserves_existing_workspace_rows() {
         .expect("memory table");
 
     assert_eq!(memory_table_count, 1);
-    assert_eq!(user_version, 8);
+    assert_eq!(user_version, 11);
 }

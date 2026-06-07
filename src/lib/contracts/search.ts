@@ -53,18 +53,41 @@ export interface SearchResponse {
 }
 
 export interface IndexStatus {
-  queueDepth: number;
   inFlight: string[];
   enhancementInFlight: string[];
   indexedChunks: number;
   enhancementPending: number;
   enhancementFailed: number;
   enhancementTotalImages: number;
+  tasks?: BackgroundTaskStatus[];
+  taskTotals?: BackgroundTaskTotals;
+}
+
+export interface BackgroundTaskTotals {
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+  total: number;
+}
+
+export interface BackgroundTaskStatus extends BackgroundTaskTotals {
+  taskType: string;
+  runningNodeIds: string[];
 }
 
 export interface RecentIndexedNodeCount {
   date: string;
   count: number;
+}
+
+export interface IndexStatistics {
+  recentIndexedNodes: RecentIndexedNodeCount[];
+}
+
+export interface IndexStatisticsInput {
+  recentDays: 7 | 30 | 90;
 }
 
 export interface LatencySummary {
@@ -120,21 +143,6 @@ export interface SearchObservability {
 
 export interface SearchObservabilityInput {
   recentDays: 7 | 30 | 90;
-}
-
-export type NodeIndexState =
-  | "pending"
-  | "indexing"
-  | "indexed"
-  | "error"
-  | "unknown";
-
-export interface NodeIndexStatus {
-  nodeId: string;
-  state: NodeIndexState;
-  indexedAt?: string | null;
-  error?: string | null;
-  attempts: number;
 }
 
 export type NodeContentChunkRole = "body" | "summary" | "voice_transcript";

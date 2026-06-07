@@ -64,11 +64,13 @@ def test_default_settings_seeds_local_gte_and_semantic_search():
     assert s.providers["local-qwen-asr"].enabled is True
     assert s.features["voice-notes"].enabled is True
     assert s.features["voice-notes"].provider_id == "local-qwen-asr"
-    # LLM is pre-bound to local Ollama, but the provider is not
-    # considered ready until the user opens Add and saves the default
-    # endpoint. This keeps first launch from claiming Ollama is ready
-    # before the user has acknowledged the runtime configuration.
-    assert "local-ollama" not in s.providers
+    # LLM is pre-bound to local Ollama and the built-in provider row
+    # exists from first launch. Runtime availability is still probed
+    # separately by the chat models endpoint, so missing Ollama shows
+    # as unavailable rather than as an inconsistent setup-required
+    # state.
+    assert "local-ollama" in s.providers
+    assert s.providers["local-ollama"].enabled is True
     assert s.features["llm"].enabled is True
     assert s.features["llm"].provider_id == "local-ollama"
     assert s.features["web-search"].enabled is False
@@ -306,6 +308,23 @@ def test_migrate_backfills_bound_optional_local_provider():
     )
     assert "local-paddleocr-advanced" in migrated.providers
     assert migrated.providers["local-paddleocr-advanced"].enabled is True
+
+
+def test_migrate_backfills_legacy_llm_ollama_provider_binding():
+    """Existing installs may have ``features.llm`` bound to
+    ``local-ollama`` without a matching provider row. Boot migration
+    must restore the built-in provider so Settings and Chat agree that
+    the provider is configured; runtime reachability is probed later."""
+    settings = default_settings()
+    del settings.providers["local-ollama"]
+
+    migrated, changed = migrate_mandatory_features(settings)
+
+    assert changed is True
+    assert migrated.features["llm"].enabled is True
+    assert migrated.features["llm"].provider_id == "local-ollama"
+    assert "local-ollama" in migrated.providers
+    assert migrated.providers["local-ollama"].enabled is True
 
 
 def test_migrate_no_changes_for_already_migrated_settings():

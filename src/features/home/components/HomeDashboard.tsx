@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type Dispatch,
   type ReactNode,
@@ -31,6 +32,7 @@ import {
 
 import type {
   IndexStatus,
+  IndexStatistics,
   LatencyTrendPoint,
   ModelsStatus,
   SearchObservability,
@@ -102,8 +104,10 @@ export function HomeDashboard({
   onStartVoiceNote,
 }: HomeDashboardProps) {
   const { models, indexing } = useSearchSubsystemStatus(client);
-  const [recentObservability, setRecentObservability] =
-    useState<SidecarEnvelope<SearchObservability> | null>(null);
+  const [recentIndexStats, setRecentIndexStats] =
+    useState<IndexStatistics | null>(null);
+  const recentIndexStatsRef = useRef<IndexStatistics | null>(null);
+  const [recentIndexLoading, setRecentIndexLoading] = useState(true);
   const [metricsObservability, setMetricsObservability] =
     useState<SidecarEnvelope<SearchObservability> | null>(null);
   const [recentIndexDays, setRecentIndexDays] =
@@ -146,31 +150,32 @@ export function HomeDashboard({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     async function poll() {
+      if (recentIndexStatsRef.current === null) {
+        setRecentIndexLoading(true);
+      }
       try {
-        if (recentIndexDays === METRICS_WINDOW_DAYS) {
-          const env = await client.observability({ recentDays: METRICS_WINDOW_DAYS });
-          if (!cancelled) {
-            setRecentObservability(env);
-            setMetricsObservability(env);
-          }
-        } else {
-          const [recentEnv, metricsEnv] = await Promise.all([
-            client.observability({ recentDays: recentIndexDays }),
-            client.observability({ recentDays: METRICS_WINDOW_DAYS }),
-          ]);
-          if (!cancelled) {
-            setRecentObservability(recentEnv);
-            setMetricsObservability(metricsEnv);
-          }
+        const [recentStats, metricsEnv] = await Promise.all([
+          client.indexStatistics({ recentDays: recentIndexDays }),
+          client.observability({ recentDays: METRICS_WINDOW_DAYS }),
+        ]);
+        if (!cancelled) {
+          recentIndexStatsRef.current = recentStats;
+          setRecentIndexStats(recentStats);
+          setMetricsObservability(metricsEnv);
         }
       } catch {
         if (!cancelled) {
+          recentIndexStatsRef.current = null;
+          setRecentIndexStats(null);
           const unavailable: SidecarEnvelope<SearchObservability> = {
             state: "unavailable",
             error: "Observability unavailable.",
           };
-          setRecentObservability(unavailable);
           setMetricsObservability(unavailable);
+        }
+      } finally {
+        if (!cancelled) {
+          setRecentIndexLoading(false);
         }
       }
       if (!cancelled) {
@@ -221,12 +226,11 @@ export function HomeDashboard({
 
   const indexData = readyData(indexing);
   const modelData = readyData(models);
-  const recentObservabilityData = readyData(recentObservability);
   const metricsObservabilityData = readyData(metricsObservability);
   const enhancement = enhancementDisplay(indexData, modelData);
   const indexLoading = isLoading(indexing);
   const enhancementLoading = isLoading(indexing) || isLoading(models);
-  const recentLoading = isLoading(recentObservability);
+  const recentLoading = recentIndexLoading;
   const metricsLoading = isLoading(metricsObservability);
 
   if (workspaceIsEmpty) {
@@ -261,7 +265,7 @@ export function HomeDashboard({
           icon={<Database size={17} aria-hidden="true" />}
           label="Indexed items"
           value={indexData ? indexData.indexedChunks.toLocaleString() : "—"}
-          sub={indexData ? `${indexData.queueDepth} queued` : statusCopy(indexing)}
+          sub={indexData ? `${queuedIndexJobs(indexData)} queued` : statusCopy(indexing)}
           loading={indexLoading}
         />
         <StatTile
@@ -286,7 +290,7 @@ export function HomeDashboard({
           <header className="home-section-head home-section-head--with-control">
             <div>
               <h2>Recent indexing</h2>
-              <span>{sumIndexed(recentObservabilityData).toLocaleString()} nodes</span>
+              <span>{sumIndexed(recentIndexStats).toLocaleString()} nodes</span>
             </div>
             <div
               className="home-window-toggle"
@@ -307,7 +311,7 @@ export function HomeDashboard({
             </div>
           </header>
           <ActivityChart
-            days={recentObservabilityData?.recentIndexedNodes ?? []}
+            days={recentIndexStats?.recentIndexedNodes ?? []}
             windowDays={recentIndexDays}
             loading={recentLoading}
           />
@@ -675,7 +679,7 @@ function ActivityChart({
   windowDays,
   loading = false,
 }: {
-  days: SearchObservability["recentIndexedNodes"];
+  days: IndexStatistics["recentIndexedNodes"];
   windowDays: RecentIndexWindow;
   loading?: boolean;
 }) {
@@ -725,7 +729,7 @@ function ActivityChart({
   );
 }
 
-function ActivityHeatmap({ days }: { days: SearchObservability["recentIndexedNodes"] }) {
+function ActivityHeatmap({ days }: { days: IndexStatistics["recentIndexedNodes"] }) {
   const max = Math.max(...days.map((day) => day.count), 1);
   return (
     <div className="home-heatmap" aria-label="Recent indexed nodes by day">
@@ -1095,26 +1099,37 @@ function statusCopy<T>(env: SidecarEnvelope<T> | null): string {
 }
 
 function activeIndexJobs(indexing: IndexStatus): number {
-  return indexing.inFlight.length + indexing.enhancementInFlight.length;
+  return (
+    indexing.taskTotals?.running ??
+    indexing.inFlight.length + indexing.enhancementInFlight.length
+  );
+}
+
+function queuedIndexJobs(indexing: IndexStatus): number {
+  return indexing.taskTotals?.queued ?? 0;
+}
+
+function taskStatus(indexing: IndexStatus, taskType: string) {
+  return indexing.tasks?.find((task) => task.taskType === taskType) ?? null;
 }
 
 function enhancementDisplay(
   indexing: IndexStatus | null,
   models: ModelsStatus | null
 ): { value: string; sub: string; tone: "neutral" | "ok" | "warn" } {
-  const hasAdvancedOcrReady = models
-    ? Object.values(models.roles).some(
-        (role) => role.role.startsWith("advanced-ocr-") && role.state === "ready"
-      )
-    : false;
+  const hasAdvancedOcrReady = areAdvancedOcrRolesReady(models);
   if (!hasAdvancedOcrReady) return { value: "—", sub: "not active", tone: "neutral" };
   if (!indexing) return { value: "—", sub: "loading", tone: "neutral" };
-  if (indexing.enhancementTotalImages === 0) {
+  const imageEnhance = taskStatus(indexing, "image.enhance");
+  const total = imageEnhance?.total ?? indexing.enhancementTotalImages;
+  if (total === 0) {
     return { value: "0", sub: "eligible images", tone: "neutral" };
   }
-  const total = indexing.enhancementTotalImages;
-  const failed = indexing.enhancementFailed;
-  const completed = Math.max(total - indexing.enhancementPending - failed, 0);
+  const failed = imageEnhance?.failed ?? indexing.enhancementFailed;
+  const pending = imageEnhance
+    ? imageEnhance.queued + imageEnhance.running
+    : indexing.enhancementPending;
+  const completed = Math.max(total - pending - failed, 0);
   if (failed > 0) {
     return {
       value: `${completed} / ${total}`,
@@ -1124,9 +1139,17 @@ function enhancementDisplay(
   }
   return {
     value: `${completed} / ${total}`,
-    sub: indexing.enhancementPending > 0 ? `${indexing.enhancementPending} pending` : "complete",
-    tone: indexing.enhancementPending > 0 ? "neutral" : "ok",
+    sub: pending > 0 ? `${pending} pending` : "complete",
+    tone: pending > 0 ? "neutral" : "ok",
   };
+}
+
+function areAdvancedOcrRolesReady(models: ModelsStatus | null): boolean {
+  if (!models) return false;
+  const roles = Object.values(models.roles).filter((role) =>
+    role.role.startsWith("advanced-ocr-")
+  );
+  return roles.length > 0 && roles.every((role) => role.state === "ready");
 }
 
 function heatLevel(count: number, max: number): number {
@@ -1140,8 +1163,8 @@ function formatMs(value: number | null | undefined): string {
   return `${(value / 1000).toFixed(1)} s`;
 }
 
-function sumIndexed(observability: SearchObservability | null): number {
-  return (observability?.recentIndexedNodes ?? []).reduce(
+function sumIndexed(stats: IndexStatistics | null): number {
+  return (stats?.recentIndexedNodes ?? []).reduce(
     (sum, day) => sum + day.count,
     0
   );

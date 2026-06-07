@@ -15,7 +15,6 @@ function ready(data: IndexStatus): SidecarEnvelope<IndexStatus> {
 
 function status(overrides: Partial<IndexStatus> = {}): IndexStatus {
   return {
-    queueDepth: 0,
     inFlight: [],
     enhancementInFlight: [],
     indexedChunks: 0,
@@ -32,11 +31,22 @@ describe("IndexingStatusCard", () => {
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
   });
 
-  it("renders queue depth, in-flight count, and indexed chunk count", () => {
+  it("renders queued job count, in-flight count, and indexed chunk count", () => {
     render(
       <IndexingStatusCard
         envelope={ready(
-          status({ queueDepth: 4, inFlight: ["a", "b"], indexedChunks: 87 })
+          status({
+            taskTotals: {
+              queued: 4,
+              running: 2,
+              succeeded: 0,
+              failed: 0,
+              cancelled: 0,
+              total: 6,
+            },
+            inFlight: ["a", "b"],
+            indexedChunks: 87,
+          })
         )}
       />
     );
@@ -48,7 +58,7 @@ describe("IndexingStatusCard", () => {
     dts.forEach((dt, idx) => {
       labelToValue[dt.textContent ?? ""] = definitions[idx]?.textContent ?? null;
     });
-    expect(labelToValue["Queue depth"]).toBe("4");
+    expect(labelToValue["Queued jobs"]).toBe("4");
     expect(labelToValue["In flight"]).toBe("2");
     expect(labelToValue["Indexed chunks"]).toBe("87");
   });
@@ -56,7 +66,7 @@ describe("IndexingStatusCard", () => {
   it("shows an idle hint when both queue and in-flight are empty", () => {
     render(
       <IndexingStatusCard
-        envelope={ready(status({ queueDepth: 0, inFlight: [], indexedChunks: 12 }))}
+        envelope={ready(status({ inFlight: [], indexedChunks: 12 }))}
       />
     );
     expect(screen.getByText(/idle/i)).toBeInTheDocument();
@@ -65,10 +75,23 @@ describe("IndexingStatusCard", () => {
   it("pluralises the working hint correctly", () => {
     render(
       <IndexingStatusCard
-        envelope={ready(status({ queueDepth: 1, inFlight: [], indexedChunks: 0 }))}
+        envelope={ready(
+          status({
+            taskTotals: {
+              queued: 1,
+              running: 0,
+              succeeded: 0,
+              failed: 0,
+              cancelled: 0,
+              total: 1,
+            },
+            inFlight: [],
+            indexedChunks: 0,
+          })
+        )}
       />
     );
-    expect(screen.getByText(/1 pending node\b/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 pending job\b/i)).toBeInTheDocument();
   });
 
   it("surfaces the unavailable state with the supplied error", () => {
