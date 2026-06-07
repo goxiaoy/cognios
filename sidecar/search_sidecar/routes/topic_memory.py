@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from ..chat.orchestrator import ChatOrchestrator
+from ..chat.types import ChatProviderError
 from ..storage import LanceDBStore
 from ..topic_memory import TopicMemoryProposer
 
@@ -26,6 +28,13 @@ def _get_store(request: Request) -> LanceDBStore:
     return store
 
 
+def _get_chat_provider(request: Request):
+    orchestrator = getattr(request.app.state, "chat_orchestrator", None)
+    if isinstance(orchestrator, ChatOrchestrator):
+        return orchestrator.chat_provider
+    return None
+
+
 @router.post("/propose")
 def post_topic_memory_propose(
     body: TopicMemoryProposePayload,
@@ -33,7 +42,11 @@ def post_topic_memory_propose(
 ) -> dict:
     proposer = TopicMemoryProposer(
         _get_store(request),
+        chat_provider=_get_chat_provider(request),
         max_chunks=body.max_chunks,
         max_topics=body.max_topics,
     )
-    return proposer.propose()
+    try:
+        return proposer.propose()
+    except ChatProviderError as err:
+        raise HTTPException(status_code=503, detail=str(err)) from err

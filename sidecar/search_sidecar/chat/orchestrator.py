@@ -150,6 +150,10 @@ class ChatOrchestrator:
         _close_if_supported(self._chat_provider)
         self._chat_provider = chat_provider
 
+    @property
+    def chat_provider(self) -> ChatProvider | None:
+        return self._chat_provider
+
     def set_web_search_provider(
         self, web_search_provider: WebSearchProvider | None
     ) -> None:
