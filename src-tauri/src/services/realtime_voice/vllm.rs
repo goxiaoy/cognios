@@ -108,6 +108,15 @@ pub async fn run_vllm_realtime_transcription(
             .map_err(|error| format!("failed to configure realtime ASR model: {error}"))?;
     }
 
+    writer
+        .send(Message::Text(
+            serde_json::json!({ "type": "input_audio_buffer.commit" })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .map_err(|error| format!("failed to start realtime ASR buffer: {error}"))?;
+
     let mut provisional = String::new();
     let mut audio_finished = false;
     loop {
@@ -451,5 +460,133 @@ mod tests {
         assert_eq!(chunks[0].channels, 1);
         assert_eq!(chunks[0].samples.len(), 1_600);
         assert_eq!(chunks[1].samples[0], 1_600);
+    }
+
+    #[tokio::test]
+    async fn starts_realtime_buffer_before_streaming_audio() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let websocket_url = format!("ws://{}", listener.local_addr().expect("local addr"));
+        let received_types = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let server_received_types = std::sync::Arc::clone(&received_types);
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let mut websocket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("websocket accept");
+            websocket
+                .send(Message::Text(
+                    serde_json::json!({ "type": "session.created" })
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .expect("session created");
+
+            while let Some(message) = websocket.next().await {
+                let message = message.expect("client message");
+                let Some(text) = message_text(&message) else {
+                    continue;
+                };
+                let value: Value = serde_json::from_str(text).expect("json message");
+                let event_type = value
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .expect("event type")
+                    .to_string();
+                server_received_types
+                    .lock()
+                    .expect("received types")
+                    .push(event_type.clone());
+                if event_type == "input_audio_buffer.append" {
+                    websocket
+                        .send(Message::Text(
+                            serde_json::json!({
+                                "type": "transcription.delta",
+                                "delta": "hello",
+                            })
+                            .to_string()
+                            .into(),
+                        ))
+                        .await
+                        .expect("delta");
+                }
+                if event_type == "input_audio_buffer.commit"
+                    && value.get("final").and_then(Value::as_bool) == Some(true)
+                {
+                    websocket
+                        .send(Message::Text(
+                            serde_json::json!({
+                                "type": "transcription.done",
+                                "text": "hello",
+                            })
+                            .to_string()
+                            .into(),
+                        ))
+                        .await
+                        .expect("done");
+                    break;
+                }
+            }
+        });
+
+        let (audio_tx, audio_rx) = mpsc::channel(4);
+        let (event_tx, mut event_rx) = mpsc::channel(4);
+        let client = tokio::spawn(run_vllm_realtime_transcription(
+            websocket_url,
+            None,
+            audio_rx,
+            event_tx,
+        ));
+
+        audio_tx
+            .send(RealtimeAudioChunk {
+                samples: vec![1_000; 1_600],
+                sample_rate: 16_000,
+                channels: 1,
+            })
+            .await
+            .expect("audio send");
+        drop(audio_tx);
+
+        let mut events = Vec::new();
+        while let Some(event) = event_rx.recv().await {
+            let is_final = matches!(event, VllmRealtimeTranscriptEvent::Final(_));
+            events.push(event);
+            if is_final {
+                break;
+            }
+        }
+
+        client.await.expect("client task").expect("client result");
+        server.await.expect("server task");
+        assert_eq!(
+            received_types.lock().expect("received types").as_slice(),
+            &[
+                "input_audio_buffer.commit".to_string(),
+                "input_audio_buffer.append".to_string(),
+                "input_audio_buffer.commit".to_string(),
+            ]
+        );
+        assert_eq!(
+            events,
+            vec![
+                VllmRealtimeTranscriptEvent::Provisional(VllmRealtimeTranscriptSegment {
+                    text: "hello".to_string(),
+                    utterance_id: None,
+                    revision: None,
+                    start_ms: None,
+                    end_ms: None,
+                }),
+                VllmRealtimeTranscriptEvent::Final(VllmRealtimeTranscriptSegment {
+                    text: "hello".to_string(),
+                    utterance_id: None,
+                    revision: None,
+                    start_ms: None,
+                    end_ms: None,
+                }),
+            ]
+        );
     }
 }
