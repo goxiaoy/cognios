@@ -108,15 +108,6 @@ pub async fn run_vllm_realtime_transcription(
             .map_err(|error| format!("failed to configure realtime ASR model: {error}"))?;
     }
 
-    writer
-        .send(Message::Text(
-            serde_json::json!({ "type": "input_audio_buffer.commit" })
-                .to_string()
-                .into(),
-        ))
-        .await
-        .map_err(|error| format!("failed to start realtime ASR buffer: {error}"))?;
-
     let mut provisional = String::new();
     let mut audio_finished = false;
     loop {

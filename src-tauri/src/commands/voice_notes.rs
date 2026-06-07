@@ -52,6 +52,8 @@ use crate::{AppState, RealtimeVoiceEventEmitter, VfsEventEmitter};
 
 const TRANSCRIPTION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const TRANSCRIPTION_READY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const REALTIME_TRANSCRIPTION_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+const REALTIME_TRANSCRIPTION_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 const SUMMARY_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const SUMMARY_READY_TIMEOUT: Duration = Duration::from_secs(4 * 60);
 static VOICE_NOTE_SUMMARY_DRAIN_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -435,7 +437,15 @@ async fn run_realtime_voice_note_transcription_job(
     note_id: String,
     _audio_path: String,
 ) {
-    if let Some((websocket_url, model)) = realtime_voice_websocket_config(&search_client).await {
+    let started_at = Instant::now();
+    while audio_capture.is_recording_active(&note_id)
+        && started_at.elapsed() < REALTIME_TRANSCRIPTION_READY_TIMEOUT
+    {
+        let Some((websocket_url, model)) = realtime_voice_websocket_config(&search_client).await
+        else {
+            tokio::time::sleep(REALTIME_TRANSCRIPTION_RETRY_INTERVAL).await;
+            continue;
+        };
         match run_vllm_realtime_voice_note_transcription_job(
             &db,
             &notes_dir,
@@ -452,11 +462,13 @@ async fn run_realtime_voice_note_transcription_job(
                 log::debug!(
                     "vLLM realtime voice note transcription finished for {note_id}; final transcription is handled from saved audio"
                 );
+                return;
             }
             Err(error) => {
                 log::warn!(
                     "vLLM realtime voice note transcription failed for {note_id}; final transcription is handled from saved audio: {error}"
                 );
+                tokio::time::sleep(REALTIME_TRANSCRIPTION_RETRY_INTERVAL).await;
             }
         }
     }
