@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import base64
-import json
 import socket
 import sys
 import time
-from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 import pytest
@@ -46,7 +43,7 @@ def test_realtime_voice_status_fails_closed_without_packaged_runtime(monkeypatch
     assert "not packaged" in body["reason"]
 
 
-def test_realtime_voice_status_uses_embedded_qwen_when_model_is_ready(monkeypatch):
+def test_realtime_voice_status_ignores_ready_onnx_model_without_vllm_runtime(monkeypatch):
     monkeypatch.delenv("COGNIOS_REALTIME_VOICE_RUNTIME_PATH", raising=False)
     monkeypatch.delenv("COGNIOS_REALTIME_VOICE_WS_URL", raising=False)
     monkeypatch.delenv("COGNIOS_REALTIME_VOICE_ALLOW_EXTERNAL", raising=False)
@@ -57,15 +54,14 @@ def test_realtime_voice_status_uses_embedded_qwen_when_model_is_ready(monkeypatc
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "ready"
-    assert body["available"] is True
-    assert body["provider"] == "qwen3-asr-onnx-realtime"
-    assert body["packaging"] == "supported"
-    assert body["websocket_url"] == "ws://testserver/realtime-voice/stream"
-    assert body["model"] == "Qwen3-ASR-0.6B-ONNX-CPU"
+    assert body["status"] == "unavailable"
+    assert body["available"] is False
+    assert body["provider"] == "qwen3-asr-vllm"
+    assert body["packaging"] == "missing"
+    assert body["websocket_url"] is None
 
 
-def test_realtime_voice_status_reports_installing_when_embedded_model_is_missing(
+def test_realtime_voice_status_ignores_missing_onnx_model_without_vllm_runtime(
     monkeypatch,
 ):
     monkeypatch.delenv("COGNIOS_REALTIME_VOICE_RUNTIME_PATH", raising=False)
@@ -78,49 +74,11 @@ def test_realtime_voice_status_reports_installing_when_embedded_model_is_missing
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "installing"
+    assert body["status"] == "unavailable"
     assert body["available"] is False
-    assert body["provider"] == "qwen3-asr-onnx-realtime"
-    assert body["packaging"] == "supported"
-    assert "not downloaded" in body["reason"]
-
-
-def test_realtime_voice_stream_speaks_vllm_compatible_protocol(monkeypatch):
-    monkeypatch.setattr(
-        "search_sidecar.realtime_voice.embedded.transcribe_voice_note_audio",
-        lambda *_args, **_kwargs: SimpleNamespace(transcript="Speaker 1: hello realtime"),
-    )
-    app = build_app(token=TOKEN, model_manager=_FakeReadyModelManager())
-
-    with TestClient(app) as client:
-        with client.websocket_connect("/realtime-voice/stream") as websocket:
-            session = json.loads(websocket.receive_text())
-            assert session["type"] == "session.created"
-
-            websocket.send_text(json.dumps({"type": "input_audio_buffer.commit"}))
-            websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "input_audio_buffer.append",
-                        "audio": base64.b64encode(bytes(64_000)).decode("ascii"),
-                    }
-                )
-            )
-
-            delta = json.loads(websocket.receive_text())
-            done = json.loads(websocket.receive_text())
-
-    assert delta["type"] == "transcription.delta"
-    assert delta["delta"] == "Speaker 1: hello realtime"
-    assert delta["utterance_id"] == done["utterance_id"]
-    assert delta["revision"] == 1
-    assert delta["start_ms"] == 0
-    assert delta["end_ms"] == 2000
-    assert done["type"] == "transcription.done"
-    assert done["text"] == "Speaker 1: hello realtime"
-    assert done["revision"] == 1
-    assert done["start_ms"] == 0
-    assert done["end_ms"] == 2000
+    assert body["provider"] == "qwen3-asr-vllm"
+    assert body["packaging"] == "missing"
+    assert body["websocket_url"] is None
 
 
 def test_realtime_voice_status_fails_closed_for_missing_configured_runtime(
