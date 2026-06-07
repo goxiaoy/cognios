@@ -82,6 +82,10 @@ function AppShell() {
     nodeId: string;
     serial: number;
   } | null>(null);
+  const [topicMemoryFocusRequest, setTopicMemoryFocusRequest] = useState<{
+    topicId: string;
+    serial: number;
+  } | null>(null);
   const [homeMountOpen, setHomeMountOpen] = useState(false);
   const [homeMountSetupContext, setHomeMountSetupContext] =
     useState<MountSetupContext | null>(null);
@@ -90,6 +94,7 @@ function AppShell() {
   const [activeVoiceNote, setActiveVoiceNote] = useState<ActiveVoiceNote | null>(null);
   const voiceNoteRecordingRef = useRef<VoiceNoteRecording | null>(null);
   const voiceNoteFocusSerial = useRef(0);
+  const topicMemoryFocusSerial = useRef(0);
   const sectionLabel = SECTION_LABELS[activeSection];
 
   const openPalette = useCallback(() => setPaletteOpen(true), []);
@@ -140,8 +145,21 @@ function AppShell() {
     setActiveSection("explorer");
   }, []);
 
+  const focusTopicMemory = useCallback((topicId: string) => {
+    topicMemoryFocusSerial.current += 1;
+    setTopicMemoryFocusRequest({
+      topicId,
+      serial: topicMemoryFocusSerial.current,
+    });
+    setActiveSection("memory");
+  }, []);
+
   const handleVoiceNoteFocusHandled = useCallback(() => {
     setVoiceNoteFocusRequest(null);
+  }, []);
+
+  const handleTopicMemoryFocusHandled = useCallback(() => {
+    setTopicMemoryFocusRequest(null);
   }, []);
 
   useEffect(() => {
@@ -401,6 +419,7 @@ function AppShell() {
               client={explorerClient}
               focusNodeRequest={voiceNoteFocusRequest}
               onFocusNodeRequestHandled={handleVoiceNoteFocusHandled}
+              onActivateTopic={focusTopicMemory}
               voiceNoteSession={voiceNotePreviewSession}
             />
           </div>
@@ -444,7 +463,9 @@ function AppShell() {
             <section className="topic-memory-page-panel">
               <TopicMemoryLayout
                 client={topicMemoryClient}
+                focusTopicRequest={topicMemoryFocusRequest}
                 visible={activeSection === "memory"}
+                onFocusTopicRequestHandled={handleTopicMemoryFocusHandled}
                 onActivateSource={activateExplorerNode}
               />
             </section>

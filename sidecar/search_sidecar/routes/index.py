@@ -154,6 +154,37 @@ def post_enhance_node(body: IndexNodeRequest, request: Request) -> dict:
     )
 
 
+@router.post("/enhance/start")
+def post_enhance_node_start(body: IndexNodeRequest, request: Request) -> dict:
+    _validate_index_node(body)
+    runner = _get_runner(request)
+    if runner is None:
+        raise HTTPException(
+            status_code=500,
+            detail="indexing_runner not configured on app.state",
+        )
+    return runner.start_direct_enhancement(
+        node_id=body.node_id,
+        kind=body.kind,
+        name=body.name,
+        absolute_content_path=body.absolute_content_path,
+        mount_id=body.mount_id,
+        created_at=body.created_at,
+        modified_at=body.updated_at,
+    )
+
+
+@router.get("/enhance/{job_id}")
+def get_enhance_node_status(job_id: str, request: Request) -> dict:
+    runner = _get_runner(request)
+    if runner is None:
+        raise HTTPException(
+            status_code=500,
+            detail="indexing_runner not configured on app.state",
+        )
+    return runner.enhancement_job_status(job_id)
+
+
 @router.post("/delete")
 def post_delete_node(body: DeleteNodeRequest, request: Request) -> dict:
     if not UUID_RE.match(body.node_id):

@@ -138,6 +138,45 @@ def test_routes_require_bearer_auth(tmp_path: Path):
         assert client.post("/index/node", json={}).status_code == 401
 
 
+def test_enhancement_start_reports_unavailable_without_runtime(tmp_path: Path):
+    app, _ = _app(tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/index/enhance/start",
+            headers=_auth(),
+            json={
+                "node_id": UUID_A,
+                "kind": "file",
+                "name": "scan.png",
+                "absolute_content_path": str(tmp_path / "scan.png"),
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "job_id": None,
+        "node_id": UUID_A,
+        "status": "unavailable",
+        "error": "advanced OCR runtime is unavailable",
+    }
+
+
+def test_enhancement_status_reports_unknown_job(tmp_path: Path):
+    app, _ = _app(tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.get("/index/enhance/missing-job", headers=_auth())
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "job_id": "missing-job",
+        "node_id": None,
+        "status": "unknown",
+        "error": "enhancement job unknown",
+    }
+
+
 def test_get_node_content_returns_empty_for_unindexed_node(tmp_path: Path):
     app, _ = _app(tmp_path)
     with TestClient(app) as client:

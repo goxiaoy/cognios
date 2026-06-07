@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
+import type {
+  NodeStageStatus,
+  NodeStatusView,
+} from "../../../lib/contracts/nodeStatus";
 import type { NodeContentChunk } from "../../../lib/contracts/search";
 import { VFS_EVENT_NAME, type VfsChangeEvent } from "../../../lib/tauri/events";
 import type { SearchClient } from "../../search/types/search";
@@ -34,11 +38,13 @@ export function ImagePreview({
   contentKind = "image",
   searchClient,
   nodeId,
+  nodeStatus,
   name,
 }: {
   contentKind?: PreviewContentKind;
   searchClient: SearchClient;
   nodeId: string;
+  nodeStatus?: NodeStatusView | null;
   name: string;
 }) {
   const [chunks, setChunks] = useState<NodeContentChunk[] | null>(null);
@@ -110,11 +116,28 @@ export function ImagePreview({
     ...section,
     previewBody: rewriteAssetReferences(section.body, assets),
   }));
+  const enhancementStatus =
+    contentKind === "url"
+      ? null
+      : enhancementStatusFor(
+          nodeStatus?.stages.find((stage) => stage.id === "image.enhance")
+        );
 
   return (
     <div className="image-preview">
       <header className="image-preview-header">
-        <h2 className="image-preview-title">{name}</h2>
+        <div className="image-preview-heading">
+          <h2 className="image-preview-title">{name}</h2>
+          {enhancementStatus ? (
+            <p
+              className={`image-preview-enhancement-status is-${enhancementStatus.tone}`}
+              role="status"
+              title={enhancementStatus.title}
+            >
+              {enhancementStatus.label}
+            </p>
+          ) : null}
+        </div>
         {renderedSections.length > 0 ? (
           <div
             className="markdown-preview-mode-toggle"
@@ -166,6 +189,51 @@ export function ImagePreview({
       )}
     </div>
   );
+}
+
+function enhancementStatusFor(stage?: NodeStageStatus | null):
+  | {
+      label: string;
+      title: string;
+      tone: "pending" | "ok" | "error" | "neutral";
+    }
+  | null {
+  if (!stage || stage.state === "skipped") return null;
+  const detail = stage.error?.message ?? stage.message ?? "";
+  const suffix = detail ? `: ${detail}` : "";
+  if (stage.state === "pending") {
+    return {
+      label: `OCR enhancement queued${suffix}`,
+      title: detail || "OCR enhancement queued",
+      tone: "pending",
+    };
+  }
+  if (stage.state === "running") {
+    return {
+      label: `OCR enhancement running${suffix}`,
+      title: detail || "OCR enhancement running",
+      tone: "pending",
+    };
+  }
+  if (stage.state === "succeeded") {
+    return {
+      label: "OCR enhancement ready",
+      title: detail || "OCR enhancement ready",
+      tone: "ok",
+    };
+  }
+  if (stage.state === "failed" || stage.state === "blocked") {
+    return {
+      label: `OCR enhancement failed${suffix}`,
+      title: detail || "OCR enhancement failed",
+      tone: "error",
+    };
+  }
+  return {
+    label: `OCR enhancement ${stage.state}${suffix}`,
+    title: detail || `OCR enhancement ${stage.state}`,
+    tone: "neutral",
+  };
 }
 
 interface PreviewSection {

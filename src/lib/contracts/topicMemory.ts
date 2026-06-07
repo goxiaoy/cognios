@@ -101,6 +101,10 @@ export interface TopicMemoryInput {
   topicId: string;
 }
 
+export interface TopicMemoryNodeInput {
+  nodeId: string;
+}
+
 export interface TopicProposalActionInput {
   proposalId: string;
 }

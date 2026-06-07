@@ -306,7 +306,7 @@ def _items_from_llm(
             "body": body,
             "citation": _citation(row),
             "confidence": _confidence(raw.get("confidence"), default=0.7),
-            "rationale": _truncate(str(raw.get("rationale") or "LLM extracted from cited evidence; review before trusting."), 220),
+            "rationale": _truncate(str(raw.get("rationale") or "LLM extracted from cited evidence."), 220),
             "signature": f"{item_type}:{_slug(topic_title)}:{_slug(title)}:{citation_id}",
         }
         if item_type == "event":
@@ -342,7 +342,7 @@ def _relationships_from_llm(
                 "relationType": relation_type,
                 "citation": _citation(_row_from_evidence(evidence)),
                 "confidence": _confidence(raw.get("confidence"), default=0.64),
-                "rationale": _truncate(str(raw.get("rationale") or "LLM inferred from cited evidence; review before trusting."), 220),
+                "rationale": _truncate(str(raw.get("rationale") or "LLM inferred from cited evidence."), 220),
                 "signature": f"relationship:{_slug(topic_title)}:{_slug(source_label)}:{_slug(relation_type)}:{_slug(target_label)}:{citation_id}",
             }
         )

@@ -22,15 +22,19 @@ import type {
 import { unwrapEnvelope } from "../../../lib/contracts/search";
 import type { TopicMemoryClient } from "../api/topicMemoryClient";
 
-type TopicView = "dossier" | "timeline" | "graph" | "review";
+type TopicView = "dossier" | "timeline" | "graph" | "exceptions";
 
 export function TopicMemoryLayout({
   client,
+  focusTopicRequest,
   visible = true,
+  onFocusTopicRequestHandled,
   onActivateSource,
 }: {
   client: TopicMemoryClient;
+  focusTopicRequest?: { topicId: string; serial: number } | null;
   visible?: boolean;
+  onFocusTopicRequestHandled?: () => void;
   onActivateSource?: (nodeId: string) => void;
 }) {
   const [topics, setTopics] = useState<TopicMemory[]>([]);
@@ -55,6 +59,25 @@ export function TopicMemoryLayout({
     }
     void loadDetail(selectedTopicId);
   }, [selectedTopicId]);
+
+  useEffect(() => {
+    if (!visible || !focusTopicRequest) return;
+    setActiveView("dossier");
+    void loadTopics(focusTopicRequest.topicId).finally(() => {
+      onFocusTopicRequestHandled?.();
+    });
+  }, [
+    visible,
+    focusTopicRequest?.topicId,
+    focusTopicRequest?.serial,
+    onFocusTopicRequestHandled,
+  ]);
+
+  useEffect(() => {
+    if (activeView === "exceptions" && detail && detail.proposals.length === 0) {
+      setActiveView("dossier");
+    }
+  }, [activeView, detail]);
 
   const activeTopic = detail?.topic ?? topics.find((topic) => topic.id === selectedTopicId) ?? null;
   const topicStats = useMemo(() => summarizeTopic(detail), [detail]);
@@ -101,7 +124,7 @@ export function TopicMemoryLayout({
         return;
       }
       setRefreshStatus(
-        `${result.topicsCreated} new, ${result.topicsUpdated} updated, ${result.sourcesApplied} sources, ${result.proposalsCreated} review items`
+        `${result.topicsCreated} new, ${result.topicsUpdated} updated, ${result.sourcesApplied} sources, ${result.proposalsCreated} exceptions`
       );
       await loadTopics(selectedTopicId);
       if (selectedTopicId) await loadDetail(selectedTopicId);
@@ -234,14 +257,16 @@ export function TopicMemoryLayout({
           <TopicTab view="dossier" activeView={activeView} onSelect={setActiveView} icon={<BookOpen size={14} />} label="Dossier" />
           <TopicTab view="timeline" activeView={activeView} onSelect={setActiveView} icon={<Clock3 size={14} />} label="Timeline" />
           <TopicTab view="graph" activeView={activeView} onSelect={setActiveView} icon={<GitBranch size={14} />} label="Graph" />
-          <TopicTab view="review" activeView={activeView} onSelect={setActiveView} icon={<ListChecks size={14} />} label={`Review ${detail?.proposals.length ? `(${detail.proposals.length})` : ""}`} />
+          {detail?.proposals.length ? (
+            <TopicTab view="exceptions" activeView={activeView} onSelect={setActiveView} icon={<ListChecks size={14} />} label={`Exceptions (${detail.proposals.length})`} />
+          ) : null}
         </div>
 
         {detail ? (
           <div className="topic-memory-content">
             <section className="topic-memory-stat-strip" aria-label="Topic summary">
               <Stat label="Sources" value={topicStats.sourceCount} />
-              <Stat label="Claims" value={topicStats.claimCount} />
+              <Stat label="Key points" value={topicStats.claimCount} />
               <Stat label="Events" value={topicStats.eventCount} />
               <Stat label="Relations" value={topicStats.relationshipCount} />
             </section>
@@ -255,8 +280,8 @@ export function TopicMemoryLayout({
             {activeView === "graph" ? (
               <GraphView relationships={detail.relationships} />
             ) : null}
-            {activeView === "review" ? (
-              <ReviewView
+            {activeView === "exceptions" ? (
+              <ExceptionsView
                 proposals={detail.proposals}
                 actingProposalId={actingProposalId}
                 onAccept={acceptProposal}
@@ -314,16 +339,16 @@ function DossierView({
   return (
     <div className="topic-memory-view">
       <section className="topic-memory-section">
-        <h3>Claims</h3>
+        <h3>Key points</h3>
         <div className="topic-memory-item-list">
           {claims.map((item) => (
             <MemoryItemRow key={item.id} item={item} onActivateSource={onActivateSource} />
           ))}
-          {claims.length === 0 ? <p className="topic-memory-muted">Accepted claims will appear here.</p> : null}
+          {claims.length === 0 ? <p className="topic-memory-muted">Cited key points will appear here.</p> : null}
         </div>
       </section>
       <section className="topic-memory-section">
-        <h3>Sources</h3>
+        <h3>Evidence</h3>
         <div className="topic-memory-source-list">
           {detail.sources.map((source) => (
             <SourceRow key={source.id} source={source} onActivateSource={onActivateSource} />
@@ -351,7 +376,7 @@ function TimelineView({
       {events.map((item) => (
         <MemoryItemRow key={item.id} item={item} onActivateSource={onActivateSource} />
       ))}
-      {events.length === 0 ? <p className="topic-memory-muted">Accepted events will form the timeline here.</p> : null}
+      {events.length === 0 ? <p className="topic-memory-muted">Cited events will form the timeline here.</p> : null}
     </section>
   );
 }
@@ -369,13 +394,13 @@ function GraphView({ relationships }: { relationships: TopicMemoryRelationship[]
             <small>{citationLabel(relationship.citation)}</small>
           </div>
         ))}
-        {relationships.length === 0 ? <p className="topic-memory-muted">Accepted relationships will appear here.</p> : null}
+        {relationships.length === 0 ? <p className="topic-memory-muted">Cited relationships will appear here.</p> : null}
       </div>
     </section>
   );
 }
 
-function ReviewView({
+function ExceptionsView({
   proposals,
   actingProposalId,
   onAccept,
@@ -388,7 +413,7 @@ function ReviewView({
 }) {
   return (
     <section className="topic-memory-section">
-      <h3>Review Queue</h3>
+      <h3>Exceptions</h3>
       <div className="topic-memory-review-list">
         {proposals.map((proposal) => (
           <article className="topic-memory-review-item" key={proposal.id}>
@@ -418,7 +443,7 @@ function ReviewView({
             </div>
           </article>
         ))}
-        {proposals.length === 0 ? <p className="topic-memory-muted">No pending high-impact memory proposals.</p> : null}
+        {proposals.length === 0 ? <p className="topic-memory-muted">No memory exceptions need attention.</p> : null}
       </div>
     </section>
   );

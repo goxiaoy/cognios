@@ -317,21 +317,6 @@ fn reconcile_stage_defaults(conn: &Connection, node_id: &str) -> rusqlite::Resul
         }
         "file" => {
             changed += reconcile_index_stage_from_node_state(conn, node_id, &node_state)?;
-            changed += update_stage_row(
-                conn,
-                node_id,
-                "image.enhance",
-                &StageUpdate {
-                    state: StageState::Skipped,
-                    message: Some("Enhancement not run".to_string()),
-                    detail: None,
-                    error_message: None,
-                    retryable: false,
-                    attempt: None,
-                    started_at: None,
-                    finished_at: Some("CURRENT_TIMESTAMP".to_string()),
-                },
-            )?;
         }
         "note" if is_voice_note => {
             changed += reconcile_voice_note_stages(conn, node_id, &node_state)?;
@@ -743,6 +728,11 @@ fn select_primary_stage(stages: &[NodeStageStatusDto]) -> Option<&NodeStageStatu
                 .iter()
                 .find(|stage| stage.importance == "required" && stage.state == "pending")
         })
+        .or_else(|| {
+            stages
+                .iter()
+                .find(|stage| stage.importance == "optional" && stage.state == "pending")
+        })
 }
 
 fn derive_overall(stages: &[NodeStageStatusDto]) -> NodeStatusOverall {
@@ -781,7 +771,7 @@ fn is_failed_like(state: &str) -> bool {
 }
 
 fn is_incomplete_or_failed(state: &str) -> bool {
-    state == "failed" || state == "blocked"
+    state == "pending" || state == "failed" || state == "blocked"
 }
 
 fn current_revision(conn: &Connection) -> rusqlite::Result<u64> {

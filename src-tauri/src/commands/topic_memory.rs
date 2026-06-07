@@ -5,7 +5,8 @@ use crate::domain::topic_memory::{
 };
 use crate::infrastructure::db::topic_memory_repository::{
     accept_proposal, archive_topic, dismiss_proposal, get_topic_detail, list_topics,
-    ArchiveTopicInput, TopicMemoryInput, TopicProposalActionInput,
+    list_topics_for_node, ArchiveTopicInput, TopicMemoryInput, TopicMemoryNodeInput,
+    TopicProposalActionInput,
 };
 use crate::services::search::SidecarEnvelope;
 use crate::services::topic_memory::refresh_from_sidecar;
@@ -18,6 +19,18 @@ pub fn list_topic_memories(state: State<'_, AppState>) -> Result<Vec<TopicMemory
         .connect()
         .map_err(|error: rusqlite::Error| error.to_string())?;
     list_topics(&conn).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn list_topic_memories_for_node(
+    state: State<'_, AppState>,
+    input: TopicMemoryNodeInput,
+) -> Result<Vec<TopicMemoryDto>, String> {
+    let conn = state
+        .db
+        .connect()
+        .map_err(|error: rusqlite::Error| error.to_string())?;
+    list_topics_for_node(&conn, &input.node_id).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

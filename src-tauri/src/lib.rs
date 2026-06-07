@@ -356,6 +356,7 @@ pub fn run() {
             commands::chat::get_chat_models,
             commands::chat::test_chat_provider,
             commands::topic_memory::list_topic_memories,
+            commands::topic_memory::list_topic_memories_for_node,
             commands::topic_memory::get_topic_memory,
             commands::topic_memory::refresh_topic_memories,
             commands::topic_memory::accept_topic_memory_proposal,

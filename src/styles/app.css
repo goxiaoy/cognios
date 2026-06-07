@@ -1954,6 +1954,69 @@ body.is-resizing-pane {
   color: var(--warn);
 }
 
+/* ── Inspector Topic backlinks ── */
+
+.inspector-topics {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.inspector-topic-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.inspector-topic-button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.45rem;
+  align-items: start;
+  width: 100%;
+  padding: 0.42rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.inspector-topic-button:hover,
+.inspector-topic-button:focus-visible {
+  color: var(--ink);
+}
+
+.inspector-topic-button strong,
+.inspector-topic-button small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-topic-button strong {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.inspector-topic-button small,
+.inspector-topic-muted {
+  font-size: 0.72rem;
+  color: var(--ink-3);
+}
+
+.inspector-topic-muted {
+  margin: 0;
+}
+
+.inspector-topic-muted.is-error {
+  color: #b3261e;
+}
+
 /* ── Inspector Actions panel ── */
 
 .inspector-actions {
@@ -3697,6 +3760,14 @@ body.is-resizing-pane {
   margin-bottom: 0;
 }
 
+.image-preview-heading {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
 .image-preview-title {
   margin: 0;
   font-family: var(--font-heading);
@@ -3707,6 +3778,28 @@ body.is-resizing-pane {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.image-preview-enhancement-status {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.image-preview-enhancement-status.is-pending {
+  color: var(--warn);
+}
+
+.image-preview-enhancement-status.is-ok {
+  color: var(--ok);
+}
+
+.image-preview-enhancement-status.is-error {
+  color: #b3261e;
 }
 
 .image-preview-body {

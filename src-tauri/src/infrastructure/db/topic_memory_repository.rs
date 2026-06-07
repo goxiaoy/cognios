@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,7 +16,6 @@ const ARCHIVED: &str = "archived";
 const PENDING: &str = "pending";
 const DISMISSED: &str = "dismissed";
 const ACCEPTED: &str = "accepted";
-const AUTO_APPLY_SOURCE_CONFIDENCE: f64 = 0.82;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +113,12 @@ pub struct TopicMemoryInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TopicMemoryNodeInput {
+    pub node_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TopicProposalActionInput {
     pub proposal_id: String,
 }
@@ -134,6 +141,71 @@ pub fn list_topics(conn: &Connection) -> rusqlite::Result<Vec<TopicMemoryDto>> {
     let topics = stmt
         .query_map([ARCHIVED], map_topic)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(topics)
+}
+
+pub fn list_topics_for_node(
+    conn: &Connection,
+    node_id: &str,
+) -> rusqlite::Result<Vec<TopicMemoryDto>> {
+    let mut topic_ids = BTreeSet::new();
+    let mut source_stmt = conn.prepare(
+        "
+        SELECT DISTINCT topic_id
+        FROM topic_memory_sources
+        WHERE node_id = ?1 AND status = ?2
+        ",
+    )?;
+    for row in source_stmt.query_map(params![node_id, ACTIVE], |row| row.get::<_, String>(0))? {
+        topic_ids.insert(row?);
+    }
+
+    let mut item_stmt = conn.prepare(
+        "
+        SELECT topic_id, citation_json
+        FROM topic_memory_items
+        WHERE status = ?1
+        ",
+    )?;
+    for row in item_stmt.query_map([ACTIVE], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })? {
+        let (topic_id, citation_json) = row?;
+        if parse_citation(&citation_json).node_id == node_id {
+            topic_ids.insert(topic_id);
+        }
+    }
+
+    let mut relationship_stmt = conn.prepare(
+        "
+        SELECT topic_id, citation_json
+        FROM topic_memory_relationships
+        WHERE status = ?1
+        ",
+    )?;
+    for row in relationship_stmt.query_map([ACTIVE], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })? {
+        let (topic_id, citation_json) = row?;
+        if parse_citation(&citation_json).node_id == node_id {
+            topic_ids.insert(topic_id);
+        }
+    }
+
+    let mut topics = Vec::new();
+    for topic_id in topic_ids {
+        if let Some(topic) = get_topic(conn, &topic_id)? {
+            if topic.status != ARCHIVED {
+                topics.push(topic);
+            }
+        }
+    }
+    topics.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| left.title.cmp(&right.title))
+    });
     Ok(topics)
 }
 
@@ -181,7 +253,7 @@ pub fn apply_topic_proposals(
             continue;
         }
         let normalized = normalize_title(title);
-        let existing = get_topic_by_normalized_title(conn, &normalized)?;
+        let existing = find_existing_topic_for_proposal(conn, title, &normalized, topic)?;
         let topic_id = if let Some(existing) = existing {
             conn.execute(
                 "
@@ -218,38 +290,22 @@ pub fn apply_topic_proposals(
             if source.node_id.trim().is_empty() || source.node_title.trim().is_empty() {
                 continue;
             }
-            let signature = source
-                .signature
-                .clone()
-                .unwrap_or_else(|| source_signature(&topic_id, source));
-            if source.confidence >= AUTO_APPLY_SOURCE_CONFIDENCE
-                && !proposal_signature_dismissed(conn, &signature)?
-            {
+            let signature = source_signature(source);
+            if !proposal_signature_dismissed_any(conn, &signature, source.signature.as_deref())? {
                 upsert_source(conn, &topic_id, source, &signature)?;
                 result.sources_applied += 1;
-            } else {
-                result.proposals_created += insert_proposal(
-                    conn,
-                    Some(&topic_id),
-                    "source",
-                    &source.node_title,
-                    source.confidence,
-                    &source.rationale,
-                    &signature,
-                    serde_json::to_value(source).unwrap_or(Value::Null),
-                )?;
             }
         }
 
         for claim in &topic.claims {
-            result.proposals_created += insert_item_proposal(conn, &topic_id, "claim", claim)?;
+            result.proposals_created += apply_item_or_exception(conn, &topic_id, "claim", claim)?;
         }
         for event in &topic.events {
-            result.proposals_created += insert_item_proposal(conn, &topic_id, "event", event)?;
+            result.proposals_created += apply_item_or_exception(conn, &topic_id, "event", event)?;
         }
         for relationship in &topic.relationships {
             result.proposals_created +=
-                insert_relationship_proposal(conn, &topic_id, relationship)?;
+                apply_relationship_or_exception(conn, &topic_id, relationship)?;
         }
     }
     Ok(result)
@@ -268,21 +324,22 @@ pub fn accept_proposal(
     let body: Value = serde_json::from_str(&proposal.body_json).unwrap_or(Value::Null);
     let applied = match proposal.proposal_type.as_str() {
         "source" => serde_json::from_value::<SourceProposalInput>(body)
-            .map(|input| upsert_source(conn, &topic_id, &input, &proposal.signature))
+            .map(|input| {
+                let signature = source_signature(&input);
+                upsert_source(conn, &topic_id, &input, &signature)
+            })
             .ok(),
         "claim" | "event" => serde_json::from_value::<ItemProposalInput>(body)
             .map(|input| {
-                insert_item(
-                    conn,
-                    &topic_id,
-                    &proposal.proposal_type,
-                    &input,
-                    &proposal.signature,
-                )
+                let signature = item_signature(&topic_id, &proposal.proposal_type, &input);
+                insert_item(conn, &topic_id, &proposal.proposal_type, &input, &signature)
             })
             .ok(),
         "relationship" => serde_json::from_value::<RelationshipProposalInput>(body)
-            .map(|input| insert_relationship(conn, &topic_id, &input, &proposal.signature))
+            .map(|input| {
+                let signature = relationship_signature(&topic_id, &input);
+                insert_relationship(conn, &topic_id, &input, &signature)
+            })
             .ok(),
         _ => None,
     };
@@ -340,6 +397,58 @@ fn get_topic_by_normalized_title(
         map_topic,
     )
     .optional()
+}
+
+fn find_existing_topic_for_proposal(
+    conn: &Connection,
+    title: &str,
+    normalized_title: &str,
+    proposal: &TopicProposalInput,
+) -> rusqlite::Result<Option<TopicMemoryDto>> {
+    if let Some(topic) = get_topic_by_normalized_title(conn, normalized_title)? {
+        return Ok(Some(topic));
+    }
+    let mut overlaps = BTreeMap::<String, u32>::new();
+    for source in &proposal.sources {
+        let node_id = source.node_id.trim();
+        if node_id.is_empty() {
+            continue;
+        }
+        let chunk_id = source.chunk_id.as_deref().unwrap_or("").trim();
+        let mut stmt = conn.prepare(
+            "
+            SELECT DISTINCT topic_id
+            FROM topic_memory_sources
+            WHERE node_id = ?1 AND COALESCE(chunk_id, '') = ?2 AND status = ?3
+            ",
+        )?;
+        for row in stmt.query_map(params![node_id, chunk_id, ACTIVE], |row| {
+            row.get::<_, String>(0)
+        })? {
+            *overlaps.entry(row?).or_insert(0) += 1;
+        }
+    }
+    let mut best: Option<(TopicMemoryDto, u32)> = None;
+    for (topic_id, overlap) in overlaps {
+        let Some(topic) = get_topic(conn, &topic_id)? else {
+            continue;
+        };
+        if topic.status == ARCHIVED {
+            continue;
+        }
+        let enough_shared_evidence = overlap >= 2;
+        let related_title = overlap >= 1 && titles_are_related(title, &topic.title);
+        if enough_shared_evidence || related_title {
+            match &best {
+                Some((current, current_overlap))
+                    if *current_overlap > overlap
+                        || (*current_overlap == overlap
+                            && current.updated_at >= topic.updated_at) => {}
+                _ => best = Some((topic, overlap)),
+            }
+        }
+    }
+    Ok(best.map(|(topic, _)| topic))
 }
 
 fn list_sources(conn: &Connection, topic_id: &str) -> rusqlite::Result<Vec<TopicMemorySourceDto>> {
@@ -437,6 +546,48 @@ fn upsert_source(
 ) -> rusqlite::Result<()> {
     let citation = citation_from_source(source);
     let citation_json = to_json(&citation)?;
+    let existing_ids = source_ids_by_natural_key(conn, topic_id, source)?;
+    if let Some((keep_id, duplicate_ids)) = existing_ids.split_first() {
+        for duplicate_id in duplicate_ids {
+            conn.execute(
+                "DELETE FROM topic_memory_sources WHERE id = ?1",
+                [duplicate_id],
+            )?;
+        }
+        conn.execute(
+            "
+            UPDATE topic_memory_sources
+            SET node_title = ?2,
+                node_kind = ?3,
+                path = ?4,
+                chunk_id = ?5,
+                chunk_role = ?6,
+                anchor_label = ?7,
+                citation_json = ?8,
+                status = ?9,
+                confidence = MAX(confidence, ?10),
+                rationale = ?11,
+                signature = ?12,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?1
+            ",
+            params![
+                keep_id,
+                source.node_title.trim(),
+                source.node_kind.trim(),
+                source.path,
+                source.chunk_id,
+                source.chunk_role,
+                source.anchor_label,
+                citation_json,
+                ACTIVE,
+                source.confidence,
+                source.rationale.trim(),
+                signature
+            ],
+        )?;
+        return Ok(());
+    }
     conn.execute(
         "
         INSERT INTO topic_memory_sources (
@@ -477,16 +628,20 @@ fn upsert_source(
     Ok(())
 }
 
-fn insert_item_proposal(
+fn apply_item_or_exception(
     conn: &Connection,
     topic_id: &str,
     item_type: &str,
     input: &ItemProposalInput,
 ) -> rusqlite::Result<u32> {
-    let signature = input
-        .signature
-        .clone()
-        .unwrap_or_else(|| item_signature(topic_id, item_type, input));
+    let signature = item_signature(topic_id, item_type, input);
+    if proposal_signature_dismissed_any(conn, &signature, input.signature.as_deref())? {
+        return Ok(0);
+    }
+    if input.citation.as_ref().is_some_and(citation_has_source) {
+        insert_item(conn, topic_id, item_type, input, &signature)?;
+        return Ok(0);
+    }
     insert_proposal(
         conn,
         Some(topic_id),
@@ -499,15 +654,19 @@ fn insert_item_proposal(
     )
 }
 
-fn insert_relationship_proposal(
+fn apply_relationship_or_exception(
     conn: &Connection,
     topic_id: &str,
     input: &RelationshipProposalInput,
 ) -> rusqlite::Result<u32> {
-    let signature = input
-        .signature
-        .clone()
-        .unwrap_or_else(|| relationship_signature(topic_id, input));
+    let signature = relationship_signature(topic_id, input);
+    if proposal_signature_dismissed_any(conn, &signature, input.signature.as_deref())? {
+        return Ok(0);
+    }
+    if input.citation.as_ref().is_some_and(citation_has_source) {
+        insert_relationship(conn, topic_id, input, &signature)?;
+        return Ok(0);
+    }
     insert_proposal(
         conn,
         Some(topic_id),
@@ -528,6 +687,42 @@ fn insert_item(
     signature: &str,
 ) -> rusqlite::Result<()> {
     let citation_json = to_json(&input.citation.clone().unwrap_or_else(empty_citation))?;
+    let existing_ids = item_ids_by_natural_key(conn, topic_id, item_type, input)?;
+    if let Some((keep_id, duplicate_ids)) = existing_ids.split_first() {
+        for duplicate_id in duplicate_ids {
+            conn.execute(
+                "DELETE FROM topic_memory_items WHERE id = ?1",
+                [duplicate_id],
+            )?;
+        }
+        conn.execute(
+            "
+            UPDATE topic_memory_items
+            SET title = ?2,
+                body = ?3,
+                occurred_at = ?4,
+                citation_json = ?5,
+                status = ?6,
+                confidence = MAX(confidence, ?7),
+                rationale = ?8,
+                signature = ?9,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?1
+            ",
+            params![
+                keep_id,
+                input.title.trim(),
+                input.body.trim(),
+                input.occurred_at,
+                citation_json,
+                ACTIVE,
+                input.confidence,
+                input.rationale.trim(),
+                signature
+            ],
+        )?;
+        return Ok(());
+    }
     conn.execute(
         "
         INSERT INTO topic_memory_items (
@@ -569,6 +764,42 @@ fn insert_relationship(
     signature: &str,
 ) -> rusqlite::Result<()> {
     let citation_json = to_json(&input.citation.clone().unwrap_or_else(empty_citation))?;
+    let existing_ids = relationship_ids_by_natural_key(conn, topic_id, input)?;
+    if let Some((keep_id, duplicate_ids)) = existing_ids.split_first() {
+        for duplicate_id in duplicate_ids {
+            conn.execute(
+                "DELETE FROM topic_memory_relationships WHERE id = ?1",
+                [duplicate_id],
+            )?;
+        }
+        conn.execute(
+            "
+            UPDATE topic_memory_relationships
+            SET source_label = ?2,
+                target_label = ?3,
+                relation_type = ?4,
+                citation_json = ?5,
+                status = ?6,
+                confidence = MAX(confidence, ?7),
+                rationale = ?8,
+                signature = ?9,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?1
+            ",
+            params![
+                keep_id,
+                input.source_label.trim(),
+                input.target_label.trim(),
+                input.relation_type.trim(),
+                citation_json,
+                ACTIVE,
+                input.confidence,
+                input.rationale.trim(),
+                signature
+            ],
+        )?;
+        return Ok(());
+    }
     conn.execute(
         "
         INSERT INTO topic_memory_relationships (
@@ -654,6 +885,139 @@ fn proposal_signature_dismissed(conn: &Connection, signature: &str) -> rusqlite:
     )
     .optional()
     .map(|value| value.is_some())
+}
+
+fn proposal_signature_dismissed_any(
+    conn: &Connection,
+    stable_signature: &str,
+    original_signature: Option<&str>,
+) -> rusqlite::Result<bool> {
+    if proposal_signature_dismissed(conn, stable_signature)? {
+        return Ok(true);
+    }
+    let Some(original_signature) = original_signature else {
+        return Ok(false);
+    };
+    if original_signature == stable_signature {
+        return Ok(false);
+    }
+    proposal_signature_dismissed(conn, original_signature)
+}
+
+fn source_ids_by_natural_key(
+    conn: &Connection,
+    topic_id: &str,
+    source: &SourceProposalInput,
+) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "
+        SELECT id
+        FROM topic_memory_sources
+        WHERE topic_id = ?1
+          AND node_id = ?2
+          AND COALESCE(chunk_id, '') = ?3
+          AND status = ?4
+        ORDER BY updated_at DESC, id ASC
+        ",
+    )?;
+    let ids = stmt
+        .query_map(
+            params![
+                topic_id,
+                source.node_id.trim(),
+                source.chunk_id.as_deref().unwrap_or("").trim(),
+                ACTIVE
+            ],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect();
+    ids
+}
+
+fn item_ids_by_natural_key(
+    conn: &Connection,
+    topic_id: &str,
+    item_type: &str,
+    input: &ItemProposalInput,
+) -> rusqlite::Result<Vec<String>> {
+    let natural_key = item_natural_key(input);
+    let mut stmt = conn.prepare(
+        "
+        SELECT id, title, body
+        FROM topic_memory_items
+        WHERE topic_id = ?1 AND item_type = ?2 AND status = ?3
+        ORDER BY updated_at DESC, id ASC
+        ",
+    )?;
+    let mut ids = Vec::new();
+    for row in stmt.query_map(params![topic_id, item_type, ACTIVE], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })? {
+        let (id, title, body) = row?;
+        if normalize_title(&format!("{} {}", title, body)) == natural_key {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn relationship_ids_by_natural_key(
+    conn: &Connection,
+    topic_id: &str,
+    input: &RelationshipProposalInput,
+) -> rusqlite::Result<Vec<String>> {
+    let natural_key = relationship_natural_key(input);
+    let mut stmt = conn.prepare(
+        "
+        SELECT id, source_label, relation_type, target_label
+        FROM topic_memory_relationships
+        WHERE topic_id = ?1 AND status = ?2
+        ORDER BY updated_at DESC, id ASC
+        ",
+    )?;
+    let mut ids = Vec::new();
+    for row in stmt.query_map(params![topic_id, ACTIVE], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    })? {
+        let (id, source_label, relation_type, target_label) = row?;
+        if normalize_title(&format!(
+            "{} {} {}",
+            source_label, relation_type, target_label
+        )) == natural_key
+        {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn titles_are_related(left: &str, right: &str) -> bool {
+    let left = normalize_title(left);
+    let right = normalize_title(right);
+    if left.is_empty() || right.is_empty() {
+        return false;
+    }
+    if left == right || left.contains(&right) || right.contains(&left) {
+        return true;
+    }
+    let left_tokens: BTreeSet<_> = left
+        .split_whitespace()
+        .filter(|token| token.len() > 2)
+        .collect();
+    let right_tokens: BTreeSet<_> = right
+        .split_whitespace()
+        .filter(|token| token.len() > 2)
+        .collect();
+    !left_tokens.is_empty() && !right_tokens.is_empty() && !left_tokens.is_disjoint(&right_tokens)
 }
 
 fn map_topic(row: &rusqlite::Row<'_>) -> rusqlite::Result<TopicMemoryDto> {
@@ -766,6 +1130,10 @@ fn empty_citation() -> TopicMemoryCitationDto {
     }
 }
 
+fn citation_has_source(citation: &TopicMemoryCitationDto) -> bool {
+    !citation.node_id.trim().is_empty()
+}
+
 fn parse_citation(value: &str) -> TopicMemoryCitationDto {
     serde_json::from_str(value).unwrap_or_else(|_| empty_citation())
 }
@@ -784,31 +1152,34 @@ fn normalize_title(title: &str) -> String {
         .join(" ")
 }
 
-fn source_signature(topic_id: &str, source: &SourceProposalInput) -> String {
+fn source_signature(source: &SourceProposalInput) -> String {
     format!(
-        "source:{}:{}:{}",
-        topic_id,
+        "source:{}:{}",
         source.node_id.trim(),
         source.chunk_id.as_deref().unwrap_or("")
     )
 }
 
+fn item_natural_key(input: &ItemProposalInput) -> String {
+    normalize_title(&format!("{} {}", input.title, input.body))
+}
+
 fn item_signature(topic_id: &str, item_type: &str, input: &ItemProposalInput) -> String {
-    format!(
-        "{}:{}:{}",
-        item_type,
-        topic_id,
-        normalize_title(&format!("{} {}", input.title, input.body))
-    )
+    format!("{}:{}:{}", item_type, topic_id, item_natural_key(input))
+}
+
+fn relationship_natural_key(input: &RelationshipProposalInput) -> String {
+    normalize_title(&format!(
+        "{} {} {}",
+        input.source_label, input.relation_type, input.target_label
+    ))
 }
 
 fn relationship_signature(topic_id: &str, input: &RelationshipProposalInput) -> String {
     format!(
-        "relationship:{}:{}:{}:{}",
+        "relationship:{}:{}",
         topic_id,
-        normalize_title(&input.source_label),
-        normalize_title(&input.relation_type),
-        normalize_title(&input.target_label)
+        relationship_natural_key(input)
     )
 }
 
@@ -824,7 +1195,7 @@ mod tests {
     }
 
     #[test]
-    fn applies_sources_and_requires_review_for_claims() {
+    fn applies_cited_claims_directly() {
         let conn = setup_conn();
         let batch = TopicProposalBatchInput {
             topics: vec![TopicProposalInput {
@@ -860,7 +1231,7 @@ mod tests {
                         timestamp_ms: None,
                     }),
                     confidence: 0.68,
-                    rationale: "Attribution needs review".into(),
+                    rationale: "Cited attribution".into(),
                     signature: Some("claim:atlas:budget-owner".into()),
                 }],
                 events: vec![],
@@ -871,25 +1242,163 @@ mod tests {
         let result = apply_topic_proposals(&conn, &batch).expect("apply proposals");
         assert_eq!(result.topics_created, 1);
         assert_eq!(result.sources_applied, 1);
-        assert_eq!(result.proposals_created, 1);
+        assert_eq!(result.proposals_created, 0);
 
         let topic = list_topics(&conn).expect("topics").remove(0);
         let detail = get_topic_detail(&conn, &topic.id)
             .expect("detail")
             .expect("topic detail");
         assert_eq!(detail.sources.len(), 1);
-        assert_eq!(detail.items.len(), 0);
-        assert_eq!(detail.proposals.len(), 1);
-
-        let accepted = accept_proposal(&conn, &detail.proposals[0].id)
-            .expect("accept")
-            .expect("accepted detail");
-        assert_eq!(accepted.items.len(), 1);
-        assert_eq!(accepted.proposals.len(), 0);
+        assert_eq!(detail.items.len(), 1);
+        assert_eq!(detail.proposals.len(), 0);
         assert_eq!(
-            accepted.items[0].citation.chunk_id.as_deref(),
+            detail.items[0].citation.chunk_id.as_deref(),
             Some("node-1:voice_transcript:0")
         );
+
+        let linked_topics = list_topics_for_node(&conn, "node-1").expect("topics linked to node");
+        assert_eq!(linked_topics.len(), 1);
+        assert_eq!(linked_topics[0].id, topic.id);
+    }
+
+    #[test]
+    fn uncited_claims_become_exception_proposals() {
+        let conn = setup_conn();
+        let batch = TopicProposalBatchInput {
+            topics: vec![TopicProposalInput {
+                title: "Atlas".into(),
+                summary: "Cross-source topic".into(),
+                confidence: 0.9,
+                rationale: "Repeated term".into(),
+                sources: vec![],
+                claims: vec![ItemProposalInput {
+                    title: "Budget owner is Mei".into(),
+                    body: "Budget owner is Mei.".into(),
+                    occurred_at: None,
+                    citation: None,
+                    confidence: 0.68,
+                    rationale: "No citation attached".into(),
+                    signature: Some("claim:atlas:budget-owner".into()),
+                }],
+                events: vec![],
+                relationships: vec![],
+            }],
+        };
+
+        let result = apply_topic_proposals(&conn, &batch).expect("apply proposals");
+        assert_eq!(result.proposals_created, 1);
+
+        let topic = list_topics(&conn).expect("topics").remove(0);
+        let detail = get_topic_detail(&conn, &topic.id)
+            .expect("detail")
+            .expect("topic detail");
+        assert_eq!(detail.items.len(), 0);
+        assert_eq!(detail.proposals.len(), 1);
+    }
+
+    #[test]
+    fn refresh_reuses_existing_topic_when_llm_renames_same_evidence() {
+        let conn = setup_conn();
+        let first = TopicProposalBatchInput {
+            topics: vec![TopicProposalInput {
+                title: "Atlas".into(),
+                summary: "Atlas launch planning.".into(),
+                confidence: 0.82,
+                rationale: "Supported by cited evidence.".into(),
+                sources: vec![SourceProposalInput {
+                    node_id: "meeting-1".into(),
+                    node_title: "Meeting Alpha".into(),
+                    node_kind: "voice-note".into(),
+                    path: Some("Voice Notes/Meeting Alpha.md".into()),
+                    chunk_id: Some("meeting-1:0".into()),
+                    chunk_role: Some("voice_transcript".into()),
+                    anchor_label: Some("Transcript segment 0".into()),
+                    page: None,
+                    timestamp_ms: None,
+                    confidence: 0.84,
+                    rationale: "LLM selected this evidence.".into(),
+                    signature: Some("source:atlas:meeting-1:meeting-1:0".into()),
+                }],
+                claims: vec![ItemProposalInput {
+                    title: "Budget owner is Mei".into(),
+                    body: "Budget owner is Mei.".into(),
+                    occurred_at: None,
+                    citation: Some(TopicMemoryCitationDto {
+                        node_id: "meeting-1".into(),
+                        chunk_id: Some("meeting-1:0".into()),
+                        chunk_role: Some("voice_transcript".into()),
+                        anchor_label: Some("Transcript segment 0".into()),
+                        path: Some("Voice Notes/Meeting Alpha.md".into()),
+                        page: None,
+                        timestamp_ms: None,
+                    }),
+                    confidence: 0.72,
+                    rationale: "Explicitly stated.".into(),
+                    signature: Some("claim:atlas:budget-owner:E1".into()),
+                }],
+                events: vec![],
+                relationships: vec![],
+            }],
+        };
+        let second = TopicProposalBatchInput {
+            topics: vec![TopicProposalInput {
+                title: "Atlas Launch".into(),
+                summary: "Atlas launch planning spans meeting evidence.".into(),
+                confidence: 0.88,
+                rationale: "Same evidence, renamed by the LLM.".into(),
+                sources: vec![SourceProposalInput {
+                    node_id: "meeting-1".into(),
+                    node_title: "Meeting Alpha".into(),
+                    node_kind: "voice-note".into(),
+                    path: Some("Voice Notes/Meeting Alpha.md".into()),
+                    chunk_id: Some("meeting-1:0".into()),
+                    chunk_role: Some("voice_transcript".into()),
+                    anchor_label: Some("Transcript segment 0".into()),
+                    page: None,
+                    timestamp_ms: None,
+                    confidence: 0.9,
+                    rationale: "LLM selected this evidence again.".into(),
+                    signature: Some("source:atlas-launch:meeting-1:meeting-1:0".into()),
+                }],
+                claims: vec![ItemProposalInput {
+                    title: "Budget owner is Mei".into(),
+                    body: "Budget owner is Mei.".into(),
+                    occurred_at: None,
+                    citation: Some(TopicMemoryCitationDto {
+                        node_id: "meeting-1".into(),
+                        chunk_id: Some("meeting-1:0".into()),
+                        chunk_role: Some("voice_transcript".into()),
+                        anchor_label: Some("Transcript segment 0".into()),
+                        path: Some("Voice Notes/Meeting Alpha.md".into()),
+                        page: None,
+                        timestamp_ms: None,
+                    }),
+                    confidence: 0.76,
+                    rationale: "Same cited fact.".into(),
+                    signature: Some("claim:atlas-launch:budget-owner:E1".into()),
+                }],
+                events: vec![],
+                relationships: vec![],
+            }],
+        };
+
+        let first_result = apply_topic_proposals(&conn, &first).expect("first refresh");
+        assert_eq!(first_result.topics_created, 1);
+
+        let second_result = apply_topic_proposals(&conn, &second).expect("second refresh");
+        assert_eq!(second_result.topics_created, 0);
+        assert_eq!(second_result.topics_updated, 1);
+
+        let topics = list_topics(&conn).expect("topics");
+        assert_eq!(topics.len(), 1);
+        let detail = get_topic_detail(&conn, &topics[0].id)
+            .expect("detail")
+            .expect("topic detail");
+        assert_eq!(detail.topic.title, "Atlas");
+        assert_eq!(detail.sources.len(), 1);
+        assert_eq!(detail.items.len(), 1);
+        assert_eq!(detail.sources[0].confidence, 0.9);
+        assert_eq!(detail.items[0].confidence, 0.76);
     }
 
     #[test]
@@ -920,5 +1429,4 @@ mod tests {
         assert_eq!(detail.proposals.len(), 1);
         assert_eq!(detail.proposals[0].status, PENDING);
     }
-
 }

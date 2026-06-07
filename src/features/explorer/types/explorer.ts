@@ -14,6 +14,7 @@ import type {
   RetryUrlInput,
 } from "../../../lib/contracts/vfs";
 import type { NodeStatusSnapshot } from "../../../lib/contracts/nodeStatus";
+import type { TopicMemory } from "../../../lib/contracts/topicMemory";
 
 export type {
   CreateFolderInput,
@@ -50,4 +51,5 @@ export interface ExplorerClient {
   showNodeInFileManager(nodeId: string): Promise<void>;
   showNodeExtractArtifacts(nodeId: string): Promise<void>;
   retranscribeVoiceNote?(noteId: string): Promise<unknown>;
+  listTopicMemoriesForNode?(input: { nodeId: string }): Promise<TopicMemory[]>;
 }

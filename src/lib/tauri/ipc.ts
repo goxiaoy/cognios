@@ -56,6 +56,7 @@ import type {
   TopicMemory,
   TopicMemoryDetail,
   TopicMemoryInput,
+  TopicMemoryNodeInput,
   TopicMemoryRefreshEnvelope,
   TopicProposalActionInput,
 } from "../contracts/topicMemory";
@@ -336,6 +337,12 @@ export async function testChatProvider(
 
 export async function listTopicMemories(): Promise<TopicMemory[]> {
   return invoke<TopicMemory[]>("list_topic_memories");
+}
+
+export async function listTopicMemoriesForNode(
+  input: TopicMemoryNodeInput
+): Promise<TopicMemory[]> {
+  return invoke<TopicMemory[]>("list_topic_memories_for_node", { input });
 }
 
 export async function getTopicMemory(

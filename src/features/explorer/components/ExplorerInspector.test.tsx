@@ -25,6 +25,7 @@ function makeClient(): ExplorerClient {
     showNodeInFileManager: vi.fn(),
     showNodeExtractArtifacts: vi.fn().mockResolvedValue(undefined),
     retranscribeVoiceNote: vi.fn().mockResolvedValue({}),
+    listTopicMemoriesForNode: vi.fn().mockResolvedValue([]),
   };
 }
 
@@ -196,6 +197,51 @@ describe("ExplorerInspector", () => {
       expect(client.retranscribeVoiceNote).toHaveBeenCalledWith("voice-1")
     );
     expect(screen.getByText("Retranscription started.")).toBeInTheDocument();
+  });
+
+  it("shows related topic memories for the selected node", async () => {
+    const client = makeClient();
+    vi.mocked(client.listTopicMemoriesForNode!).mockResolvedValue([
+      {
+        id: "topic-1",
+        title: "Atlas",
+        summary: "Launch memory.",
+        status: "active",
+        confidence: 0.91,
+        rationale: "Cited evidence.",
+        createdAt: "now",
+        updatedAt: "now",
+      },
+    ]);
+    const onActivateTopic = vi.fn();
+
+    render(
+      <ExplorerInspector
+        client={client}
+        node={{
+          id: "meeting-1",
+          parentId: null,
+          name: "Meeting Alpha",
+          kind: "note",
+          state: "indexed",
+          createdAt: "2026-06-06 00:00:00",
+          modifiedAt: "2026-06-06 00:00:00",
+          sizeBytes: 512,
+          children: [],
+        }}
+        onActivateTopic={onActivateTopic}
+        selectedArtifacts={[]}
+        selectionCount={0}
+      />
+    );
+
+    expect(client.listTopicMemoriesForNode).toHaveBeenCalledWith({
+      nodeId: "meeting-1",
+    });
+    const topic = await screen.findByRole("button", { name: /Atlas/i });
+    expect(screen.getByText("91% confidence")).toBeInTheDocument();
+    fireEvent.click(topic);
+    expect(onActivateTopic).toHaveBeenCalledWith("topic-1");
   });
 
   it("copies the node id from single-node metadata", async () => {

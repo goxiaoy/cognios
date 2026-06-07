@@ -346,6 +346,17 @@ pub struct EnhanceNodeResultDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnhanceNodeJobDto {
+    #[serde(default)]
+    pub job_id: Option<String>,
+    #[serde(default)]
+    pub node_id: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunnerPauseResultDto {
     pub paused: bool,
 }
@@ -876,6 +887,21 @@ impl SearchSidecarClient {
 
     pub async fn enhance_node(&self, event: &NodeEvent) -> SidecarEnvelope<EnhanceNodeResultDto> {
         self.post_envelope("/index/enhance", event).await
+    }
+
+    pub async fn start_enhance_node(
+        &self,
+        event: &NodeEvent,
+    ) -> SidecarEnvelope<EnhanceNodeJobDto> {
+        self.post_envelope("/index/enhance/start", event).await
+    }
+
+    pub async fn enhance_node_job_status(
+        &self,
+        job_id: &str,
+    ) -> SidecarEnvelope<EnhanceNodeJobDto> {
+        self.get_envelope(&format!("/index/enhance/{}", urlencoded(job_id)))
+            .await
     }
 
     pub async fn index_node(&self, event: &NodeEvent) -> SidecarEnvelope<IndexNodeResultDto> {

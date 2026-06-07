@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, FolderOpen, RefreshCw } from "lucide-react";
+import { BookOpen, Check, Copy, FolderOpen, RefreshCw } from "lucide-react";
 
 import type { NodeStatusView } from "../../../lib/contracts/nodeStatus";
+import type { TopicMemory } from "../../../lib/contracts/topicMemory";
 import type { ExplorerClient, ExplorerNode } from "../types/explorer";
 import {
   formatInspectorKindLabel,
@@ -20,12 +21,14 @@ export function ExplorerInspector({
   selectionCount,
   client,
   nodeStatus,
+  onActivateTopic,
 }: {
   node: ExplorerNode | null;
   nodeStatus?: NodeStatusView | null;
   selectedArtifacts: ExplorerNode[];
   selectionCount: number;
   client: ExplorerClient;
+  onActivateTopic?: (topicId: string) => void;
 }) {
   if (selectionCount > 1) {
     const commonType =
@@ -120,6 +123,11 @@ export function ExplorerInspector({
           </ol>
         </section>
       ) : null}
+      <TopicAssociations
+        client={client}
+        nodeId={node.id}
+        onActivateTopic={onActivateTopic}
+      />
       {showImage ? (
         <InspectorImageThumbnail
           client={client}
@@ -130,6 +138,76 @@ export function ExplorerInspector({
 
       <InspectorActions client={client} node={node} />
     </div>
+  );
+}
+
+function TopicAssociations({
+  client,
+  nodeId,
+  onActivateTopic,
+}: {
+  client: ExplorerClient;
+  nodeId: string;
+  onActivateTopic?: (topicId: string) => void;
+}) {
+  const [topics, setTopics] = useState<TopicMemory[]>([]);
+  const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!client.listTopicMemoriesForNode) {
+      setTopics([]);
+      setStatus("idle");
+      return;
+    }
+    setStatus("loading");
+    void client
+      .listTopicMemoriesForNode({ nodeId })
+      .then((next) => {
+        if (cancelled) return;
+        setTopics(next);
+        setStatus("idle");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTopics([]);
+        setStatus("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, nodeId]);
+
+  if (status === "idle" && topics.length === 0) return null;
+
+  return (
+    <section className="inspector-topics" aria-label="Related topics">
+      <h3 className="inspector-section-label">Topics</h3>
+      {status === "loading" ? (
+        <p className="inspector-topic-muted">Loading topics...</p>
+      ) : null}
+      {status === "error" ? (
+        <p className="inspector-topic-muted is-error">Could not load topics.</p>
+      ) : null}
+      {topics.length > 0 ? (
+        <div className="inspector-topic-list">
+          {topics.map((topic) => (
+            <button
+              type="button"
+              className="inspector-topic-button"
+              key={topic.id}
+              onClick={() => onActivateTopic?.(topic.id)}
+            >
+              <BookOpen size={13} aria-hidden="true" />
+              <span>
+                <strong>{topic.title}</strong>
+                <small>{Math.round(topic.confidence * 100)}% confidence</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 

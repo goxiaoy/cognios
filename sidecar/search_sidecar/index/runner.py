@@ -11,8 +11,9 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
+from uuid import uuid4
 
-from .dispatch import Dispatcher
+from .dispatch import Dispatcher, EnhancementProcessor
 from .job import IndexingJob, JobState
 from ..observability import ObservabilityStore
 
@@ -38,6 +39,7 @@ class IndexingRunner:
         self._paused = threading.Event()
         self._enhancement_lock = threading.Lock()
         self._enhancement_in_flight: str | None = None
+        self._enhancement_jobs: dict[str, dict[str, str | None]] = {}
 
     @property
     def running(self) -> bool:
@@ -112,9 +114,15 @@ class IndexingRunner:
         modified_at: datetime | None = None,
     ) -> dict:
         if not self._enable_enhancement:
-            return {"status": "unavailable", "error": "advanced OCR enhancement is disabled"}
+            return {
+                "status": "unavailable",
+                "error": "advanced OCR enhancement is disabled",
+            }
         if not self._dispatcher.has_advanced_ocr():
-            return {"status": "unavailable", "error": "advanced OCR runtime is unavailable"}
+            return {
+                "status": "unavailable",
+                "error": "advanced OCR runtime is unavailable",
+            }
         now = datetime.now(timezone.utc)
         job = IndexingJob(
             node_id=node_id,
@@ -135,6 +143,101 @@ class IndexingRunner:
         if processor is None:
             return {"status": "failed", "error": f"no enhancement processor for {job.kind}"}
 
+        return self._run_enhancement(job, processor)
+
+    def start_direct_enhancement(
+        self,
+        *,
+        node_id: str,
+        kind: str,
+        name: str,
+        absolute_content_path: str | None = None,
+        mount_id: str | None = None,
+        created_at: datetime | None = None,
+        modified_at: datetime | None = None,
+    ) -> dict:
+        if not self._enable_enhancement:
+            return {
+                "job_id": None,
+                "node_id": node_id,
+                "status": "unavailable",
+                "error": "advanced OCR enhancement is disabled",
+            }
+        if not self._dispatcher.has_advanced_ocr():
+            return {
+                "job_id": None,
+                "node_id": node_id,
+                "status": "unavailable",
+                "error": "advanced OCR runtime is unavailable",
+            }
+        now = datetime.now(timezone.utc)
+        job = IndexingJob(
+            node_id=node_id,
+            kind=kind,
+            name=name,
+            absolute_content_path=absolute_content_path,
+            mount_id=mount_id,
+            state=JobState.INDEXED,
+            enqueued_at=now,
+            indexed_at=now,
+            last_error=None,
+            attempts=1,
+            created_at=created_at or now,
+            modified_at=modified_at or now,
+            content_version=None,
+        )
+        processor = self._dispatcher.find_enhancement(job)
+        if processor is None:
+            return {
+                "job_id": None,
+                "node_id": node_id,
+                "status": "failed",
+                "error": f"no enhancement processor for {job.kind}",
+            }
+
+        job_id = str(uuid4())
+        with self._enhancement_lock:
+            self._enhancement_jobs[job_id] = {
+                "job_id": job_id,
+                "node_id": node_id,
+                "status": "running",
+                "error": None,
+            }
+        thread = threading.Thread(
+            target=self._run_enhancement_job,
+            args=(job_id, job, processor),
+            name=f"enhance-{node_id[:8]}",
+            daemon=True,
+        )
+        thread.start()
+        return self.enhancement_job_status(job_id)
+
+    def enhancement_job_status(self, job_id: str) -> dict:
+        with self._enhancement_lock:
+            record = self._enhancement_jobs.get(job_id)
+            if record is None:
+                return {
+                    "job_id": job_id,
+                    "node_id": None,
+                    "status": "unknown",
+                    "error": "enhancement job unknown",
+                }
+            return dict(record)
+
+    def _run_enhancement_job(
+        self,
+        job_id: str,
+        job: IndexingJob,
+        processor: EnhancementProcessor,
+    ) -> None:
+        result = self._run_enhancement(job, processor)
+        with self._enhancement_lock:
+            record = self._enhancement_jobs.get(job_id)
+            if record is not None:
+                record["status"] = result["status"]
+                record["error"] = result["error"]
+
+    def _run_enhancement(self, job: IndexingJob, processor: EnhancementProcessor) -> dict:
         with self._enhancement_lock:
             self._enhancement_in_flight = job.node_id
         started_at = time.monotonic()

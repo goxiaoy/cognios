@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 
 import type { NodeContentChunk } from "../../../lib/contracts/search";
+import type { NodeStatusView } from "../../../lib/contracts/nodeStatus";
 import type { SearchClient } from "../../search/types/search";
 import { ImagePreview } from "./ImagePreview";
 
@@ -64,6 +65,31 @@ function clientWithChunks(
       data: { nodeId: "img-1", kind: "file", chunks, joined: "", assets },
     }),
   });
+}
+
+function nodeStatus(stage: Partial<NodeStatusView["stages"][number]>): NodeStatusView {
+  return {
+    nodeId: "img-1",
+    overall: "partial",
+    primaryStageId: "image.enhance",
+    updatedAt: "2026-06-07T00:00:00Z",
+    stages: [
+      {
+        id: "image.enhance",
+        label: "Enhancing",
+        state: "running",
+        importance: "optional",
+        message: "Enhancing",
+        detail: null,
+        error: null,
+        attempt: 1,
+        startedAt: null,
+        finishedAt: null,
+        updatedAt: "2026-06-07T00:00:00Z",
+        ...stage,
+      },
+    ],
+  };
 }
 
 describe("ImagePreview", () => {
@@ -137,6 +163,46 @@ describe("ImagePreview", () => {
     });
     expect(screen.queryByText(/^OCR$/)).not.toBeInTheDocument();
     expect(screen.queryByText(/^Extracted Text$/)).not.toBeInTheDocument();
+  });
+
+  it("shows the image enhancement stage status", async () => {
+    const client = clientWithChunks([
+      { id: "img-1:0", role: "body", text: "OCR-only image text" },
+    ]);
+    render(
+      <ImagePreview
+        searchClient={client}
+        nodeId="img-1"
+        name="x.png"
+        nodeStatus={nodeStatus({ state: "running", message: "Enhancing" })}
+      />
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("OCR enhancement running: Enhancing")
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("does not show image enhancement status for URL previews", async () => {
+    const client = clientWithChunks([
+      { id: "url-1:0", role: "body", text: "# Example Page" },
+    ]);
+    render(
+      <ImagePreview
+        contentKind="url"
+        searchClient={client}
+        nodeId="url-1"
+        name="https://example.test"
+        nodeStatus={nodeStatus({ state: "running", message: "Enhancing" })}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/^Page$/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/OCR enhancement/)).not.toBeInTheDocument();
   });
 
   it("omits Caption when no summary chunks exist", async () => {

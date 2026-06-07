@@ -72,12 +72,14 @@ export function ExplorerLayout({
   client,
   focusNodeRequest,
   onFocusNodeRequestHandled,
+  onActivateTopic,
   voiceNoteSession,
 }: {
   active: boolean;
   client: ExplorerClient;
   focusNodeRequest?: { nodeId: string; serial: number } | null;
   onFocusNodeRequestHandled?(): void;
+  onActivateTopic?: (topicId: string) => void;
   voiceNoteSession?: VoiceNotePreviewSession | null;
 }) {
   // The store is hoisted to a context provider at the App root so
@@ -847,6 +849,7 @@ export function ExplorerLayout({
                     searchClient={searchClient}
                     name={store.activeImagePreview!.name}
                     nodeId={store.activeImagePreviewId!}
+                    nodeStatus={store.nodeStatusFor(store.activeImagePreviewId!)}
                   />
                 ) : null}
                 {showCannotPreview ? (
@@ -875,12 +878,13 @@ export function ExplorerLayout({
           <div className="inspector-panel-scroll">
             <ExplorerInspector
               client={client}
-          node={store.inspectorNode}
-          nodeStatus={
-            store.inspectorNode
-              ? store.nodeStatusFor(store.inspectorNode.id)
-              : null
-          }
+              node={store.inspectorNode}
+              nodeStatus={
+                store.inspectorNode
+                  ? store.nodeStatusFor(store.inspectorNode.id)
+                  : null
+              }
+              onActivateTopic={onActivateTopic}
               selectedArtifacts={store.selectedArtifacts}
               selectionCount={store.selectionCount}
             />

@@ -9,6 +9,7 @@ import {
   getMountSetupContext,
   getNodeThumbnail,
   getNoteContent,
+  listTopicMemoriesForNode,
   readFileContent,
   reindexNode,
   renameNode,
@@ -39,4 +40,5 @@ export const explorerClient: ExplorerClient = {
   showNodeInFileManager,
   showNodeExtractArtifacts,
   retranscribeVoiceNote,
+  listTopicMemoriesForNode,
 };

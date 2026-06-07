@@ -10,8 +10,9 @@
 //! Mechanism: every 10 s, fetch ``GET /models/status`` and check
 //! whether **every** ``advanced-ocr-*`` role reports ``state="ready"``.
 //! On the false -> true transition, enqueue missing ``image.enhance``
-//! background tasks in Rust's durable task table. The sidecar only
-//! executes one node at a time when Rust posts ``/index/enhance``.
+//! background tasks in Rust's durable task table. The sidecar executes
+//! one node at a time after Rust starts an enhancement job and polls it
+//! with short status requests.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,21 +28,24 @@ use crate::infrastructure::db::background_task_repository::{
 use crate::infrastructure::db::connection::Database;
 use crate::infrastructure::db::node_status_repository::update_stage;
 use crate::services::mounts::watcher::VfsChangeEvent;
-use crate::services::search::client::{EnhanceNodeResultDto, SearchSidecarClient};
+use crate::services::search::client::{EnhanceNodeJobDto, SearchSidecarClient};
 use crate::services::search::forwarder::build_payload;
 use crate::services::search::supervisor::{SearchSidecarSupervisor, SupervisorState};
 use crate::services::search::{SidecarEnvelope, SidecarEnvelopeState};
 use crate::VfsEventEmitter;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10);
+const ENHANCEMENT_JOB_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const ERROR_BACKOFF: Duration = Duration::from_secs(30);
 const ROLE_PREFIX: &str = "advanced-ocr-";
 const IMAGE_ENHANCE_TASK_TYPE: &str = "image.enhance";
+const IMAGE_ENHANCE_STATUS_REASON: &str = "image-enhance-status-changed";
 const DEFERRED_ENHANCEMENT_ERRORS: &[&str] = &[
     "advanced OCR runtime is unavailable",
     "sidecar initialising",
     "sidecar unavailable",
 ];
+const DEFERRED_ENHANCEMENT_ERROR_PREFIXES: &[&str] = &["network:"];
 const ENHANCEMENT_EXTENSIONS: &[&str] =
     &["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "pdf"];
 static IMAGE_ENHANCE_DRAIN_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -90,11 +94,7 @@ pub async fn run_advanced_ocr_watcher(
                     IMAGE_ENHANCE_TASK_TYPE,
                     &StageUpdate::pending("Enhancement queued"),
                 );
-                emitter(VfsChangeEvent {
-                    mount_id: node_id.clone(),
-                    reason: "node-saved".to_string(),
-                    ..Default::default()
-                });
+                emit_enhancement_status(&emitter, node_id);
             }
             if !recovered.is_empty() {
                 log::info!(
@@ -212,11 +212,7 @@ fn request_backfill(db: &Database, emitter: &VfsEventEmitter) {
                 "image.enhance",
                 &StageUpdate::pending("Enhancement queued"),
             );
-            emitter(VfsChangeEvent {
-                mount_id: node_id,
-                reason: "node-saved".to_string(),
-                ..Default::default()
-            });
+            emit_enhancement_status(emitter, &node_id);
         }
     }
     log::info!("advanced-ocr-watcher: queued {flagged} enhancement task(s)");
@@ -228,13 +224,19 @@ fn recover_deferred_enhancement_tasks(conn: &rusqlite::Connection) -> Result<Vec
         .map(|_| "?")
         .collect::<Vec<_>>()
         .join(", ");
+    let prefix_clauses = DEFERRED_ENHANCEMENT_ERROR_PREFIXES
+        .iter()
+        .map(|_| "last_error LIKE ?")
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    let deferred_filter = format!("(last_error IN ({placeholders}) OR {prefix_clauses})");
     let select_sql = format!(
         "
         SELECT node_id
         FROM background_tasks
         WHERE task_type = ?
           AND status = 'failed'
-          AND last_error IN ({placeholders})
+          AND {deferred_filter}
         ORDER BY updated_at ASC, node_id ASC
         "
     );
@@ -244,6 +246,15 @@ fn recover_deferred_enhancement_tasks(conn: &rusqlite::Connection) -> Result<Vec
         DEFERRED_ENHANCEMENT_ERRORS
             .iter()
             .map(|error| error as &dyn rusqlite::ToSql),
+    );
+    let prefix_patterns = DEFERRED_ENHANCEMENT_ERROR_PREFIXES
+        .iter()
+        .map(|prefix| format!("{prefix}%"))
+        .collect::<Vec<_>>();
+    select_params.extend(
+        prefix_patterns
+            .iter()
+            .map(|prefix| prefix as &dyn rusqlite::ToSql),
     );
     let mut stmt = conn
         .prepare(&select_sql)
@@ -267,7 +278,7 @@ fn recover_deferred_enhancement_tasks(conn: &rusqlite::Connection) -> Result<Vec
             updated_at = CURRENT_TIMESTAMP
         WHERE task_type = ?
           AND status = 'failed'
-          AND last_error IN ({placeholders})
+          AND {deferred_filter}
         "
     );
     let mut update_params: Vec<&dyn rusqlite::ToSql> =
@@ -276,6 +287,11 @@ fn recover_deferred_enhancement_tasks(conn: &rusqlite::Connection) -> Result<Vec
         DEFERRED_ENHANCEMENT_ERRORS
             .iter()
             .map(|error| error as &dyn rusqlite::ToSql),
+    );
+    update_params.extend(
+        prefix_patterns
+            .iter()
+            .map(|prefix| prefix as &dyn rusqlite::ToSql),
     );
     conn.execute(&update_sql, rusqlite::params_from_iter(update_params))
         .map_err(|error| error.to_string())?;
@@ -397,11 +413,7 @@ async fn run_enhancement_task(
         "image.enhance",
         &StageUpdate::running("Enhancing"),
     );
-    emitter(VfsChangeEvent {
-        mount_id: task.node_id.clone(),
-        reason: "node-saved".to_string(),
-        ..Default::default()
-    });
+    emit_enhancement_status(emitter, &task.node_id);
     drop(conn);
 
     let event = VfsChangeEvent {
@@ -420,15 +432,30 @@ async fn run_enhancement_task(
         return true;
     };
 
-    match client.enhance_node(&payload).await {
+    match client.start_enhance_node(&payload).await {
         SidecarEnvelope {
             state: SidecarEnvelopeState::Ready,
-            data: Some(EnhanceNodeResultDto { status, error: _ }),
+            data: Some(EnhanceNodeJobDto {
+                status, error: _, ..
+            }),
             ..
         } if status == "completed" => complete_enhancement_task(db, emitter, &task),
         SidecarEnvelope {
             state: SidecarEnvelopeState::Ready,
-            data: Some(EnhanceNodeResultDto { error, .. }),
+            data:
+                Some(EnhanceNodeJobDto {
+                    job_id: Some(job_id),
+                    status,
+                    error: _,
+                    ..
+                }),
+            ..
+        } if status == "running" => {
+            return poll_enhancement_job(db, client, emitter, &task, &job_id).await;
+        }
+        SidecarEnvelope {
+            state: SidecarEnvelopeState::Ready,
+            data: Some(EnhanceNodeJobDto { error, .. }),
             ..
         } => {
             let message = error.as_deref().unwrap_or("enhancement failed");
@@ -475,6 +502,97 @@ async fn run_enhancement_task(
     true
 }
 
+async fn poll_enhancement_job(
+    db: &Database,
+    client: &SearchSidecarClient,
+    emitter: &VfsEventEmitter,
+    task: &BackgroundTask,
+    job_id: &str,
+) -> bool {
+    loop {
+        tokio::time::sleep(ENHANCEMENT_JOB_POLL_INTERVAL).await;
+        match client.enhance_node_job_status(job_id).await {
+            SidecarEnvelope {
+                state: SidecarEnvelopeState::Ready,
+                data:
+                    Some(EnhanceNodeJobDto {
+                        status, error: _, ..
+                    }),
+                ..
+            } if status == "running" => continue,
+            SidecarEnvelope {
+                state: SidecarEnvelopeState::Ready,
+                data:
+                    Some(EnhanceNodeJobDto {
+                        status, error: _, ..
+                    }),
+                ..
+            } if status == "completed" => {
+                complete_enhancement_task(db, emitter, task);
+                return true;
+            }
+            SidecarEnvelope {
+                state: SidecarEnvelopeState::Ready,
+                data: Some(EnhanceNodeJobDto { status, error, .. }),
+                ..
+            } if status == "unknown" => {
+                let message = error.as_deref().unwrap_or("enhancement job unknown");
+                defer_enhancement_task(db, emitter, task, message);
+                return false;
+            }
+            SidecarEnvelope {
+                state: SidecarEnvelopeState::Ready,
+                data: Some(EnhanceNodeJobDto { error, .. }),
+                ..
+            } => {
+                let message = error.as_deref().unwrap_or("enhancement failed");
+                if is_deferred_enhancement_detail(message) {
+                    defer_enhancement_task(db, emitter, task, message);
+                    return false;
+                }
+                fail_enhancement_task(db, emitter, task, message, true);
+                return true;
+            }
+            SidecarEnvelope {
+                state: SidecarEnvelopeState::Ready,
+                data: None,
+                error,
+            } => {
+                fail_enhancement_task(
+                    db,
+                    emitter,
+                    task,
+                    error
+                        .as_deref()
+                        .unwrap_or("enhancement returned no response body"),
+                    true,
+                );
+                return true;
+            }
+            SidecarEnvelope {
+                state: SidecarEnvelopeState::Initialising,
+                ..
+            } => {
+                defer_enhancement_task(db, emitter, task, "sidecar initialising");
+                return false;
+            }
+            SidecarEnvelope {
+                state: SidecarEnvelopeState::Unavailable,
+                error,
+                ..
+            } => {
+                let message = error.as_deref().unwrap_or("sidecar unavailable");
+                if is_auth_failure_detail(message) {
+                    fail_enhancement_task(db, emitter, task, message, false);
+                    return true;
+                }
+                defer_enhancement_task(db, emitter, task, message);
+                return false;
+            }
+        }
+    }
+}
+
 fn complete_enhancement_task(db: &Database, emitter: &VfsEventEmitter, task: &BackgroundTask) {
     let Ok(conn) = db.connect() else {
         return;
@@ -486,11 +604,7 @@ fn complete_enhancement_task(db: &Database, emitter: &VfsEventEmitter, task: &Ba
         "image.enhance",
         &StageUpdate::succeeded("Enhancement ready"),
     );
-    emitter(VfsChangeEvent {
-        mount_id: task.node_id.clone(),
-        reason: "node-saved".to_string(),
-        ..Default::default()
-    });
+    emit_enhancement_status(emitter, &task.node_id);
 }
 
 fn fail_enhancement_task(
@@ -510,11 +624,7 @@ fn fail_enhancement_task(
         Ok(BackgroundTaskFailure::Stale) | Err(_) => return,
     };
     let _ = update_stage(&conn, &task.node_id, "image.enhance", &stage_update);
-    emitter(VfsChangeEvent {
-        mount_id: task.node_id.clone(),
-        reason: "node-saved".to_string(),
-        ..Default::default()
-    });
+    emit_enhancement_status(emitter, &task.node_id);
 }
 
 fn defer_enhancement_task(
@@ -534,12 +644,16 @@ fn defer_enhancement_task(
             IMAGE_ENHANCE_TASK_TYPE,
             &StageUpdate::pending("Enhancement queued"),
         );
-        emitter(VfsChangeEvent {
-            mount_id: task.node_id.clone(),
-            reason: "node-saved".to_string(),
-            ..Default::default()
-        });
+        emit_enhancement_status(emitter, &task.node_id);
     }
+}
+
+fn emit_enhancement_status(emitter: &VfsEventEmitter, node_id: &str) {
+    emitter(VfsChangeEvent {
+        mount_id: node_id.to_string(),
+        reason: IMAGE_ENHANCE_STATUS_REASON.to_string(),
+        ..Default::default()
+    });
 }
 
 pub fn enqueue_image_enhancement_for_reindex(
@@ -572,6 +686,9 @@ fn is_auth_failure_detail(detail: &str) -> bool {
 
 fn is_deferred_enhancement_detail(detail: &str) -> bool {
     DEFERRED_ENHANCEMENT_ERRORS.contains(&detail)
+        || DEFERRED_ENHANCEMENT_ERROR_PREFIXES
+            .iter()
+            .any(|prefix| detail.starts_with(prefix))
 }
 
 #[cfg(test)]
@@ -580,6 +697,7 @@ mod tests {
     use crate::infrastructure::db::connection::Database;
     use crate::services::search::client::ModelRoleStatusDto;
     use std::collections::HashMap;
+    use std::sync::Mutex;
 
     fn role(name: &str, state: &str) -> ModelRoleStatusDto {
         ModelRoleStatusDto {
@@ -631,6 +749,15 @@ mod tests {
     }
 
     #[test]
+    fn network_enhancement_errors_are_deferred() {
+        assert!(is_deferred_enhancement_detail(
+            "network: error sending request for url (http://127.0.0.1:64032/index/enhance)"
+        ));
+        assert!(is_deferred_enhancement_detail("sidecar unavailable"));
+        assert!(!is_deferred_enhancement_detail("PaddleOCR parse failed"));
+    }
+
+    #[test]
     fn deferred_enhancement_task_returns_to_queue_without_consuming_attempt() {
         let dir = tempfile::tempdir().expect("tempdir");
         let db = Database::new(dir.path().join("cognios.db"));
@@ -670,6 +797,39 @@ mod tests {
     }
 
     #[test]
+    fn completed_enhancement_emits_status_event_not_node_saved() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = Database::new(dir.path().join("cognios.db"));
+        let conn = db.connect().expect("db");
+        conn.execute(
+            "INSERT INTO nodes (id, kind, name, state, size_bytes)
+             VALUES ('image-1', 'file', 'scan.png', 'indexed', 10)",
+            [],
+        )
+        .expect("node");
+        enqueue_background_task(&conn, "image-1", IMAGE_ENHANCE_TASK_TYPE, None, 3)
+            .expect("enqueue");
+        let task = claim_next_background_task(&conn, IMAGE_ENHANCE_TASK_TYPE)
+            .expect("claim")
+            .expect("task");
+        drop(conn);
+
+        let events = Arc::new(Mutex::new(Vec::<VfsChangeEvent>::new()));
+        let captured = Arc::clone(&events);
+        let emitter: VfsEventEmitter = Arc::new(move |event| {
+            captured.lock().expect("events").push(event);
+        });
+
+        complete_enhancement_task(&db, &emitter, &task);
+
+        let events = events.lock().expect("events");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].mount_id, "image-1");
+        assert_eq!(events[0].reason, IMAGE_ENHANCE_STATUS_REASON);
+        assert_ne!(events[0].reason, "node-saved");
+    }
+
+    #[test]
     fn startup_recovery_requeues_deferred_enhancement_failures() {
         let dir = tempfile::tempdir().expect("tempdir");
         let db = Database::new(dir.path().join("cognios.db"));
@@ -688,6 +848,50 @@ mod tests {
             SET status = 'failed',
                 attempt = 3,
                 last_error = 'advanced OCR runtime is unavailable',
+                completed_at = CURRENT_TIMESTAMP
+            WHERE node_id = 'image-1'
+              AND task_type = ?1
+            ",
+            [IMAGE_ENHANCE_TASK_TYPE],
+        )
+        .expect("failed task");
+
+        let recovered = recover_deferred_enhancement_tasks(&conn).expect("recover");
+
+        assert_eq!(recovered, vec!["image-1".to_string()]);
+        let (status, attempt, last_error): (String, i64, Option<String>) = conn
+            .query_row(
+                "SELECT status, attempt, last_error
+                 FROM background_tasks
+                 WHERE node_id = 'image-1' AND task_type = ?1",
+                [IMAGE_ENHANCE_TASK_TYPE],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("task row");
+        assert_eq!(status, "queued");
+        assert_eq!(attempt, 0);
+        assert_eq!(last_error, None);
+    }
+
+    #[test]
+    fn startup_recovery_requeues_network_enhancement_failures() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = Database::new(dir.path().join("cognios.db"));
+        let conn = db.connect().expect("db");
+        conn.execute(
+            "INSERT INTO nodes (id, kind, name, state, size_bytes)
+             VALUES ('image-1', 'file', 'scan.png', 'indexed', 10)",
+            [],
+        )
+        .expect("node");
+        enqueue_background_task(&conn, "image-1", IMAGE_ENHANCE_TASK_TYPE, None, 3)
+            .expect("enqueue");
+        conn.execute(
+            "
+            UPDATE background_tasks
+            SET status = 'failed',
+                attempt = 3,
+                last_error = 'network: error sending request for url (http://127.0.0.1:64032/index/enhance)',
                 completed_at = CURRENT_TIMESTAMP
             WHERE node_id = 'image-1'
               AND task_type = ?1

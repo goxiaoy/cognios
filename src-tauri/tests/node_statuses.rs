@@ -355,6 +355,32 @@ fn indexed_image_is_ready_when_optional_enhancement_has_not_run() {
 }
 
 #[test]
+fn pending_image_enhancement_produces_partial_when_indexing_succeeded() {
+    let dir = tempdir().expect("tempdir");
+    let db_path = dir.path().join("cognios.db");
+    let conn = open_database(&db_path).expect("database");
+    conn.execute(
+        "INSERT INTO nodes (id, kind, name, state, size_bytes) VALUES ('image-1', 'file', 'receipt.png', 'indexed', 10)",
+        [],
+    )
+    .expect("image node");
+    update_stage(
+        &conn,
+        "image-1",
+        "image.enhance",
+        &StageUpdate::pending("Enhancement queued"),
+    )
+    .expect("enhancement pending");
+
+    let status = get_node_status(&conn, "image-1")
+        .expect("status")
+        .expect("node status");
+
+    assert_eq!(status.overall, "partial");
+    assert_eq!(status.primary_stage_id.as_deref(), Some("image.enhance"));
+}
+
+#[test]
 fn running_stage_becomes_primary_even_when_required_stage_failed() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("cognios.db");
