@@ -597,12 +597,12 @@ export function ExplorerLayout({
       error:
         openedVoiceNote.status === "failed" ||
         openedVoiceNote.transcriptionStatus === "failed"
-          ? "Voice note transcription failed."
+          ? voiceNoteTranscriptionError(voiceNoteTranscript)
           : null,
       onTogglePause: noop,
       onStop: noop,
     };
-  }, [openedVoiceNote, openedVoiceNoteId]);
+  }, [openedVoiceNote, openedVoiceNoteId, voiceNoteTranscript]);
   const displayedVoiceNoteSession =
     voiceNoteSession?.note.noteId === store.activeNoteId
       ? voiceNoteSession
@@ -1218,6 +1218,18 @@ function phaseForOpenedVoiceNote(note: VoiceNote): VoiceNoteRecordingPhase {
     return "transcribing";
   }
   return "complete";
+}
+
+function voiceNoteTranscriptionError(transcript: string): string {
+  const failureLine = transcript
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(
+      (line) =>
+        line.startsWith("Transcription failed:") ||
+        line.startsWith("Transcription unavailable:")
+    );
+  return failureLine || "Voice note transcription failed.";
 }
 
 function isRecordingSurfacePhase(phase: VoiceNoteRecordingPhase): boolean {

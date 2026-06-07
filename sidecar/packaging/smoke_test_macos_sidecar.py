@@ -50,7 +50,7 @@ def main() -> int:
                 [str(binary), "serve", "--storage-dir", str(storage_dir)],
                 stdout=stdout,
                 stderr=stderr,
-                env=_smoke_env(),
+                env=_smoke_env(binary),
             )
             runtime = _wait_for_runtime(storage_dir / "search" / "sidecar.runtime")
             _assert_realtime_voice_status(runtime)
@@ -67,11 +67,16 @@ def main() -> int:
     return 0
 
 
-def _smoke_env() -> dict[str, str]:
+def _smoke_env(binary: Path) -> dict[str, str]:
     env = os.environ.copy()
     for key in list(env):
         if key.startswith("COGNIOS_REALTIME_VOICE_"):
             env.pop(key)
+    runtime_path = _packaged_realtime_voice_runtime(binary)
+    if runtime_path is not None:
+        env["COGNIOS_REALTIME_VOICE_RUNTIME_PATH"] = str(runtime_path)
+        env["COGNIOS_REALTIME_VOICE_ALLOW_EXTERNAL"] = "1"
+        env["COGNIOS_REALTIME_VOICE_WS_URL"] = "ws://127.0.0.1:9/v1/realtime"
     return env
 
 
@@ -130,10 +135,22 @@ def _assert_url_search(runtime: dict) -> None:
 
 def _assert_realtime_voice_status(runtime: dict) -> None:
     payload = _get(runtime, "/realtime-voice/status")
+    if payload.get("packaging") != "supported":
+        raise RuntimeError(f"realtime voice runtime was not packaged: {payload}")
+    if not payload.get("runtime_path"):
+        raise RuntimeError(f"realtime voice runtime path missing from status: {payload}")
     if payload.get("available") is not False:
-        raise RuntimeError(f"realtime voice unexpectedly available in packaged smoke test: {payload}")
-    if payload.get("packaging") != "missing":
-        raise RuntimeError(f"realtime voice packaging status should fail closed: {payload}")
+        raise RuntimeError(
+            f"realtime voice unexpectedly available in packaged smoke test: {payload}"
+        )
+
+
+def _packaged_realtime_voice_runtime(binary: Path) -> Path | None:
+    candidates = [
+        binary.parents[1] / "realtime-voice" / "vllm",
+        binary.parents[2] / "resources" / "realtime-voice" / "vllm",
+    ]
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
 
 
 def _get(runtime: dict, path: str) -> dict:

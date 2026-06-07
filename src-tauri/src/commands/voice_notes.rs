@@ -438,13 +438,35 @@ async fn run_realtime_voice_note_transcription_job(
     _audio_path: String,
 ) {
     let started_at = Instant::now();
+    log::info!("voice note realtime transcription waiting for ASR runtime: note_id={note_id}");
     while audio_capture.is_recording_active(&note_id)
         && started_at.elapsed() < REALTIME_TRANSCRIPTION_READY_TIMEOUT
     {
-        let Some((websocket_url, model)) = realtime_voice_websocket_config(&search_client).await
-        else {
-            tokio::time::sleep(REALTIME_TRANSCRIPTION_RETRY_INTERVAL).await;
-            continue;
+        let readiness = realtime_voice_websocket_config(&search_client).await;
+        let (websocket_url, model) = match readiness {
+            RealtimeVoiceReadiness::Ready {
+                websocket_url,
+                model,
+            } => {
+                log::info!(
+                    "voice note realtime ASR runtime ready: note_id={note_id} websocket_url={websocket_url} model={}",
+                    model.as_deref().unwrap_or("<default>")
+                );
+                (websocket_url, model)
+            }
+            RealtimeVoiceReadiness::Waiting { status, reason } => {
+                log::debug!(
+                    "voice note realtime ASR runtime not ready yet: note_id={note_id} status={status} reason={reason}"
+                );
+                tokio::time::sleep(REALTIME_TRANSCRIPTION_RETRY_INTERVAL).await;
+                continue;
+            }
+            RealtimeVoiceReadiness::Unavailable { status, reason } => {
+                log::warn!(
+                    "voice note realtime ASR unavailable: note_id={note_id} status={status} reason={reason}"
+                );
+                return;
+            }
         };
         match run_vllm_realtime_voice_note_transcription_job(
             &db,
@@ -472,11 +494,31 @@ async fn run_realtime_voice_note_transcription_job(
             }
         }
     }
+    if audio_capture.is_recording_active(&note_id) {
+        log::warn!(
+            "voice note realtime ASR readiness timed out while recording: note_id={note_id}"
+        );
+    }
+}
+
+enum RealtimeVoiceReadiness {
+    Ready {
+        websocket_url: String,
+        model: Option<String>,
+    },
+    Waiting {
+        status: String,
+        reason: String,
+    },
+    Unavailable {
+        status: String,
+        reason: String,
+    },
 }
 
 async fn realtime_voice_websocket_config(
     search_client: &SearchSidecarClient,
-) -> Option<(String, Option<String>)> {
+) -> RealtimeVoiceReadiness {
     match search_client.realtime_voice_status().await {
         SidecarEnvelope {
             state: SidecarEnvelopeState::Ready,
@@ -484,22 +526,68 @@ async fn realtime_voice_websocket_config(
             ..
         } if status.available && status.status == "ready" => status
             .websocket_url
-            .map(|websocket_url| (websocket_url, status.model)),
-        _ => None,
+            .map(|websocket_url| RealtimeVoiceReadiness::Ready {
+                websocket_url,
+                model: status.model,
+            })
+            .unwrap_or_else(|| RealtimeVoiceReadiness::Waiting {
+                status: status.status,
+                reason: "Realtime ASR status is ready but no WebSocket URL was provided"
+                    .to_string(),
+            }),
+        SidecarEnvelope {
+            state: SidecarEnvelopeState::Ready,
+            data: Some(status),
+            ..
+        } if matches!(
+            status.status.as_str(),
+            "unavailable" | "failed" | "stopped" | "degraded"
+        ) =>
+        {
+            RealtimeVoiceReadiness::Unavailable {
+                status: status.status,
+                reason: status.reason,
+            }
+        }
+        SidecarEnvelope {
+            state: SidecarEnvelopeState::Ready,
+            data: Some(status),
+            ..
+        } => RealtimeVoiceReadiness::Waiting {
+            status: status.status,
+            reason: status.reason,
+        },
+        SidecarEnvelope { state, error, .. } => RealtimeVoiceReadiness::Waiting {
+            status: format!("{state:?}"),
+            reason: error.unwrap_or_else(|| "Realtime ASR status is not ready".to_string()),
+        },
     }
 }
 
 async fn wait_for_realtime_voice_websocket_config(
     search_client: &SearchSidecarClient,
     timeout: Duration,
-) -> Option<(String, Option<String>)> {
+) -> Result<(String, Option<String>), String> {
     let started_at = Instant::now();
     loop {
-        if let Some(config) = realtime_voice_websocket_config(search_client).await {
-            return Some(config);
+        match realtime_voice_websocket_config(search_client).await {
+            RealtimeVoiceReadiness::Ready {
+                websocket_url,
+                model,
+            } => return Ok((websocket_url, model)),
+            RealtimeVoiceReadiness::Unavailable { status, reason } => {
+                return Err(format!(
+                    "Local realtime voice runtime is {status}: {reason}"
+                ));
+            }
+            RealtimeVoiceReadiness::Waiting { status, reason } => {
+                log::debug!(
+                    "voice note transcription waiting for realtime ASR runtime: status={status} reason={reason}"
+                );
+            }
         }
         if started_at.elapsed() >= timeout {
-            return None;
+            return Err("Timed out waiting for local realtime voice runtime".to_string());
         }
         tokio::time::sleep(TRANSCRIPTION_RETRY_INTERVAL).await;
     }
@@ -516,6 +604,10 @@ async fn run_vllm_realtime_voice_note_transcription_job(
     model: Option<String>,
 ) -> Result<(), String> {
     let audio_rx = audio_capture.subscribe_realtime_audio(note_id)?;
+    log::info!(
+        "voice note realtime ASR stream connecting: note_id={note_id} websocket_url={websocket_url} model={}",
+        model.as_deref().unwrap_or("<default>")
+    );
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
     let realtime_task = tauri::async_runtime::spawn(run_vllm_realtime_transcription(
         websocket_url,
@@ -533,6 +625,10 @@ async fn run_vllm_realtime_voice_note_transcription_job(
         sequence += 1;
         match event {
             VllmRealtimeTranscriptEvent::Provisional(segment) => {
+                log::debug!(
+                    "voice note realtime ASR provisional: note_id={note_id} sequence={sequence} chars={}",
+                    segment.text.chars().count()
+                );
                 let fallback_start_ms = *active_fallback_start_ms
                     .get_or_insert_with(|| started_at.elapsed().as_millis() as u64);
                 let utterance_id = segment.utterance_id.clone().unwrap_or_else(|| {
@@ -555,6 +651,10 @@ async fn run_vllm_realtime_voice_note_transcription_job(
                 ));
             }
             VllmRealtimeTranscriptEvent::Final(segment) => {
+                log::info!(
+                    "voice note realtime ASR final utterance: note_id={note_id} sequence={sequence} chars={}",
+                    segment.text.chars().count()
+                );
                 let fallback_start_ms = active_fallback_start_ms
                     .take()
                     .unwrap_or_else(|| started_at.elapsed().as_millis() as u64);
@@ -639,25 +739,40 @@ async fn run_voice_note_transcription_job(
     audio_path: String,
 ) {
     if let Err(error) = validate_saved_audio_for_vllm(Path::new(&audio_path)) {
+        log::warn!("voice note transcription input rejected for {note_id}: {error}");
         fail_background_transcription(&db, &notes_dir, &emitter, &note_id, "failed", &error);
         return;
     }
-    let Some((websocket_url, model)) =
-        wait_for_realtime_voice_websocket_config(&search_client, TRANSCRIPTION_READY_TIMEOUT).await
-    else {
-        fail_background_transcription(
-            &db,
-            &notes_dir,
-            &emitter,
-            &note_id,
-            "unavailable",
-            "Local realtime voice runtime is unavailable",
-        );
-        return;
-    };
+    log::info!("voice note transcription waiting for ASR runtime: note_id={note_id} audio_path={audio_path}");
+    let (websocket_url, model) =
+        match wait_for_realtime_voice_websocket_config(&search_client, TRANSCRIPTION_READY_TIMEOUT)
+            .await
+        {
+            Ok(config) => config,
+            Err(error) => {
+                log::warn!("voice note transcription runtime unavailable for {note_id}: {error}");
+                fail_background_transcription(
+                    &db,
+                    &notes_dir,
+                    &emitter,
+                    &note_id,
+                    "unavailable",
+                    &error,
+                );
+                return;
+            }
+        };
+    log::info!(
+        "voice note transcription ASR runtime ready: note_id={note_id} websocket_url={websocket_url} model={}",
+        model.as_deref().unwrap_or("<default>")
+    );
 
     match transcribe_saved_audio_with_vllm(websocket_url, model, &audio_path).await {
         Ok(segments) if !segments.is_empty() => {
+            log::info!(
+                "voice note transcription completed with vLLM segments: note_id={note_id} segments={}",
+                segments.len()
+            );
             complete_vllm_background_transcription(
                 &db,
                 &notes_dir,
@@ -668,6 +783,7 @@ async fn run_voice_note_transcription_job(
             );
         }
         Ok(_) => {
+            log::warn!("voice note transcription produced no text for {note_id}");
             fail_background_transcription(
                 &db,
                 &notes_dir,
@@ -678,6 +794,7 @@ async fn run_voice_note_transcription_job(
             );
         }
         Err(error) => {
+            log::warn!("voice note transcription failed for {note_id}: {error}");
             fail_background_transcription(&db, &notes_dir, &emitter, &note_id, "failed", &error);
         }
     }

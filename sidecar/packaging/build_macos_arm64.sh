@@ -31,6 +31,7 @@ REALTIME_VOICE_RESOURCE_DIR="$REPO_ROOT/src-tauri/resources/realtime-voice"
 ENTRY="$SCRIPT_DIR/pyinstaller_entry.py"
 SPEC_FILE="$SIDECAR_DIR/search-sidecar.spec"
 REALTIME_VOICE_RUNTIME_SOURCE="${COGNIOS_REALTIME_VOICE_RUNTIME_SOURCE:-}"
+REALTIME_VOICE_RUNTIME_REQUIRED="${COGNIOS_REALTIME_VOICE_RUNTIME_REQUIRED:-1}"
 
 mkdir -p "$OUTPUT_DIR" "$REPO_ROOT/src-tauri/resources"
 rm -rf \
@@ -114,17 +115,28 @@ exec "$PAYLOAD" "$@"
 SH
 chmod +x "$OUTPUT"
 find "$RESOURCE_DIR" -type f -perm -111 -exec codesign --force --sign - {} \; >/dev/null 2>&1 || true
-if [[ -n "$REALTIME_VOICE_RUNTIME_SOURCE" ]]; then
-  mkdir -p "$REALTIME_VOICE_RESOURCE_DIR"
-  if [[ -d "$REALTIME_VOICE_RUNTIME_SOURCE" ]]; then
-    cp -R "$REALTIME_VOICE_RUNTIME_SOURCE"/. "$REALTIME_VOICE_RESOURCE_DIR"
-  elif [[ -f "$REALTIME_VOICE_RUNTIME_SOURCE" ]]; then
-    cp "$REALTIME_VOICE_RUNTIME_SOURCE" "$REALTIME_VOICE_RESOURCE_DIR/vllm"
-  else
+if [[ -z "$REALTIME_VOICE_RUNTIME_SOURCE" ]]; then
+  if [[ "$REALTIME_VOICE_RUNTIME_REQUIRED" != "0" ]]; then
+    echo "error: COGNIOS_REALTIME_VOICE_RUNTIME_SOURCE is required for macOS packaging" >&2
+    echo "       set it to a vLLM executable or directory containing a vllm executable" >&2
+    echo "       set COGNIOS_REALTIME_VOICE_RUNTIME_REQUIRED=0 only for an explicitly no-ASR build" >&2
+    exit 1
+  fi
+else
+  if [[ ! -e "$REALTIME_VOICE_RUNTIME_SOURCE" ]]; then
     echo "error: realtime voice runtime source does not exist: $REALTIME_VOICE_RUNTIME_SOURCE" >&2
     exit 1
   fi
-  chmod +x "$REALTIME_VOICE_RESOURCE_DIR/vllm"
+  mkdir -p "$REALTIME_VOICE_RESOURCE_DIR"
+  if [[ -d "$REALTIME_VOICE_RUNTIME_SOURCE" ]]; then
+    cp -R "$REALTIME_VOICE_RUNTIME_SOURCE"/. "$REALTIME_VOICE_RESOURCE_DIR"
+  else
+    cp "$REALTIME_VOICE_RUNTIME_SOURCE" "$REALTIME_VOICE_RESOURCE_DIR/vllm"
+  fi
+  if [[ ! -x "$REALTIME_VOICE_RESOURCE_DIR/vllm" ]]; then
+    echo "error: realtime voice runtime package must contain an executable named vllm" >&2
+    exit 1
+  fi
   find "$REALTIME_VOICE_RESOURCE_DIR" -type f -perm -111 -exec codesign --force --sign - {} \; >/dev/null 2>&1 || true
 fi
 codesign --force --sign - "$OUTPUT" >/dev/null 2>&1 || true
@@ -134,5 +146,5 @@ echo "built $OUTPUT and $RESOURCE_DIR"
 if [[ -x "$REALTIME_VOICE_RESOURCE_DIR/vllm" ]]; then
   echo "realtime voice runtime packaging: supported"
 else
-  echo "realtime voice runtime packaging: missing"
+  echo "realtime voice runtime packaging: missing (explicit no-ASR build)"
 fi

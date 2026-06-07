@@ -320,6 +320,41 @@ describe("ExplorerLayout", () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
+  it("shows the saved transcription failure reason for failed voice notes", async () => {
+    const client = makeClient();
+    vi.mocked(client.getExplorerSnapshot).mockResolvedValue({
+      roots: [voiceNoteNode("voice-1")],
+    });
+    getVoiceNote.mockResolvedValue({
+      noteId: "voice-1",
+      name: "Live note",
+      status: "failed",
+      captureStatus: "completed",
+      transcriptionStatus: "failed",
+      summaryStatus: "unavailable",
+      sourceAudioPresent: true,
+      sourceAudioPath: "/tmp/voice-1.wav",
+      sourceAudioDeletedAt: null,
+      transcriptPath: "/tmp/voice-1/transcript.md",
+      transcriptUpdatedAt: "2026-05-14 00:31:00",
+      speakerLabels: {},
+      createdAt: "2026-05-14 00:30:00",
+      updatedAt: "2026-05-14 00:31:00",
+    });
+    getVoiceNoteTranscript.mockResolvedValue(
+      "Transcription unavailable: Local realtime voice runtime is unavailable: Local realtime ASR runtime is not packaged with this build."
+    );
+
+    renderWithProvider(client);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Live note/i }));
+
+    expect(
+      await screen.findByText(/Local realtime ASR runtime is not packaged with this build/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Voice note transcription failed.")).not.toBeInTheDocument();
+  });
+
   it("appends finalized realtime voice utterances to the active recording transcript", async () => {
     const client = makeClient();
     vi.mocked(client.getExplorerSnapshot).mockResolvedValue({
