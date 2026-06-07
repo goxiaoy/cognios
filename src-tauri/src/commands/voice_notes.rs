@@ -638,15 +638,8 @@ async fn run_voice_note_transcription_job(
     note_id: String,
     audio_path: String,
 ) {
-    if !audio_path_has_samples(Path::new(&audio_path)) {
-        fail_background_transcription(
-            &db,
-            &notes_dir,
-            &emitter,
-            &note_id,
-            "failed",
-            "voice note audio file has no audio samples",
-        );
+    if let Err(error) = validate_saved_audio_for_vllm(Path::new(&audio_path)) {
+        fail_background_transcription(&db, &notes_dir, &emitter, &note_id, "failed", &error);
         return;
     }
     let Some((websocket_url, model)) =
@@ -709,6 +702,29 @@ fn audio_path_has_samples(path: &Path) -> bool {
     true
 }
 
+fn validate_saved_audio_for_vllm(path: &Path) -> Result<(), String> {
+    if !audio_path_has_samples(path) {
+        return Err("voice note audio file has no audio samples".to_string());
+    }
+    if path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"))
+    {
+        return Ok(());
+    }
+
+    let source_format = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .filter(|ext| !ext.trim().is_empty())
+        .map(|ext| format!(".{ext}"))
+        .unwrap_or_else(|| "unknown format".to_string());
+    Err(format!(
+        "vLLM saved-audio transcription currently supports native WAV files only; source audio is {source_format}"
+    ))
+}
+
 async fn transcribe_saved_audio_with_vllm(
     websocket_url: String,
     model: Option<String>,
@@ -720,22 +736,45 @@ async fn transcribe_saved_audio_with_vllm(
         run_vllm_audio_file_transcription(websocket_url, model, &audio_path, event_tx).await
     });
     let mut segments = Vec::new();
+    let mut latest_provisional: Option<VllmRealtimeTranscriptSegment> = None;
 
     while let Some(event) = event_rx.recv().await {
         match event {
-            VllmRealtimeTranscriptEvent::Final(segment) => segments.push(segment),
-            VllmRealtimeTranscriptEvent::Provisional(_) => {}
+            VllmRealtimeTranscriptEvent::Final(segment) => {
+                latest_provisional = None;
+                segments.push(segment);
+            }
+            VllmRealtimeTranscriptEvent::Provisional(segment) => {
+                latest_provisional = Some(segment);
+            }
             VllmRealtimeTranscriptEvent::Error(message) => return Err(message),
         }
     }
 
     match transcription_task.await {
-        Ok(Ok(())) => Ok(segments),
+        Ok(Ok(())) => Ok(saved_audio_segments_with_provisional_fallback(
+            segments,
+            latest_provisional,
+        )),
         Ok(Err(error)) => Err(error),
         Err(error) => Err(format!(
             "vLLM saved-audio transcription task failed: {error}"
         )),
     }
+}
+
+fn saved_audio_segments_with_provisional_fallback(
+    mut segments: Vec<VllmRealtimeTranscriptSegment>,
+    latest_provisional: Option<VllmRealtimeTranscriptSegment>,
+) -> Vec<VllmRealtimeTranscriptSegment> {
+    if segments.is_empty() {
+        if let Some(segment) = latest_provisional {
+            if !segment.text.trim().is_empty() {
+                segments.push(segment);
+            }
+        }
+    }
+    segments
 }
 
 fn complete_vllm_background_transcription(
@@ -1217,5 +1256,52 @@ fn fail_background_transcription(
         emitter.as_ref(),
     ) {
         log::warn!("voice note transcription failure update failed for {note_id}: {error}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn transcript_segment(text: &str) -> VllmRealtimeTranscriptSegment {
+        VllmRealtimeTranscriptSegment {
+            text: text.to_string(),
+            utterance_id: None,
+            revision: None,
+            start_ms: None,
+            end_ms: None,
+        }
+    }
+
+    #[test]
+    fn uses_latest_provisional_when_saved_audio_has_no_final_segment() {
+        let segments = saved_audio_segments_with_provisional_fallback(
+            Vec::new(),
+            Some(transcript_segment("hello")),
+        );
+
+        assert_eq!(segments, vec![transcript_segment("hello")]);
+    }
+
+    #[test]
+    fn keeps_final_segments_over_provisional_saved_audio_fallback() {
+        let segments = saved_audio_segments_with_provisional_fallback(
+            vec![transcript_segment("final")],
+            Some(transcript_segment("provisional")),
+        );
+
+        assert_eq!(segments, vec![transcript_segment("final")]);
+    }
+
+    #[test]
+    fn rejects_non_wav_saved_audio_before_vllm_transcription() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("legacy.webm");
+        std::fs::write(&path, b"not empty").expect("write legacy audio");
+
+        let error = validate_saved_audio_for_vllm(&path).expect_err("non-wav error");
+
+        assert!(error.contains("native WAV files only"));
+        assert!(error.contains(".webm"));
     }
 }
