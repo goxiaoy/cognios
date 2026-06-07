@@ -228,7 +228,7 @@ def test_realtime_voice_status_reports_ready_for_managed_packaged_runtime(
     monkeypatch.setenv("COGNIOS_REALTIME_VOICE_RUNTIME_PATH", str(runtime))
     monkeypatch.delenv("COGNIOS_REALTIME_VOICE_WS_URL", raising=False)
     monkeypatch.delenv("COGNIOS_REALTIME_VOICE_ALLOW_EXTERNAL", raising=False)
-    monkeypatch.setenv("COGNIOS_REALTIME_VOICE_MODEL", "mistralai/Voxtral-Mini-4B-Realtime-2602")
+    monkeypatch.delenv("COGNIOS_REALTIME_VOICE_MODEL", raising=False)
     app = build_app(token=TOKEN)
 
     with TestClient(app) as client:
@@ -240,7 +240,7 @@ def test_realtime_voice_status_reports_ready_for_managed_packaged_runtime(
     assert body["runtime_path"] == str(runtime)
     assert body["websocket_url"].startswith("ws://127.0.0.1:")
     assert body["websocket_url"].endswith("/v1/realtime")
-    assert body["model"] == "mistralai/Voxtral-Mini-4B-Realtime-2602"
+    assert body["model"] == "Qwen/Qwen3-ASR-0.6B"
 
 
 def _wait_for_realtime_voice_ready(client: TestClient) -> dict:
