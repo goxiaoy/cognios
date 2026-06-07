@@ -7,6 +7,7 @@ import type {
   ChatSessionMemoryEventPayload,
   ChatTurnStreamPayload,
 } from "../../../lib/contracts/chat";
+import type { RealtimeVoiceEvent } from "../../../lib/contracts/realtimeVoice";
 import {
   ExplorerStoreProvider,
   useExplorerStoreContext,
@@ -19,18 +20,21 @@ import { ChatLayout } from "./ChatLayout";
 
 type ChatTurnListener = (event: { payload: ChatTurnStreamPayload }) => void;
 type ChatMemoryListener = (event: { payload: ChatSessionMemoryEventPayload }) => void;
+type RealtimeVoiceListener = (event: { payload: RealtimeVoiceEvent }) => void;
 
 const eventMock = vi.hoisted(() => ({
   chatTurnListener: null as ChatTurnListener | null,
   chatMemoryListener: null as ChatMemoryListener | null,
+  realtimeVoiceListener: null as RealtimeVoiceListener | null,
   unlisten: vi.fn(),
 }));
 const scrollIntoViewMock = vi.fn();
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (name: string, cb: ChatTurnListener | ChatMemoryListener) => {
+  listen: vi.fn(async (name: string, cb: ChatTurnListener | ChatMemoryListener | RealtimeVoiceListener) => {
     if (name === "chat/turn") eventMock.chatTurnListener = cb as ChatTurnListener;
     if (name === "chat/session-memory") eventMock.chatMemoryListener = cb as ChatMemoryListener;
+    if (name === "realtime-voice/event") eventMock.realtimeVoiceListener = cb as RealtimeVoiceListener;
     return eventMock.unlisten;
   }),
 }));
@@ -241,6 +245,24 @@ function makeExplorerClient(): ExplorerClient {
   };
 }
 
+function mockRealtimeVoiceReady(client: ChatClient) {
+  vi.mocked(client.getRealtimeVoiceStatus).mockResolvedValue({
+    status: {
+      state: "ready",
+      data: {
+        status: "ready",
+        available: true,
+        local: true,
+        provider: "qwen3-asr-vllm",
+        reason: "Development realtime ASR runtime is explicitly enabled.",
+        packaging: "supported",
+        runtimePath: "/tmp/realtime-asr",
+        websocketUrl: "ws://127.0.0.1:9000/v1/realtime",
+      },
+    },
+  });
+}
+
 async function readyComposer(): Promise<HTMLTextAreaElement> {
   const composer = (await screen.findByLabelText("Chat message")) as HTMLTextAreaElement;
   await waitFor(() => {
@@ -272,6 +294,7 @@ describe("ChatLayout", () => {
     cleanup();
     vi.useRealTimers();
     eventMock.chatTurnListener = null;
+    eventMock.realtimeVoiceListener = null;
     eventMock.unlisten.mockReset();
   });
 
@@ -316,6 +339,59 @@ describe("ChatLayout", () => {
     });
 
     expect(client.getRealtimeVoiceStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not send provisional realtime voice captions to the LLM", async () => {
+    const client = makeClient();
+    mockRealtimeVoiceReady(client);
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    await screen.findByRole("button", { name: /start realtime voice chat/i });
+    expect(eventMock.realtimeVoiceListener).toBeTruthy();
+
+    await act(async () => {
+      eventMock.realtimeVoiceListener?.({
+        payload: {
+          kind: "provisional_caption",
+          sessionId: "voice-session-1",
+          text: "partial words",
+          sequence: 1,
+        },
+      });
+    });
+
+    expect(client.startTurn).not.toHaveBeenCalled();
+  });
+
+  it("submits finalized realtime voice utterances through the existing chat turn", async () => {
+    const client = makeClient();
+    mockRealtimeVoiceReady(client);
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+
+    await readyComposer();
+    await screen.findByRole("button", { name: /start realtime voice chat/i });
+
+    await act(async () => {
+      eventMock.realtimeVoiceListener?.({
+        payload: {
+          kind: "final_utterance",
+          sessionId: "voice-session-1",
+          text: "  summarize the meeting  ",
+          sequence: 2,
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(client.startTurn).toHaveBeenCalledWith({
+        sessionId: "s1",
+        query: "summarize the meeting",
+        turnEventId: expect.any(String),
+        model: "llama3.2",
+        includeWeb: true,
+        contextNodes: [],
+      });
+    });
   });
 
   it("sends a prompt with Enter and shows the submitted prompt in the transcript", async () => {

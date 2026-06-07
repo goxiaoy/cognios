@@ -99,18 +99,20 @@ The first slice creates the shared status contract and fail-closed runtime probe
 - **Test Scenarios:**
   - Rust DTO round-trips the sidecar status fields.
   - Tauri command returns a typed unavailable status when sidecar reports unavailable.
-  - TypeScript contract exposes status through the shared realtime voice namespace without adding event types before an event source exists.
+  - TypeScript contract exposes status and event types through the shared realtime voice namespace.
 - **Covers:** R1, R2, R3, R4
 
-### U3. Chat status gate
+### U3. Chat status gate and finalized utterance dispatch hook
 
-- **Goal:** Add a Chat-visible status gate for the future voice path without submitting audio or finalized utterances yet.
-- **Files:** `src/features/chat/api/chatClient.ts`, `src/features/chat/components/ChatLayout.tsx`, `src/features/chat/components/ChatLayout.test.tsx`, `src/features/chat/realtimeVoice.ts`
-- **Patterns:** Reuse the Chat client's Tauri bridge. Keep `startTurn` unchanged until finalized utterance events exist.
+- **Goal:** Add a Chat-visible status gate and submit finalized realtime voice utterances through the existing Chat turn machinery without sending partial captions.
+- **Files:** `src/lib/contracts/realtimeVoice.ts`, `src/features/chat/api/chatClient.ts`, `src/features/chat/components/ChatLayout.tsx`, `src/features/chat/components/ChatLayout.test.tsx`, `src/features/chat/realtimeVoice.ts`
+- **Patterns:** Reuse the Chat client's Tauri bridge, `startTurn`, and `CHAT_TURN_EVENT`; do not create a parallel LLM stream.
 - **Test Scenarios:**
   - Realtime voice is disabled with the runtime's unavailable reason when no local runtime is packaged.
   - Initialising sidecar status retries instead of leaving the UI permanently in "checking" state.
-- **Covers:** R8, R10
+  - A finalized utterance calls `startTurn` once.
+  - Provisional captions do not call `startTurn`.
+- **Covers:** R8, R9, R10
 
 ### U4. Voice Notes live-caption wording gate
 
@@ -124,18 +126,7 @@ The first slice creates the shared status contract and fail-closed runtime probe
 
 ## Follow-Up Units
 
-### F1. Chat voice utterance dispatch hook
-
-- **Goal:** Add a Chat client path that can submit a finalized voice utterance through the existing Chat turn machinery without sending partial captions.
-- **Files:** `src/lib/contracts/realtimeVoice.ts`, `src/features/chat/api/chatClient.ts`, `src/features/chat/components/ChatLayout.tsx`, `src/features/chat/components/ChatLayout.test.tsx`
-- **Patterns:** Reuse `startTurn` and `CHAT_TURN_EVENT`; do not create a parallel LLM stream.
-- **Test Scenarios:**
-  - A finalized utterance calls `startTurn` once.
-  - Provisional captions update local listening UI state but do not call `startTurn`.
-  - Text streaming response behavior remains unchanged after a voice-submitted turn.
-- **Covers:** R8, R9, R10
-
-### F2. Voice Notes live-caption gating
+### F1. Voice Notes live-caption gating
 
 - **Goal:** Gate Voice Notes live-caption claims behind shared realtime runtime readiness while preserving existing saved-audio finalization.
 - **Files:** `src/features/voice-notes/components/VoiceNoteRecordingPreview.tsx`, `src/features/voice-notes/components/VoiceNoteRecordingPreview.test.tsx`, `src/features/voice-notes/recording.ts`

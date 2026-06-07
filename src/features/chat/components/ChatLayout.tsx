@@ -39,13 +39,19 @@ import type {
 import { AppSelect } from "../../../components/FormControls";
 import type { SearchSettings } from "../../../lib/contracts/search";
 import { unwrapEnvelope } from "../../../lib/contracts/search";
-import type { RealtimeVoiceStatus } from "../../../lib/contracts/realtimeVoice";
+import type {
+  RealtimeVoiceEvent,
+  RealtimeVoiceStatus,
+} from "../../../lib/contracts/realtimeVoice";
 import { MarkdownRenderer } from "../../explorer/components/MarkdownRenderer";
 import { useOptionalExplorerStoreContext } from "../../explorer/store/ExplorerStoreContext";
 import { SearchPalette, type SearchPaletteSelection } from "../../search/components/SearchPalette";
 import type { SearchClient } from "../../search/types/search";
 import type { ChatClient } from "../api/chatClient";
-import { realtimeVoiceUnavailableReason } from "../realtimeVoice";
+import {
+  chatQueryFromRealtimeVoiceEvent,
+  realtimeVoiceUnavailableReason,
+} from "../realtimeVoice";
 import {
   CHAT_PROVIDER_PRESETS,
   ChatProviderSetup,
@@ -55,6 +61,7 @@ import {
 const CONTEXT_CONTENT_LIMIT = 8_000;
 const CHAT_TURN_EVENT = "chat/turn";
 const CHAT_MEMORY_EVENT = "chat/session-memory";
+const REALTIME_VOICE_EVENT = "realtime-voice/event";
 const chatProviderPresets = CHAT_PROVIDER_PRESETS;
 
 interface OptimisticUserMessage {
@@ -457,8 +464,12 @@ export function ChatLayout({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    await submitQuery(query, { clearComposer: true });
+  }
+
+  async function submitQuery(rawQuery: string, options: { clearComposer?: boolean } = {}) {
     if (busy) return;
-    const trimmedQuery = query.trim();
+    const trimmedQuery = rawQuery.trim();
     if (!trimmedQuery) return;
     if (!chatProviderReady) {
       setError("Configure a chat provider before sending.");
@@ -478,7 +489,7 @@ export function ChatLayout({
       const turnEventId = createTurnEventId();
       activeTurnEventIdRef.current = turnEventId;
       setOptimisticUserMessages((messages) => [...messages, optimisticMessage]);
-      setQuery("");
+      if (options.clearComposer) setQuery("");
       setTurn(null);
       const result = await client.startTurn({
         sessionId: session.session.id,
@@ -706,6 +717,23 @@ export function ChatLayout({
     realtimeVoiceStatus?.available === true && realtimeVoiceStatus.status === "ready";
   const realtimeVoiceReason =
     realtimeVoiceStatusError ?? realtimeVoiceUnavailableReason(realtimeVoiceStatus);
+
+  useEffect(() => {
+    let cancelled = false;
+    const unlistenPromise = listen<RealtimeVoiceEvent>(REALTIME_VOICE_EVENT, (event) => {
+      if (cancelled) return;
+      const voiceQuery = chatQueryFromRealtimeVoiceEvent(event.payload);
+      if (!voiceQuery) return;
+      if (!realtimeVoiceReady) return;
+      void submitQuery(voiceQuery);
+    });
+
+    return () => {
+      cancelled = true;
+      void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, [realtimeVoiceReady, busy, chatProviderReady, active, selectedModel, contextNodes]);
+
   const webSearchProviderId = settings?.features["web-search"]?.providerId ?? null;
   const webSearchEnabled = Boolean(
     settings?.features["web-search"]?.enabled &&

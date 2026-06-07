@@ -20,6 +20,24 @@ export interface RealtimeVoiceStatus {
   websocketUrl?: string | null;
 }
 
+export interface RealtimeVoiceCaptionEvent {
+  kind: "provisional_caption";
+  sessionId: string;
+  text: string;
+  sequence: number;
+}
+
+export interface RealtimeVoiceUtteranceEvent {
+  kind: "final_utterance";
+  sessionId: string;
+  text: string;
+  sequence: number;
+}
+
+export type RealtimeVoiceEvent =
+  | RealtimeVoiceCaptionEvent
+  | RealtimeVoiceUtteranceEvent;
+
 export interface GetRealtimeVoiceStatusResult {
   status: SidecarEnvelope<RealtimeVoiceStatus>;
 }

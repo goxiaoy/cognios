@@ -1,4 +1,15 @@
-import type { RealtimeVoiceStatus } from "../../lib/contracts/realtimeVoice";
+import type {
+  RealtimeVoiceEvent,
+  RealtimeVoiceStatus,
+} from "../../lib/contracts/realtimeVoice";
+
+export function chatQueryFromRealtimeVoiceEvent(
+  event: RealtimeVoiceEvent
+): string | null {
+  if (event.kind !== "final_utterance") return null;
+  const text = event.text.trim();
+  return text || null;
+}
 
 export function realtimeVoiceUnavailableReason(
   status: RealtimeVoiceStatus | null
