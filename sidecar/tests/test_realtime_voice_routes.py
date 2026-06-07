@@ -9,6 +9,7 @@ import pytest
 
 from search_sidecar.app import build_app
 from search_sidecar.realtime_voice import stop_realtime_voice_runtime
+from search_sidecar.settings import default_settings, save_settings
 
 TOKEN = "0123456789abcdef" * 4
 
@@ -99,6 +100,31 @@ def test_realtime_voice_status_fails_closed_for_missing_configured_runtime(
     assert body["available"] is False
     assert body["packaging"] == "missing"
     assert body["runtime_path"] == str(missing)
+
+
+def test_realtime_voice_status_uses_voice_note_model_from_settings(
+    monkeypatch, tmp_path
+):
+    missing = tmp_path / "missing-realtime-asr"
+    settings_path = tmp_path / "settings.json"
+    settings = default_settings()
+    settings.providers["local-vllm-asr"].model_per_capability[
+        "audio-transcript"
+    ] = "local/models/qwen-asr"
+    save_settings(settings_path, settings)
+    monkeypatch.setenv("COGNIOS_REALTIME_VOICE_RUNTIME_PATH", str(missing))
+    monkeypatch.setenv("COGNIOS_REALTIME_VOICE_MODEL", "env/model-should-not-win")
+    monkeypatch.delenv("COGNIOS_REALTIME_VOICE_WS_URL", raising=False)
+    monkeypatch.delenv("COGNIOS_REALTIME_VOICE_ALLOW_EXTERNAL", raising=False)
+    app = build_app(token=TOKEN, settings_path=settings_path)
+
+    with TestClient(app) as client:
+        resp = client.get("/realtime-voice/status", headers=_auth_headers())
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "unavailable"
+    assert body["model"] == "local/models/qwen-asr"
 
 
 def test_realtime_voice_status_fails_closed_for_non_executable_runtime(

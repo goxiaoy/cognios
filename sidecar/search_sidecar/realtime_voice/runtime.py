@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
+from ..providers.presets import PRESETS
+from ..settings import SearchSettings
+
 Status = Literal[
     "unavailable",
     "installing",
@@ -69,10 +72,10 @@ class RealtimeVoiceStatus:
         }
 
 
-def get_realtime_voice_status() -> RealtimeVoiceStatus:
+def get_realtime_voice_status(settings: SearchSettings | None = None) -> RealtimeVoiceStatus:
     runtime_path = _runtime_path()
     websocket_url = _websocket_url()
-    model = _model()
+    model = _model(settings)
 
     if runtime_path is None:
         return RealtimeVoiceStatus(
@@ -161,13 +164,13 @@ def get_realtime_voice_status() -> RealtimeVoiceStatus:
     return _managed_runtime_status(runtime_path, model)
 
 
-def warm_realtime_voice_runtime() -> None:
+def warm_realtime_voice_runtime(settings: SearchSettings | None = None) -> None:
     """Best-effort background warmup for packaged realtime ASR.
 
     This intentionally reuses the status path so all fail-closed checks stay in
     one place. Any process startup failure is reflected by later status calls.
     """
-    get_realtime_voice_status()
+    get_realtime_voice_status(settings)
 
 
 def stop_realtime_voice_runtime() -> None:
@@ -198,9 +201,30 @@ def _allow_external_runtime() -> bool:
     return os.getenv(_ALLOW_EXTERNAL_ENV, "").strip().lower() in _TRUE_VALUES
 
 
-def _model() -> str | None:
+def _model(settings: SearchSettings | None = None) -> str | None:
+    configured = _settings_model(settings)
+    if configured:
+        return configured
     value = os.getenv(_MODEL_ENV, "").strip()
     return value or _DEFAULT_MODEL
+
+
+def _settings_model(settings: SearchSettings | None) -> str | None:
+    if settings is None:
+        return None
+    feature = settings.features.get("voice-notes")
+    if feature is None or not feature.enabled or feature.provider_id is None:
+        return None
+    provider = settings.providers.get(feature.provider_id)
+    if provider is None or not provider.enabled:
+        return None
+    preset = PRESETS.get(provider.provider_id)
+    if preset is None or "audio-transcript" not in preset.capabilities:
+        return None
+    return (
+        provider.model_per_capability.get("audio-transcript")
+        or preset.default_model_per_capability.get("audio-transcript")
+    )
 
 
 def _is_loopback_websocket_url(value: str) -> bool:

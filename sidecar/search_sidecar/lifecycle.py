@@ -270,7 +270,7 @@ def serve(storage_dir: Path) -> int:
         runtime_path,
     )
     threading.Thread(
-        target=warm_realtime_voice_runtime,
+        target=lambda: warm_realtime_voice_runtime(settings),
         name="search-sidecar-realtime-voice-warmup",
         daemon=True,
     ).start()
