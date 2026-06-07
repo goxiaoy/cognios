@@ -13,6 +13,8 @@ def test_macos_packaging_collects_trafilatura_settings_data() -> None:
     text = script.read_text(encoding="utf-8")
 
     assert "--collect-data trafilatura" in text
+    assert "COGNIOS_REALTIME_VOICE_RUNTIME_SOURCE" in text
+    assert "realtime voice runtime packaging: supported" in text
     assert "realtime voice runtime packaging: missing" in text
 
 

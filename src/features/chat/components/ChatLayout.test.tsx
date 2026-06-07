@@ -341,6 +341,55 @@ describe("ChatLayout", () => {
     expect(client.getRealtimeVoiceStatus).toHaveBeenCalledTimes(2);
   });
 
+  it("retries realtime voice status while the local runtime is starting", async () => {
+    vi.useFakeTimers();
+    const client = makeClient();
+    vi.mocked(client.getRealtimeVoiceStatus)
+      .mockResolvedValueOnce({
+        status: {
+          state: "ready",
+          data: {
+            status: "starting",
+            available: false,
+            local: true,
+            provider: "qwen3-asr-vllm",
+            reason: "Managed realtime ASR runtime is starting.",
+            packaging: "supported",
+            runtimePath: "/tmp/realtime-asr",
+            websocketUrl: null,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: {
+          state: "ready",
+          data: {
+            status: "ready",
+            available: true,
+            local: true,
+            provider: "qwen3-asr-vllm",
+            reason: "Managed realtime ASR runtime is running locally.",
+            packaging: "supported",
+            runtimePath: "/tmp/realtime-asr",
+            websocketUrl: "ws://127.0.0.1:9000/v1/realtime",
+          },
+        },
+      });
+
+    render(<ChatLayout client={client} searchClient={makeSearchClient()} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(client.getRealtimeVoiceStatus).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    expect(client.getRealtimeVoiceStatus).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: /start realtime voice chat/i })).toBeEnabled();
+  });
+
   it("does not send provisional realtime voice captions to the LLM", async () => {
     const client = makeClient();
     mockRealtimeVoiceReady(client);

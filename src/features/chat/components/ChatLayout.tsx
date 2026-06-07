@@ -354,7 +354,11 @@ export function ChatLayout({
     try {
       const result = await client.getRealtimeVoiceStatus();
       if (result.status.state === "ready") {
-        setRealtimeVoiceStatus(result.status.data ?? null);
+        const data = result.status.data ?? null;
+        setRealtimeVoiceStatus(data);
+        if (data?.status === "starting" || data?.status === "installing") {
+          scheduleRealtimeVoiceStatusRetry();
+        }
         return;
       }
       setRealtimeVoiceStatus(null);

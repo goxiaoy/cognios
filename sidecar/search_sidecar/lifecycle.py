@@ -48,6 +48,7 @@ from .models import DEFAULTS, ModelManager
 from .observability import open_observability_store
 from .rerank import select_reranker
 from .retrieval import SearchOrchestrator
+from .realtime_voice import stop_realtime_voice_runtime, warm_realtime_voice_runtime
 from .runtime_file import (
     acquire_lock,
     remove_runtime_file,
@@ -268,10 +269,16 @@ def serve(storage_dir: Path) -> int:
         bound_port,
         runtime_path,
     )
+    threading.Thread(
+        target=warm_realtime_voice_runtime,
+        name="search-sidecar-realtime-voice-warmup",
+        daemon=True,
+    ).start()
 
     try:
         server_thread.join()
     finally:
+        stop_realtime_voice_runtime()
         LOG.info("search-sidecar shutdown requested; waiting for indexing runner")
         if not indexing_runner.stop(timeout=2.0):
             LOG.warning(

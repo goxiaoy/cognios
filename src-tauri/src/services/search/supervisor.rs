@@ -27,6 +27,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
+use tauri::Manager;
 use tauri_plugin_shell::process::{Command, CommandChild};
 use tauri_plugin_shell::ShellExt;
 
@@ -43,6 +44,11 @@ const SIDECAR_BINARY_NAME: &str = "search-sidecar";
 // do not hard-kill Python mid-native-call and trigger macOS crash UI.
 const ORPHAN_SIGTERM_GRACE: Duration = Duration::from_secs(90);
 const ORPHAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const REALTIME_VOICE_RUNTIME_ENV: &str = "COGNIOS_REALTIME_VOICE_RUNTIME_PATH";
+const REALTIME_VOICE_MODEL_ENV: &str = "COGNIOS_REALTIME_VOICE_MODEL";
+const REALTIME_VOICE_RUNTIME_ARGS_ENV: &str = "COGNIOS_REALTIME_VOICE_RUNTIME_ARGS";
+const REALTIME_VOICE_ALLOW_EXTERNAL_ENV: &str = "COGNIOS_REALTIME_VOICE_ALLOW_EXTERNAL";
+const REALTIME_VOICE_WS_URL_ENV: &str = "COGNIOS_REALTIME_VOICE_WS_URL";
 
 struct SidecarCommandCandidate {
     label: &'static str,
@@ -497,10 +503,19 @@ fn sidecar_command_candidates(app: &AppHandle, storage_dir: &str) -> Vec<Sidecar
     }
 
     match app.shell().sidecar(SIDECAR_BINARY_NAME) {
-        Ok(command) => candidates.push(SidecarCommandCandidate {
-            label: "packaged Tauri sidecar",
-            command: command.args(["serve", "--storage-dir", storage_dir]),
-        }),
+        Ok(command) => {
+            let mut command = command.args(["serve", "--storage-dir", storage_dir]);
+            if let Some(runtime_path) = packaged_realtime_voice_runtime_path(app) {
+                command = command.env(
+                    REALTIME_VOICE_RUNTIME_ENV,
+                    runtime_path.to_string_lossy().into_owned(),
+                );
+            }
+            candidates.push(SidecarCommandCandidate {
+                label: "packaged Tauri sidecar",
+                command,
+            });
+        }
         Err(err) => log::info!("could not resolve packaged sidecar binary: {err}"),
     }
 
@@ -518,10 +533,32 @@ fn dev_sidecar_dir() -> PathBuf {
 
 #[cfg(debug_assertions)]
 fn dev_sidecar_env() -> Vec<(&'static str, String)> {
-    vec![(
+    let mut env = vec![(
         "COGNIOS_ADVANCED_OCR_AUTORUN",
         std::env::var("COGNIOS_ADVANCED_OCR_AUTORUN").unwrap_or_else(|_| "1".to_string()),
-    )]
+    )];
+    for key in [
+        REALTIME_VOICE_RUNTIME_ENV,
+        REALTIME_VOICE_MODEL_ENV,
+        REALTIME_VOICE_RUNTIME_ARGS_ENV,
+        REALTIME_VOICE_ALLOW_EXTERNAL_ENV,
+        REALTIME_VOICE_WS_URL_ENV,
+    ] {
+        if let Ok(value) = std::env::var(key) {
+            env.push((key, value));
+        }
+    }
+    env
+}
+
+fn packaged_realtime_voice_runtime_path(app: &AppHandle) -> Option<PathBuf> {
+    let resource_dir = app.path().resource_dir().ok()?;
+    [
+        resource_dir.join("resources/realtime-voice/vllm"),
+        resource_dir.join("realtime-voice/vllm"),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
 }
 
 #[cfg(all(debug_assertions, windows))]

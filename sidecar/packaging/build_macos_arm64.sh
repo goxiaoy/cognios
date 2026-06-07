@@ -27,11 +27,19 @@ PACKAGING_VENV="$BUILD_DIR/pyinstaller-venv"
 OUTPUT_DIR="$REPO_ROOT/src-tauri/binaries"
 OUTPUT="$OUTPUT_DIR/search-sidecar-$HOST_TRIPLE"
 RESOURCE_DIR="$REPO_ROOT/src-tauri/resources/search-sidecar"
+REALTIME_VOICE_RESOURCE_DIR="$REPO_ROOT/src-tauri/resources/realtime-voice"
 ENTRY="$SCRIPT_DIR/pyinstaller_entry.py"
 SPEC_FILE="$SIDECAR_DIR/search-sidecar.spec"
+REALTIME_VOICE_RUNTIME_SOURCE="${COGNIOS_REALTIME_VOICE_RUNTIME_SOURCE:-}"
 
 mkdir -p "$OUTPUT_DIR" "$REPO_ROOT/src-tauri/resources"
-rm -rf "$DIST_DIR/search-sidecar" "$BUILD_DIR/search-sidecar" "$OUTPUT" "$RESOURCE_DIR" "$SPEC_FILE"
+rm -rf \
+  "$DIST_DIR/search-sidecar" \
+  "$BUILD_DIR/search-sidecar" \
+  "$OUTPUT" \
+  "$RESOURCE_DIR" \
+  "$REALTIME_VOICE_RESOURCE_DIR" \
+  "$SPEC_FILE"
 
 cd "$SIDECAR_DIR"
 
@@ -107,8 +115,25 @@ exec "$PAYLOAD" "$@"
 SH
 chmod +x "$OUTPUT"
 find "$RESOURCE_DIR" -type f -perm -111 -exec codesign --force --sign - {} \; >/dev/null 2>&1 || true
+if [[ -n "$REALTIME_VOICE_RUNTIME_SOURCE" ]]; then
+  mkdir -p "$REALTIME_VOICE_RESOURCE_DIR"
+  if [[ -d "$REALTIME_VOICE_RUNTIME_SOURCE" ]]; then
+    cp -R "$REALTIME_VOICE_RUNTIME_SOURCE"/. "$REALTIME_VOICE_RESOURCE_DIR"
+  elif [[ -f "$REALTIME_VOICE_RUNTIME_SOURCE" ]]; then
+    cp "$REALTIME_VOICE_RUNTIME_SOURCE" "$REALTIME_VOICE_RESOURCE_DIR/vllm"
+  else
+    echo "error: realtime voice runtime source does not exist: $REALTIME_VOICE_RUNTIME_SOURCE" >&2
+    exit 1
+  fi
+  chmod +x "$REALTIME_VOICE_RESOURCE_DIR/vllm"
+  find "$REALTIME_VOICE_RESOURCE_DIR" -type f -perm -111 -exec codesign --force --sign - {} \; >/dev/null 2>&1 || true
+fi
 codesign --force --sign - "$OUTPUT" >/dev/null 2>&1 || true
 rm -f "$SPEC_FILE"
 
 echo "built $OUTPUT and $RESOURCE_DIR"
-echo "realtime voice runtime packaging: missing"
+if [[ -x "$REALTIME_VOICE_RESOURCE_DIR/vllm" ]]; then
+  echo "realtime voice runtime packaging: supported"
+else
+  echo "realtime voice runtime packaging: missing"
+fi
