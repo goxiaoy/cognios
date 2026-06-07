@@ -6,5 +6,6 @@ pub mod node_status;
 pub mod notes;
 pub mod search;
 pub mod secure_storage;
+pub mod topic_memory;
 pub mod url_indexing;
 pub mod voice_notes;

@@ -52,6 +52,14 @@ import type {
   VoiceNote,
 } from "../contracts/voiceNote";
 import type {
+  ArchiveTopicInput,
+  TopicMemory,
+  TopicMemoryDetail,
+  TopicMemoryInput,
+  TopicMemoryRefreshEnvelope,
+  TopicProposalActionInput,
+} from "../contracts/topicMemory";
+import type {
   CreateFolderInput,
   DuplicateMountError,
   CreateMountInput,
@@ -322,6 +330,38 @@ export async function testChatProvider(
   input: TestChatProviderInput
 ): Promise<TestChatProviderResult> {
   return invoke<TestChatProviderResult>("test_chat_provider", { input });
+}
+
+// ---- topic memory --------------------------------------------------------
+
+export async function listTopicMemories(): Promise<TopicMemory[]> {
+  return invoke<TopicMemory[]>("list_topic_memories");
+}
+
+export async function getTopicMemory(
+  input: TopicMemoryInput
+): Promise<TopicMemoryDetail> {
+  return invoke<TopicMemoryDetail>("get_topic_memory", { input });
+}
+
+export async function refreshTopicMemories(): Promise<TopicMemoryRefreshEnvelope> {
+  return invoke<TopicMemoryRefreshEnvelope>("refresh_topic_memories");
+}
+
+export async function acceptTopicMemoryProposal(
+  input: TopicProposalActionInput
+): Promise<TopicMemoryDetail> {
+  return invoke<TopicMemoryDetail>("accept_topic_memory_proposal", { input });
+}
+
+export async function dismissTopicMemoryProposal(
+  input: TopicProposalActionInput
+): Promise<boolean> {
+  return invoke<boolean>("dismiss_topic_memory_proposal", { input });
+}
+
+export async function archiveTopicMemory(input: ArchiveTopicInput): Promise<boolean> {
+  return invoke<boolean>("archive_topic_memory", { input });
 }
 
 // ---- search-sidecar bridge ------------------------------------------------

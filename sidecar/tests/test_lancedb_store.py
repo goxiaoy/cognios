@@ -108,6 +108,30 @@ def test_scan_mount_nodes_returns_distinct_readable_nodes(tmp_path: Path):
     assert [row["node_id"] for row in rows] == ["note-a", "note-b"]
 
 
+def test_scan_user_chunks_excludes_metadata_and_vector_payload(tmp_path: Path):
+    store = open_store(tmp_path / "index.lance")
+    store.upsert(
+        [
+            _make_chunk("note-a", idx=0, text="topic body", role="body"),
+            _make_chunk("note-b", idx=0, text="topic summary", role="summary"),
+            NodeChunk(
+                id="folder-1:metadata:0",
+                node_id="folder-1",
+                kind="folder",
+                name="Folder",
+                text="internal metadata",
+                vector=[0.0] * EMBEDDING_DIMENSION,
+                role="metadata",
+            ),
+        ]
+    )
+
+    rows = store.scan_user_chunks()
+
+    assert {row["node_id"] for row in rows} == {"note-a", "note-b"}
+    assert all("vector" not in row for row in rows)
+
+
 def test_delete_chunks_by_role_preserves_summary(tmp_path: Path):
     store = open_store(tmp_path / "index.lance")
     store.upsert(

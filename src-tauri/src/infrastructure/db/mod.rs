@@ -6,4 +6,5 @@ pub mod mount_repository;
 pub mod node_repository;
 pub mod node_status_repository;
 pub mod statistics_repository;
+pub mod topic_memory_repository;
 pub mod url_repository;

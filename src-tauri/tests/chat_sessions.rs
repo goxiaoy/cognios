@@ -208,7 +208,15 @@ fn chat_migration_preserves_existing_workspace_rows() {
             |row| row.get(0),
         )
         .expect("memory table");
+    let topic_table_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'topic_memories'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("topic memory table");
 
     assert_eq!(memory_table_count, 1);
-    assert_eq!(user_version, 11);
+    assert_eq!(topic_table_count, 1);
+    assert_eq!(user_version, 12);
 }

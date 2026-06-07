@@ -8,6 +8,7 @@ pub mod search;
 pub mod search_settings;
 pub mod secrets;
 pub mod thumbnails;
+pub mod topic_memory;
 pub mod urls;
 pub mod voice_notes;
 

@@ -928,6 +928,11 @@ impl SearchSidecarClient {
         self.get_envelope(&path).await
     }
 
+    pub async fn topic_memory_proposals(&self) -> SidecarEnvelope<Value> {
+        self.post_envelope("/topic-memory/propose", &serde_json::json!({}))
+            .await
+    }
+
     pub async fn chat_turn(
         &self,
         body: &ChatTurnRequestDto,

@@ -27,6 +27,8 @@ import {
   type ModelDownloadStartResult,
 } from "../features/search/modelDownloadPriority";
 import { SettingsLayout } from "../features/settings/components/SettingsLayout";
+import { topicMemoryClient } from "../features/topic-memory/api/topicMemoryClient";
+import { TopicMemoryLayout } from "../features/topic-memory/components/TopicMemoryLayout";
 import { voiceNoteClient } from "../features/voice-notes/api/voiceNoteClient";
 import type {
   VoiceNotePreviewSession,
@@ -43,7 +45,7 @@ const SECTION_LABELS: Record<AppSection, string> = {
   home: "Home",
   chat: "Chat",
   explorer: "Explorer",
-  memory: "Memory Timeline",
+  memory: "Topic Memory",
   settings: "Settings",
 };
 
@@ -119,6 +121,15 @@ function AppShell() {
   // Explorer section so the activation (note editor, markdown preview,
   // image viewer) is visible.
   const focusExplorer = useCallback(() => setActiveSection("explorer"), []);
+
+  const activateExplorerNode = useCallback(
+    (nodeId: string) => {
+      explorerStore.selectArtifact(nodeId, false);
+      explorerStore.activateArtifact(nodeId);
+      setActiveSection("explorer");
+    },
+    [explorerStore]
+  );
 
   const focusExplorerNode = useCallback((nodeId: string) => {
     voiceNoteFocusSerial.current += 1;
@@ -421,6 +432,7 @@ function AppShell() {
               <ChatLayout
                 client={chatClient}
                 searchClient={searchClient}
+                topicMemoryClient={topicMemoryClient}
                 workspaceIsEmpty={explorerStore.snapshot.roots.length === 0}
                 visible={activeSection === "chat"}
                 onActivateSource={focusExplorer}
@@ -428,12 +440,13 @@ function AppShell() {
             </section>
           </div>
 
-          {activeSection !== "explorer" && activeSection !== "settings" && activeSection !== "chat" && activeSection !== "home" ? (
-            <section className="placeholder-panel">
-              <p className="eyebrow">{sectionLabel}</p>
-              <p className="muted-copy">
-                This section is stubbed in Milestone 2 so the application shell and navigation contract can land before feature implementation.
-              </p>
+          {activeSection === "memory" ? (
+            <section className="topic-memory-page-panel">
+              <TopicMemoryLayout
+                client={topicMemoryClient}
+                visible={activeSection === "memory"}
+                onActivateSource={activateExplorerNode}
+              />
             </section>
           ) : null}
         </div>

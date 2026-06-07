@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Paperclip,
   Plus,
+  RefreshCw,
   Search,
   Send,
   X,
@@ -42,6 +43,7 @@ import { MarkdownRenderer } from "../../explorer/components/MarkdownRenderer";
 import { useOptionalExplorerStoreContext } from "../../explorer/store/ExplorerStoreContext";
 import { SearchPalette, type SearchPaletteSelection } from "../../search/components/SearchPalette";
 import type { SearchClient } from "../../search/types/search";
+import type { TopicMemoryClient } from "../../topic-memory/api/topicMemoryClient";
 import type { ChatClient } from "../api/chatClient";
 import {
   CHAT_PROVIDER_PRESETS,
@@ -83,12 +85,14 @@ interface ChatToolEvent {
 export function ChatLayout({
   client,
   searchClient,
+  topicMemoryClient,
   visible = true,
   onActivateSource,
   workspaceIsEmpty = false,
 }: {
   client: ChatClient;
   searchClient: SearchClient;
+  topicMemoryClient?: TopicMemoryClient;
   visible?: boolean;
   onActivateSource?: () => void;
   workspaceIsEmpty?: boolean;
@@ -109,6 +113,8 @@ export function ChatLayout({
   const [memoryError, setMemoryError] = useState<string | null>(null);
   const [memoryExporting, setMemoryExporting] = useState(false);
   const [memoryExportedNoteId, setMemoryExportedNoteId] = useState<string | null>(null);
+  const [topicMemoryRefreshing, setTopicMemoryRefreshing] = useState(false);
+  const [topicMemoryStatus, setTopicMemoryStatus] = useState<string | null>(null);
   const [models, setModels] = useState<ChatModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsStatus, setModelsStatus] = useState<string | null>(null);
@@ -609,6 +615,28 @@ export function ChatLayout({
     }
   }
 
+  async function refreshTopicMemoryFromChat() {
+    if (!topicMemoryClient || topicMemoryRefreshing) return;
+    setTopicMemoryRefreshing(true);
+    setTopicMemoryStatus(null);
+    setError(null);
+    try {
+      const envelope = await topicMemoryClient.refresh();
+      const result = unwrapEnvelope(envelope);
+      if (!result) {
+        setTopicMemoryStatus(envelope.error ?? "Topic Memory is still starting.");
+        return;
+      }
+      setTopicMemoryStatus(
+        `${result.topicsCreated} topics created, ${result.topicsUpdated} updated, ${result.proposalsCreated} review items`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTopicMemoryRefreshing(false);
+    }
+  }
+
   function resetMemoryBody() {
     setMemoryBody("");
     setMemoryRevision(null);
@@ -760,11 +788,26 @@ export function ChatLayout({
               <BookOpen size={14} aria-hidden="true" />
               Memory
             </button>
+            {topicMemoryClient ? (
+              <button
+                className="chat-runtime-pill"
+                type="button"
+                disabled={topicMemoryRefreshing}
+                aria-label="Refresh Topic Memory"
+                onClick={() => void refreshTopicMemoryFromChat()}
+              >
+                <RefreshCw size={14} aria-hidden="true" />
+                {topicMemoryRefreshing ? "Topics..." : "Topics"}
+              </button>
+            ) : null}
           </div>
         </header>
 
         {error ? (
           <p className="chat-error" role="status"><CircleAlert size={15} aria-hidden="true" /> {error}</p>
+        ) : null}
+        {topicMemoryStatus ? (
+          <p className="chat-topic-memory-status" role="status">{topicMemoryStatus}</p>
         ) : null}
 
         <section className={`chat-transcript${transcript.length === 0 && optimisticTranscript.length === 0 && !turn ? " is-empty" : ""}`} aria-label="Transcript">

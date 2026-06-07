@@ -134,6 +134,20 @@ vi.mock("../lib/tauri/ipc", () => ({
   testChatProvider: vi.fn().mockResolvedValue({
     result: { state: "initialising" },
   }),
+  listTopicMemories: vi.fn().mockResolvedValue([]),
+  getTopicMemory: vi.fn().mockRejectedValue(new Error("topic not found")),
+  refreshTopicMemories: vi.fn().mockResolvedValue({
+    state: "ready",
+    data: {
+      topicsCreated: 0,
+      topicsUpdated: 0,
+      sourcesApplied: 0,
+      proposalsCreated: 0,
+    },
+  }),
+  acceptTopicMemoryProposal: vi.fn(),
+  dismissTopicMemoryProposal: vi.fn().mockResolvedValue(true),
+  archiveTopicMemory: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({

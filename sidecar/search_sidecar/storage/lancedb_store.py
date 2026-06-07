@@ -428,6 +428,53 @@ class LanceDBStore:
             key=lambda row: (str(row.get("name") or ""), str(row.get("node_id") or "")),
         )
 
+    def scan_user_chunks(self, *, limit: int = 2_000) -> list[dict]:
+        """Return user-visible chunks for synthesis-style consumers.
+
+        Topic Memory should never build on metadata-only rows because
+        those rows contain internal search text rather than user-visible
+        evidence. The returned rows are sorted newest-first so bounded
+        proposal generation prefers recent material without hiding older
+        rows when the index is small.
+        """
+        row_count = self._table.count_rows()
+        if row_count == 0:
+            return []
+        columns = [
+            "id",
+            "node_id",
+            "kind",
+            "name",
+            "text",
+            "mount_id",
+            "created_at",
+            "modified_at",
+            "role",
+            "content_version",
+        ]
+        rows = (
+            self._table.search()
+            .select(columns)
+            .where("role IS NULL OR role != 'metadata'")
+            .limit(row_count)
+            .to_arrow()
+            .to_pylist()
+        )
+        visible = [
+            row
+            for row in rows
+            if str(row.get("text") or "").strip()
+        ]
+        visible.sort(
+            key=lambda row: (
+                str(row.get("modified_at") or ""),
+                str(row.get("node_id") or ""),
+                str(row.get("id") or ""),
+            ),
+            reverse=True,
+        )
+        return visible[: max(1, limit)]
+
     def update_node_metadata(
         self,
         node_id: str,
