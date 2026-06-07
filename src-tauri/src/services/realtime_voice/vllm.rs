@@ -10,6 +10,7 @@ use crate::services::voice_notes::native_audio::RealtimeAudioChunk;
 
 const VLLM_REALTIME_TARGET_SAMPLE_RATE: u32 = 16_000;
 const VLLM_SESSION_START_TIMEOUT: Duration = Duration::from_secs(10);
+const VLLM_FINAL_TRANSCRIPT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VllmRealtimeTranscriptEvent {
@@ -76,7 +77,27 @@ pub async fn run_vllm_realtime_transcription(
         .map_err(|error| format!("failed to start realtime ASR buffer: {error}"))?;
 
     let mut provisional = String::new();
+    let mut audio_finished = false;
     loop {
+        if audio_finished {
+            match tokio::time::timeout(VLLM_FINAL_TRANSCRIPT_TIMEOUT, reader.next()).await {
+                Ok(Some(Ok(message))) => {
+                    if let Some(event) = realtime_event_from_message(&message, &mut provisional)? {
+                        let is_final = matches!(event, VllmRealtimeTranscriptEvent::Final(_));
+                        let _ = event_tx.send(event).await;
+                        if is_final {
+                            return Ok(());
+                        }
+                    }
+                    continue;
+                }
+                Ok(Some(Err(error))) => {
+                    return Err(format!("realtime ASR WebSocket receive failed: {error}"));
+                }
+                Ok(None) | Err(_) => return Ok(()),
+            }
+        }
+
         tokio::select! {
             chunk = audio_rx.recv() => {
                 let Some(chunk) = chunk else {
@@ -91,7 +112,8 @@ pub async fn run_vllm_realtime_transcription(
                         ))
                         .await
                         .map_err(|error| format!("failed to finish realtime ASR buffer: {error}"))?;
-                    return Ok(());
+                    audio_finished = true;
+                    continue;
                 };
                 let Some(audio) = vllm_pcm16_base64(&chunk) else {
                     continue;
@@ -115,34 +137,44 @@ pub async fn run_vllm_realtime_transcription(
                 let message = message.map_err(|error| {
                     format!("realtime ASR WebSocket receive failed: {error}")
                 })?;
-                let Some(text) = message_text(&message) else {
-                    continue;
-                };
-                match parse_vllm_realtime_message(text) {
-                    Some(VllmRealtimeTranscriptEvent::Provisional(delta)) => {
-                        provisional.push_str(&delta);
-                        let text = provisional.trim();
-                        if !text.is_empty() {
-                            let _ = event_tx
-                                .send(VllmRealtimeTranscriptEvent::Provisional(text.to_string()))
-                                .await;
-                        }
-                    }
-                    Some(VllmRealtimeTranscriptEvent::Final(text)) => {
-                        provisional.clear();
-                        if !text.trim().is_empty() {
-                            let _ = event_tx
-                                .send(VllmRealtimeTranscriptEvent::Final(text.trim().to_string()))
-                                .await;
-                        }
-                    }
-                    Some(VllmRealtimeTranscriptEvent::Error(message)) => {
-                        return Err(message);
-                    }
-                    None => {}
+                if let Some(event) = realtime_event_from_message(&message, &mut provisional)? {
+                    let _ = event_tx.send(event).await;
                 }
             }
         }
+    }
+}
+
+fn realtime_event_from_message(
+    message: &Message,
+    provisional: &mut String,
+) -> Result<Option<VllmRealtimeTranscriptEvent>, String> {
+    let Some(text) = message_text(message) else {
+        return Ok(None);
+    };
+    match parse_vllm_realtime_message(text) {
+        Some(VllmRealtimeTranscriptEvent::Provisional(delta)) => {
+            provisional.push_str(&delta);
+            let text = provisional.trim();
+            if text.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(VllmRealtimeTranscriptEvent::Provisional(
+                    text.to_string(),
+                )))
+            }
+        }
+        Some(VllmRealtimeTranscriptEvent::Final(text)) => {
+            provisional.clear();
+            let text = text.trim();
+            if text.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(VllmRealtimeTranscriptEvent::Final(text.to_string())))
+            }
+        }
+        Some(VllmRealtimeTranscriptEvent::Error(message)) => Err(message),
+        None => Ok(None),
     }
 }
 
