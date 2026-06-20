@@ -135,6 +135,7 @@ vi.mock("../lib/tauri/ipc", () => ({
     result: { state: "initialising" },
   }),
   listTopicMemories: vi.fn().mockResolvedValue([]),
+  listTopicMemoriesForNode: vi.fn().mockResolvedValue([]),
   getTopicMemory: vi.fn().mockRejectedValue(new Error("topic not found")),
   refreshTopicMemories: vi.fn().mockResolvedValue({
     state: "ready",

@@ -1,20 +1,35 @@
 import {
   type AnchorHTMLAttributes,
-  type FormEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
+  AuiIf,
+  AssistantRuntimeProvider,
+  ComposerPrimitive,
+  MessagePartPrimitive,
+  MessagePrimitive,
+  ThreadPrimitive,
+  type AppendMessage,
+  type ThreadMessageLike,
+  useAuiState,
+  useExternalStoreRuntime,
+} from "@assistant-ui/react";
+import {
   BookOpen,
+  CheckCircle2,
   CircleAlert,
   File,
   FileText,
   Folder,
   Globe,
   HardDrive,
+  Loader2,
   MessageSquare,
   Paperclip,
   Plus,
@@ -82,6 +97,18 @@ interface ChatToolEvent {
   resultCount: number | null;
 }
 
+interface ChatThreadMessage {
+  id: string;
+  role: ChatMessageRole;
+  body: string;
+  createdAt?: string | null;
+  contextNodes: ChatContextNode[];
+  citations: ChatCitation[];
+  toolEvents: ChatToolEvent[];
+  loading?: boolean;
+  running?: boolean;
+}
+
 export function ChatLayout({
   client,
   searchClient,
@@ -100,7 +127,6 @@ export function ChatLayout({
   const explorerStore = useOptionalExplorerStoreContext();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [active, setActive] = useState<ChatSessionDetail | null>(null);
-  const [query, setQuery] = useState("");
   const [turn, setTurn] = useState<ChatTurnResponse | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<OptimisticUserMessage[]>([]);
   const [contextOpen, setContextOpen] = useState(false);
@@ -412,14 +438,12 @@ export function ChatLayout({
     setTurn(null);
     resetMemoryBody();
     clearContextDraft();
-    setQuery("");
     setError(null);
   }
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
+  async function submitMessage(message: AppendMessage) {
     if (busy) return;
-    const trimmedQuery = query.trim();
+    const trimmedQuery = textFromAppendMessage(message).trim();
     if (!trimmedQuery) return;
     if (!chatProviderReady) {
       setError("Configure a chat provider before sending.");
@@ -439,7 +463,6 @@ export function ChatLayout({
       const turnEventId = createTurnEventId();
       activeTurnEventIdRef.current = turnEventId;
       setOptimisticUserMessages((messages) => [...messages, optimisticMessage]);
-      setQuery("");
       setTurn(null);
       const result = await client.startTurn({
         sessionId: session.session.id,
@@ -468,13 +491,6 @@ export function ChatLayout({
     }
   }
 
-  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== "Enter") return;
-    if (event.shiftKey || event.nativeEvent.isComposing) return;
-    event.preventDefault();
-    event.currentTarget.form?.requestSubmit();
-  }
-
   async function deleteSession(session: ChatSession) {
     setDeletingId(session.id);
     setError(null);
@@ -497,7 +513,6 @@ export function ChatLayout({
         setTurn(null);
         resetMemoryBody();
         clearContextDraft();
-        setQuery("");
         if (fallback) {
           const detail = await client.getSession({ sessionId: fallback.id });
           setActive(detail);
@@ -691,10 +706,33 @@ export function ChatLayout({
       webSearchProviderId &&
       settings.providers[webSearchProviderId]?.enabled
   );
+  const chatThreadMessages = useMemo(
+    () =>
+      buildChatThreadMessages({
+        transcript,
+        optimisticTranscript,
+      }),
+    [
+      transcript,
+      optimisticTranscript,
+    ]
+  );
+  const runtime = useExternalStoreRuntime<ChatThreadMessage>({
+    messages: chatThreadMessages,
+    isRunning: busy,
+    isDisabled: composerDisabled,
+    isSendDisabled: composerDisabled,
+    convertMessage: chatThreadMessageToAssistantMessage,
+    onNew: submitMessage,
+  });
 
   useEffect(() => {
     if (!visible || !pendingComposerFocusRef.current || composerDisabled || showProviderSetup) return;
-    composerRef.current?.focus();
+    const composer =
+      composerRef.current ??
+      document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Chat message"]');
+    if (!composer) return;
+    composer.focus();
     pendingComposerFocusRef.current = false;
   }, [visible, composerDisabled, showProviderSetup]);
 
@@ -810,193 +848,72 @@ export function ChatLayout({
           <p className="chat-topic-memory-status" role="status">{topicMemoryStatus}</p>
         ) : null}
 
-        <section className={`chat-transcript${transcript.length === 0 && optimisticTranscript.length === 0 && !turn ? " is-empty" : ""}`} aria-label="Transcript">
-          {transcript.length === 0 && optimisticTranscript.length === 0 && !turn ? (
-            <div className="chat-empty">
-              <Search size={24} aria-hidden="true" />
-              <h3>{workspaceIsEmpty ? "Add content first" : "Ask CogniOS"}</h3>
-              <p>
-                {workspaceIsEmpty
-                  ? "Mount a folder, create a note, or record a voice note before asking grounded questions."
-                  : "Timeline, costs, causes, evidence gaps."}
+        <AssistantRuntimeProvider runtime={runtime}>
+          <ChatThread
+            isEmpty={chatThreadMessages.length === 0}
+            transcriptEndRef={transcriptEndRef}
+            showAssistantLoading={showAssistantLoading}
+            showTransientAnswer={showTransientAnswer}
+            transientAnswer={turn?.answer ?? ""}
+            transientCitations={citationsFromUnknown(turn?.citations)}
+            transientToolEvents={transientToolEvents}
+            workspaceIsEmpty={workspaceIsEmpty}
+            onActivateNode={activateWorkspaceNode}
+            onCitationClick={handleCitationClick}
+          />
+
+          {settingsLoading ? (
+            <div className="chat-provider-status">
+              <p className="chat-provider-setup-note">Loading chat provider settings...</p>
+            </div>
+          ) : null}
+          {settingsError && !settings ? (
+            <div className="chat-provider-status">
+              <p className="chat-provider-setup-error" role="alert">
+                {settingsError}
               </p>
             </div>
           ) : null}
-          {transcript.map((message) => {
-            const attachedContext = contextNodesFromMessage(message);
-            const citations = citationsFromMessage(message);
-
-            return (
-              <article key={message.id} className={`chat-message is-${message.role}`}>
-                {message.role === "system" ? <p className="chat-message-role">{message.role}</p> : null}
-                <MessageContextNodes
-                  nodes={attachedContext}
-                  onActivateNode={activateWorkspaceNode}
-                />
-                {message.role === "assistant" ? <ChatToolActivity events={toolEventsFromMessage(message)} /> : null}
-                <ChatMessageBody
-                  role={message.role}
-                  body={message.body}
-                  citations={citations}
-                  onCitationClick={handleCitationClick}
-                />
-              </article>
-            );
-          })}
-          {optimisticTranscript.map((message) => (
-            <article key={message.id} className="chat-message is-user">
-              <MessageContextNodes
-                nodes={message.contextNodes}
-                onActivateNode={activateWorkspaceNode}
-              />
-              <ChatMessageBody role="user" body={message.body} />
-            </article>
-          ))}
-          {showTransientAnswer ? (
-            <article className="chat-message is-assistant">
-              <ChatToolActivity events={transientToolEvents} />
-              <ChatMessageBody
-                role="assistant"
-                body={turn?.answer ?? ""}
-                citations={citationsFromUnknown(turn?.citations)}
-                onCitationClick={handleCitationClick}
-              />
-            </article>
+          {showProviderSetup && settings ? (
+            <ChatProviderSetup
+              settings={settings}
+              selectedProviderId={setupProviderId}
+              providerStatus={modelsStatus}
+              client={searchClient}
+              onSelectedProviderChange={setSetupProviderId}
+              onSettingsChange={handleProviderSettingsChange}
+            />
           ) : null}
-          {showAssistantLoading ? (
-            <article className="chat-message is-assistant is-loading">
-              <ChatToolActivity events={transientToolEvents} />
-              <AssistantLoading />
-            </article>
-          ) : null}
-          <div ref={transcriptEndRef} className="chat-transcript-end" aria-hidden="true" />
-        </section>
 
-        {settingsLoading ? (
-          <div className="chat-provider-status">
-            <p className="chat-provider-setup-note">Loading chat provider settings...</p>
-          </div>
-        ) : null}
-        {settingsError && !settings ? (
-          <div className="chat-provider-status">
-            <p className="chat-provider-setup-error" role="alert">
-              {settingsError}
-            </p>
-          </div>
-        ) : null}
-        {showProviderSetup && settings ? (
-          <ChatProviderSetup
-            settings={settings}
-            selectedProviderId={setupProviderId}
-            providerStatus={modelsStatus}
-            client={searchClient}
-            onSelectedProviderChange={setSetupProviderId}
-            onSettingsChange={handleProviderSettingsChange}
-          />
-        ) : null}
-
-        {!showProviderSetup ? (
-          <form className="chat-composer" aria-label="Chat composer" onSubmit={submit}>
-          {contextNodes.length > 0 || contextError ? (
-            <div className="chat-context-area">
-              {contextNodes.length > 0 ? (
-                <div className="chat-context-chips" aria-label="Context nodes">
-                  {contextNodes.map((node) => (
-                    <span
-                      className="chat-context-chip"
-                      key={node.nodeId}
-                      title={node.path ?? node.title}
-                    >
-                      <ContextNodeIcon node={node} />
-                      <span>{node.title}</span>
-                      <button
-                        type="button"
-                        aria-label={`Remove context ${node.title}`}
-                        onClick={() => removeContextNode(node.nodeId)}
-                      >
-                        <X size={12} aria-hidden="true" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              {contextError ? <p className="chat-context-status">{contextError}</p> : null}
-            </div>
+          {!showProviderSetup ? (
+            <ChatComposer
+              composerRef={composerRef}
+              contextError={contextError}
+              contextNodes={contextNodes}
+              providerPlaceholder={
+                chatProviderReady
+                  ? "Ask about a timeline, cost, cause, evidence gaps..."
+                  : models.length > 0
+                    ? "Select a tool-capable model to start..."
+                    : chatProviderConfigured
+                      ? "Waiting for chat provider..."
+                      : "Configure a chat provider to start..."
+              }
+              models={models}
+              selectedModel={selectedModel}
+              modelUnavailableReason={modelUnavailableReason}
+              providerUnavailableReason={providerUnavailableReason}
+              webSearchEnabled={webSearchEnabled}
+              chatProviderReady={chatProviderReady}
+              contextOpen={contextOpen}
+              busy={busy}
+              autoFocusInput={visible && !composerDisabled}
+              onModelChange={setSelectedModel}
+              onRemoveContext={removeContextNode}
+              onToggleContext={() => setContextOpen((open) => !open)}
+            />
           ) : null}
-          <textarea
-            ref={composerRef}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={handleComposerKeyDown}
-            placeholder={
-              chatProviderReady
-                ? "Ask about a timeline, cost, cause, evidence gaps..."
-                : models.length > 0
-                  ? "Select a tool-capable model to start..."
-                  : chatProviderConfigured
-                    ? "Waiting for chat provider..."
-                    : "Configure a chat provider to start..."
-            }
-            aria-label="Chat message"
-            disabled={composerDisabled}
-          />
-          <div className="chat-composer-footer">
-            <div className="chat-composer-meta-group">
-              {models.length > 0 ? (
-                <AppSelect
-                  label="Model"
-                  value={selectedModel}
-                  onChange={setSelectedModel}
-                  options={models.map((model) => ({
-                    value: model.id,
-                    label: model.name,
-                    disabled: model.supportsAgentic === false,
-                    disabledReason: model.unavailableReason,
-                  }))}
-                  className="chat-model-picker"
-                />
-              ) : null}
-              {modelUnavailableReason ? (
-                <span className="chat-model-unavailable" role="status">
-                  {modelUnavailableReason}
-                </span>
-              ) : null}
-              {providerUnavailableReason ? (
-                <span className="chat-model-unavailable" role="status">
-                  {providerUnavailableReason}
-                </span>
-              ) : null}
-              {webSearchEnabled ? (
-                <span
-                  className="chat-web-search-indicator"
-                  role="img"
-                  aria-label="Web search enabled"
-                  title="Web search enabled"
-                >
-                  <Globe size={14} aria-hidden="true" />
-                </span>
-              ) : null}
-            </div>
-            <div className="chat-composer-actions">
-              <button
-                className="chat-context-toggle"
-                type="button"
-                title="Add context"
-                aria-label="Add context"
-                aria-expanded={contextOpen}
-                disabled={!chatProviderReady}
-                onClick={() => setContextOpen((open) => !open)}
-              >
-                <Paperclip size={15} aria-hidden="true" />
-              </button>
-              <button className="chat-primary-action" type="submit" disabled={composerDisabled || !query.trim()}>
-                <Send size={15} aria-hidden="true" />
-                {busy ? "Waiting..." : "Send"}
-              </button>
-            </div>
-          </div>
-          </form>
-        ) : null}
+        </AssistantRuntimeProvider>
       </main>
 
       {memoryOpen ? (
@@ -1143,10 +1060,429 @@ export function ChatLayout({
   );
 }
 
+function ChatThread({
+  isEmpty,
+  transcriptEndRef,
+  showAssistantLoading,
+  showTransientAnswer,
+  transientAnswer,
+  transientCitations,
+  transientToolEvents,
+  workspaceIsEmpty,
+  onActivateNode,
+  onCitationClick,
+}: {
+  isEmpty: boolean;
+  transcriptEndRef: RefObject<HTMLDivElement | null>;
+  showAssistantLoading: boolean;
+  showTransientAnswer: boolean;
+  transientAnswer: string;
+  transientCitations: ChatCitation[];
+  transientToolEvents: ChatToolEvent[];
+  workspaceIsEmpty: boolean;
+  onActivateNode?: (nodeId: string) => void;
+  onCitationClick?: (citation: ChatCitation | null) => void;
+}) {
+  return (
+    <ThreadPrimitive.Root className="chat-thread">
+      <ThreadPrimitive.Viewport
+        className={`chat-transcript${isEmpty ? " is-empty" : ""}`}
+        aria-label="Transcript"
+        autoScroll
+      >
+        <AuiIf condition={(state) => state.thread.isEmpty}>
+          <div className="chat-empty">
+            <Search size={24} aria-hidden="true" />
+            <h3>{workspaceIsEmpty ? "Add content first" : "Ask CogniOS"}</h3>
+            <p>
+              {workspaceIsEmpty
+                ? "Mount a folder, create a note, or record a voice note before asking grounded questions."
+                : "Timeline, costs, causes, evidence gaps."}
+            </p>
+          </div>
+        </AuiIf>
+        <ThreadPrimitive.Messages>
+          {({ message }) => {
+            if (message.role === "user") {
+              return <UserChatMessage onActivateNode={onActivateNode} />;
+            }
+            if (message.role === "assistant") {
+              return <AssistantChatMessage onCitationClick={onCitationClick} />;
+            }
+            return <SystemChatMessage />;
+          }}
+        </ThreadPrimitive.Messages>
+        {showTransientAnswer ? (
+          <article className="chat-message is-assistant">
+            <div className="chat-assistant-stack">
+              <ChatToolActivity events={transientToolEvents} />
+              <ChatMessageBody
+                role="assistant"
+                body={transientAnswer}
+                citations={transientCitations}
+                onCitationClick={onCitationClick}
+              />
+            </div>
+          </article>
+        ) : null}
+        {showAssistantLoading ? (
+          <article className="chat-message is-assistant is-loading">
+            <div className="chat-assistant-stack">
+              <ChatToolActivity events={transientToolEvents} />
+              <AssistantLoading />
+            </div>
+          </article>
+        ) : null}
+        <div ref={transcriptEndRef} className="chat-transcript-end" aria-hidden="true" />
+      </ThreadPrimitive.Viewport>
+    </ThreadPrimitive.Root>
+  );
+}
+
+function UserChatMessage({ onActivateNode }: { onActivateNode?: (nodeId: string) => void }) {
+  const custom = chatMessageCustom(
+    useAuiState((state) => state.message.metadata.custom)
+  );
+
+  return (
+    <MessagePrimitive.Root className="chat-message is-user">
+      <MessageContextNodes nodes={custom.contextNodes} onActivateNode={onActivateNode} />
+      <MessagePrimitive.Parts>
+        {({ part }) =>
+          part.type === "text" ? (
+            <p className="chat-message-body">
+              <MessagePartPrimitive.Text />
+            </p>
+          ) : null
+        }
+      </MessagePrimitive.Parts>
+    </MessagePrimitive.Root>
+  );
+}
+
+function AssistantChatMessage({
+  onCitationClick,
+}: {
+  onCitationClick?: (citation: ChatCitation | null) => void;
+}) {
+  const custom = chatMessageCustom(
+    useAuiState((state) => state.message.metadata.custom)
+  );
+
+  return (
+    <MessagePrimitive.Root className={`chat-message is-assistant${custom.loading ? " is-loading" : ""}`}>
+      <div className="chat-assistant-stack">
+        <ChatToolActivity events={custom.toolEvents} />
+        {custom.loading ? (
+          <AssistantLoading />
+        ) : (
+          <MessagePrimitive.Parts>
+            {({ part }) =>
+              part.type === "text" ? (
+                <AssistantTextPart
+                  citations={custom.citations}
+                  onCitationClick={onCitationClick}
+                />
+              ) : null
+            }
+          </MessagePrimitive.Parts>
+        )}
+      </div>
+    </MessagePrimitive.Root>
+  );
+}
+
+function AssistantTextPart({
+  citations,
+  onCitationClick,
+}: {
+  citations: ChatCitation[];
+  onCitationClick?: (citation: ChatCitation | null) => void;
+}) {
+  const text = useAuiState((state) => (state.part.type === "text" ? state.part.text : ""));
+  return (
+    <ChatMessageBody
+      role="assistant"
+      body={text}
+      citations={citations}
+      onCitationClick={onCitationClick}
+    />
+  );
+}
+
+function SystemChatMessage() {
+  return (
+    <MessagePrimitive.Root className="chat-message is-system">
+      <p className="chat-message-role">system</p>
+      <MessagePrimitive.Parts>
+        {({ part }) =>
+          part.type === "text" ? (
+            <p className="chat-message-body">
+              <MessagePartPrimitive.Text />
+            </p>
+          ) : null
+        }
+      </MessagePrimitive.Parts>
+    </MessagePrimitive.Root>
+  );
+}
+
+function ChatComposer({
+  composerRef,
+  contextError,
+  contextNodes,
+  providerPlaceholder,
+  models,
+  selectedModel,
+  modelUnavailableReason,
+  providerUnavailableReason,
+  webSearchEnabled,
+  chatProviderReady,
+  contextOpen,
+  busy,
+  autoFocusInput,
+  onModelChange,
+  onRemoveContext,
+  onToggleContext,
+}: {
+  composerRef: RefObject<HTMLTextAreaElement | null>;
+  contextError: string | null;
+  contextNodes: ChatContextNode[];
+  providerPlaceholder: string;
+  models: ChatModel[];
+  selectedModel: string;
+  modelUnavailableReason: string | null;
+  providerUnavailableReason: string | null;
+  webSearchEnabled: boolean;
+  chatProviderReady: boolean;
+  contextOpen: boolean;
+  busy: boolean;
+  autoFocusInput: boolean;
+  onModelChange: (modelId: string) => void;
+  onRemoveContext: (nodeId: string) => void;
+  onToggleContext: () => void;
+}) {
+  const formRef = useRef<HTMLFormElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (!autoFocusInput) return;
+    const focusComposer = () => {
+      const composer =
+        formRef.current?.querySelector<HTMLTextAreaElement>('textarea[aria-label="Chat message"]') ??
+        document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Chat message"]');
+      composer?.focus();
+    };
+    focusComposer();
+    window.requestAnimationFrame(focusComposer);
+    const timers = [0, 25, 100, 250].map((delay) => window.setTimeout(focusComposer, delay));
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [autoFocusInput]);
+
+  return (
+    <ComposerPrimitive.Root ref={formRef} className="chat-composer" aria-label="Chat composer">
+      {contextNodes.length > 0 || contextError ? (
+        <div className="chat-context-area">
+          {contextNodes.length > 0 ? (
+            <div className="chat-context-chips" aria-label="Context nodes">
+              {contextNodes.map((node) => (
+                <span
+                  className="chat-context-chip"
+                  key={node.nodeId}
+                  title={node.path ?? node.title}
+                >
+                  <ContextNodeIcon node={node} />
+                  <span>{node.title}</span>
+                  <button
+                    type="button"
+                    aria-label={`Remove context ${node.title}`}
+                    onClick={() => onRemoveContext(node.nodeId)}
+                  >
+                    <X size={12} aria-hidden="true" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {contextError ? <p className="chat-context-status">{contextError}</p> : null}
+        </div>
+      ) : null}
+      <ComposerPrimitive.Input
+        ref={(node) => {
+          (composerRef as { current: HTMLTextAreaElement | null }).current = node;
+          if (node && autoFocusInput) {
+            window.setTimeout(() => node.focus(), 0);
+          }
+        }}
+        placeholder={providerPlaceholder}
+        aria-label="Chat message"
+        submitMode="enter"
+      />
+      <div className="chat-composer-footer">
+        <div className="chat-composer-meta-group">
+          {models.length > 0 ? (
+            <AppSelect
+              label="Model"
+              value={selectedModel}
+              onChange={onModelChange}
+              options={models.map((model) => ({
+                value: model.id,
+                label: model.name,
+                disabled: model.supportsAgentic === false,
+                disabledReason: model.unavailableReason,
+              }))}
+              className="chat-model-picker"
+            />
+          ) : null}
+          {modelUnavailableReason ? (
+            <span className="chat-model-unavailable" role="status">
+              {modelUnavailableReason}
+            </span>
+          ) : null}
+          {providerUnavailableReason ? (
+            <span className="chat-model-unavailable" role="status">
+              {providerUnavailableReason}
+            </span>
+          ) : null}
+          {webSearchEnabled ? (
+            <span
+              className="chat-web-search-indicator"
+              role="img"
+              aria-label="Web search enabled"
+              title="Web search enabled"
+            >
+              <Globe size={14} aria-hidden="true" />
+            </span>
+          ) : null}
+        </div>
+        <div className="chat-composer-actions">
+          <button
+            className="chat-context-toggle"
+            type="button"
+            title="Add context"
+            aria-label="Add context"
+            aria-expanded={contextOpen}
+            disabled={!chatProviderReady}
+            onClick={onToggleContext}
+          >
+            <Paperclip size={15} aria-hidden="true" />
+          </button>
+          <ComposerPrimitive.Send className="chat-primary-action">
+            <Send size={15} aria-hidden="true" />
+            {busy ? "Waiting..." : "Send"}
+          </ComposerPrimitive.Send>
+        </div>
+      </div>
+    </ComposerPrimitive.Root>
+  );
+}
+
+function buildChatThreadMessages({
+  transcript,
+  optimisticTranscript,
+}: {
+  transcript: ChatMessage[];
+  optimisticTranscript: OptimisticUserMessage[];
+}): ChatThreadMessage[] {
+  const messages: ChatThreadMessage[] = transcript.map((message) => ({
+    id: message.id,
+    role: message.role,
+    body: message.body,
+    createdAt: message.createdAt,
+    contextNodes: contextNodesFromMessage(message),
+    citations: citationsFromMessage(message),
+    toolEvents: toolEventsFromMessage(message),
+  }));
+
+  messages.push(
+    ...optimisticTranscript.map((message) => ({
+      id: message.id,
+      role: "user" as const,
+      body: message.body,
+      contextNodes: message.contextNodes,
+      citations: [],
+      toolEvents: [],
+      running: true,
+    }))
+  );
+
+  return messages;
+}
+
+function chatThreadMessageToAssistantMessage(message: ChatThreadMessage): ThreadMessageLike {
+  const converted: ThreadMessageLike = {
+    id: message.id,
+    role: message.role,
+    createdAt: dateFromChatTimestamp(message.createdAt),
+    content: message.loading ? [] : [{ type: "text", text: message.body }],
+    metadata: {
+      custom: {
+        contextNodes: message.contextNodes,
+        citations: message.citations,
+        toolEvents: message.toolEvents,
+        loading: Boolean(message.loading),
+      },
+    },
+  };
+
+  if (message.role === "assistant") {
+    return {
+      ...converted,
+      status: message.running
+        ? { type: "running" }
+        : { type: "complete", reason: "stop" },
+    };
+  }
+
+  return converted;
+}
+
+function dateFromChatTimestamp(value: string | null | undefined): Date | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function chatMessageCustom(custom: Record<string, unknown> | undefined): {
+  contextNodes: ChatContextNode[];
+  citations: ChatCitation[];
+  toolEvents: ChatToolEvent[];
+  loading: boolean;
+} {
+  if (!custom) return { contextNodes: [], citations: [], toolEvents: [], loading: false };
+
+  return {
+    contextNodes: Array.isArray(custom.contextNodes)
+      ? custom.contextNodes.filter(isChatContextNode)
+      : [],
+    citations: citationsFromUnknown(custom.citations),
+    toolEvents: toolEventsFromUnknown(custom.toolEvents),
+    loading: custom.loading === true,
+  };
+}
+
+function isChatContextNode(value: unknown): value is ChatContextNode {
+  return isRecord(value) && typeof value.nodeId === "string" && typeof value.title === "string";
+}
+
+function textFromAppendMessage(message: AppendMessage): string {
+  return message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+}
+
 function AssistantLoading() {
   return (
     <div className="chat-message-loading" role="status" aria-live="polite">
-      <span>Thinking</span>
+      <span className="chat-thinking-icon" aria-hidden="true">
+        <Loader2 size={14} />
+      </span>
+      <span className="chat-thinking-copy">
+        <span className="chat-thinking-title">Thinking</span>
+        <span className="chat-thinking-subtitle">Preparing response</span>
+      </span>
       <span className="chat-loading-dots" aria-hidden="true">
         <span />
         <span />
@@ -1161,18 +1497,61 @@ function ChatToolActivity({ events }: { events: ChatToolEvent[] }) {
 
   return (
     <div className="chat-tool-activity" aria-label="Workspace activity">
-      {events.map((event, index) => (
-        <span
-          className="chat-tool-activity-item"
-          data-status={event.status}
-          key={`${event.toolName}-${event.nodeId ?? event.resultCount ?? index}`}
-        >
-          <Search size={12} aria-hidden="true" />
-          <span>{event.summary}</span>
-        </span>
-      ))}
+      {events.map((event, index) => {
+        const tone = toolEventTone(event.status);
+        return (
+          <div
+            className="chat-tool-activity-item"
+            data-status={tone}
+            key={`${event.toolName}-${event.nodeId ?? event.resultCount ?? "event"}-${index}`}
+          >
+            <span className="chat-tool-activity-icon" aria-hidden="true">
+              <ToolActivityIcon tone={tone} />
+            </span>
+            <span className="chat-tool-activity-copy">
+              <span className="chat-tool-activity-meta">
+                <span className="chat-tool-activity-name">{formatToolName(event.toolName)}</span>
+                <span className="chat-tool-activity-status">{toolEventStatusLabel(tone)}</span>
+              </span>
+              <span className="chat-tool-activity-summary">{event.summary}</span>
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
+}
+
+type ToolActivityTone = "running" | "complete" | "error";
+
+function ToolActivityIcon({ tone }: { tone: ToolActivityTone }) {
+  if (tone === "error") return <CircleAlert size={13} />;
+  if (tone === "running") return <Loader2 size={13} />;
+  return <CheckCircle2 size={13} />;
+}
+
+function toolEventTone(status: string): ToolActivityTone {
+  const normalized = status.toLowerCase();
+  if (normalized.includes("error") || normalized.includes("fail")) return "error";
+  if (
+    normalized.includes("run") ||
+    normalized.includes("start") ||
+    normalized.includes("pending") ||
+    normalized.includes("progress")
+  ) {
+    return "running";
+  }
+  return "complete";
+}
+
+function toolEventStatusLabel(tone: ToolActivityTone): string {
+  if (tone === "error") return "Failed";
+  if (tone === "running") return "Running";
+  return "Done";
+}
+
+function formatToolName(toolName: string): string {
+  return toolName.replace(/[_-]+/g, " ");
 }
 
 function ChatMessageBody({
